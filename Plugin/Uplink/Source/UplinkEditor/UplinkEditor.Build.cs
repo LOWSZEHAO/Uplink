@@ -22,6 +22,7 @@ public class UplinkEditor : ModuleRules
 			"LevelEditor",
 			"InputCore",
 			"EnhancedInput",
+			"BlueprintGraph",
 		});
 	}
 }

@@ -16,12 +16,13 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 🚧 **Early development, already usable for editor work.** Compiles against both UE 5.7 and 5.8.
 
-**Available now (36 tools):**
+**Available now (40 tools):**
 
 - **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
 - **Control the player:** `input_action` (Enhanced Input injection — pulse, timed hold, live value updates; no physical device needed) · `input_key` (raw key taps/edges/axis through the engine's simulated-input path) · `possess` · `player_teleport` · `player_info`
 - **Observe & assert:** `watch_events` / `drain_events` / `unwatch` (record any BlueprintAssignable delegate firing, with decoded parameter payloads) · `wait_until` (non-blocking assertions: property values, actor existence, event counts, elapsed time) · `get_world_state` (actor snapshot with arbitrary property values) · `perf_stats`
 - **Scripted playtests:** `run_scenario` — a whole playtest in one call: ordered tool steps with per-step expectations, timeouts, and a structured pass/fail report. Example: start PIE → teleport → injected-input walk → assert position → screenshot → stop, in a single request.
+- **Blueprints:** `bp_create` · `bp_query` (variables, graphs, nodes, pins, connections) · `bp_modify` (variables; call-function / custom-event / engine-event / variable get-set nodes; wiring; pin defaults) · `bp_compile` (full diagnostics)
 - **Editor & world:** `status` · `console_command` · `output_log` (incremental log reads — pair with `pie_status.log_start_index` to read just the current session) · `viewport_screenshot` (PNG image results) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor`
 - **Reflection:** `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION — args in, return value and out-params back as JSON)
 - **Assets:** `asset_search` / `asset_dependencies` / `asset_referencers`
@@ -29,7 +30,6 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play.
 
-**Coming next:** Blueprint tools (`bp_query` · `bp_modify` · `bp_compile`).
 
 ## Extending Uplink with your own tools
 

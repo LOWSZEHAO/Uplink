@@ -21,4 +21,5 @@ namespace UplinkTools
 	void RegisterControl(FUplinkToolRegistry& Registry);
 	void RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRecorder& Recorder);
 	void RegisterScenario(FUplinkToolRegistry& Registry);
+	void RegisterBlueprint(FUplinkToolRegistry& Registry);
 }
