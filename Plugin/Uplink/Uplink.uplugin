@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Uplink",
+	"Description": "Direct data link between an AI agent (MCP) and the Unreal Editor — editor control plus Play-In-Editor gameplay testing.",
+	"Category": "Editor",
+	"CreatedBy": "Low Sze Hao",
+	"CreatedByURL": "https://github.com/LOWSZEHAO",
+	"DocsURL": "https://github.com/LOWSZEHAO/Uplink",
+	"SupportURL": "https://github.com/LOWSZEHAO/Uplink/issues",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "UplinkEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [ "Win64" ]
+		}
+	]
+}

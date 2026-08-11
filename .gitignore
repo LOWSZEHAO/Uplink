@@ -1,0 +1,29 @@
+# --- Unreal Engine (plugin build artifacts, host-project leftovers) ---
+Plugin/Uplink/Binaries/
+Plugin/Uplink/Intermediate/
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+*.sln
+*.suo
+*.VC.db
+*.VC.opendb
+
+# --- Node bridge ---
+bridge/node_modules/
+npm-debug.log*
+
+# --- Machine-local config (never commit host-project paths) ---
+scripts/hosts.local.json
+
+# --- Local working notes (never commit) ---
+docs/
+notes/
+*.notes.md
+
+# --- OS noise ---
+Thumbs.db
+Desktop.ini
+.DS_Store

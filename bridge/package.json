@@ -1,0 +1,16 @@
+{
+  "name": "uplink-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP stdio bridge for the Uplink Unreal Engine plugin",
+  "bin": {
+    "uplink-bridge": "index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.11.0"
+  }
+}
