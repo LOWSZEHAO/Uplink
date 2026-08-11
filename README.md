@@ -16,10 +16,11 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 🚧 **Early development, already usable for editor work.** Compiles against both UE 5.7 and 5.8.
 
-**Available now (29 tools):**
+**Available now (35 tools):**
 
 - **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
 - **Control the player:** `input_action` (Enhanced Input injection — pulse, timed hold, live value updates; no physical device needed) · `input_key` (raw key taps/edges/axis through the engine's simulated-input path) · `possess` · `player_teleport` · `player_info`
+- **Observe & assert:** `watch_events` / `drain_events` / `unwatch` (record any BlueprintAssignable delegate firing, with decoded parameter payloads) · `wait_until` (non-blocking assertions: property values, actor existence, event counts, elapsed time) · `get_world_state` (actor snapshot with arbitrary property values) · `perf_stats`
 - **Editor & world:** `status` · `console_command` · `output_log` (incremental log reads — pair with `pie_status.log_start_index` to read just the current session) · `viewport_screenshot` (PNG image results) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor`
 - **Reflection:** `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION — args in, return value and out-params back as JSON)
 - **Assets:** `asset_search` / `asset_dependencies` / `asset_referencers`
@@ -31,7 +32,6 @@ Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live 
 
 | Layer | Tools |
 |---|---|
-| **PIE observation** | `watch_events` / `drain_events` (delegate capture) · `wait_until` · `get_world_state` · `perf_stats` |
 | Blueprints | `bp_query` · `bp_modify` · `bp_compile` |
 | Scenarios | `run_scenario` — scripted play/wait/assert sequences with structured reports |
 

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
+class FUplinkEventRecorder;
 class FUplinkLogCapture;
 class FUplinkPieManager;
 class FUplinkServer;
@@ -24,5 +25,6 @@ private:
 	TUniquePtr<FUplinkToolRegistry> Registry;
 	TUniquePtr<FUplinkTaskManager> Tasks;
 	TUniquePtr<FUplinkPieManager> Pie;
+	TUniquePtr<FUplinkEventRecorder> Recorder;
 	TUniquePtr<FUplinkServer> Server;
 };

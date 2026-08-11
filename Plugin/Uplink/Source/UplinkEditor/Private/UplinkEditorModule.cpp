@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Low Sze Hao. MIT License.
 
 #include "UplinkEditorModule.h"
+#include "UplinkEventRecorder.h"
 #include "UplinkLogCapture.h"
 #include "UplinkPieManager.h"
 #include "UplinkServer.h"
@@ -24,6 +25,7 @@ void FUplinkEditorModule::StartupModule()
 	Registry = MakeUnique<FUplinkToolRegistry>();
 	Tasks = MakeUnique<FUplinkTaskManager>();
 	Pie = MakeUnique<FUplinkPieManager>(LogCapture.Get());
+	Recorder = MakeUnique<FUplinkEventRecorder>();
 
 	UplinkTools::RegisterCore(*Registry, *LogCapture, *Tasks);
 	UplinkTools::RegisterWorld(*Registry);
@@ -32,6 +34,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterCapture(*Registry);
 	UplinkTools::RegisterPie(*Registry, *Pie);
 	UplinkTools::RegisterControl(*Registry);
+	UplinkTools::RegisterObserve(*Registry, *Recorder);
 
 	Server = MakeUnique<FUplinkServer>(*Registry, *Tasks);
 	if (!Server->Start(GUplinkDefaultPort))
@@ -44,6 +47,7 @@ void FUplinkEditorModule::StartupModule()
 void FUplinkEditorModule::ShutdownModule()
 {
 	Server.Reset();
+	Recorder.Reset();
 	Pie.Reset();
 	Tasks.Reset();
 	Registry.Reset();
