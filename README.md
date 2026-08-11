@@ -16,13 +16,20 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 🚧 **Early development, already usable for editor work.** Compiles against both UE 5.7 and 5.8.
 
-**Available now (18 tools):** `status` · `console_command` · `output_log` (incremental log reads) · `viewport_screenshot` (PNG image results) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor` · `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION by reflection — args in, return value and out-params back as JSON) · `asset_search` / `asset_dependencies` / `asset_referencers` · `task_status` / `task_result` / `task_cancel` / `task_list`. Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play.
+**Available now (24 tools):**
+
+- **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
+- **Editor & world:** `status` · `console_command` · `output_log` (incremental log reads — pair with `pie_status.log_start_index` to read just the current session) · `viewport_screenshot` (PNG image results) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor`
+- **Reflection:** `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION — args in, return value and out-params back as JSON)
+- **Assets:** `asset_search` / `asset_dependencies` / `asset_referencers`
+- **Tasks:** `task_status` / `task_result` / `task_cancel` / `task_list`
+
+Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play.
 
 **Coming next:**
 
 | Layer | Tools |
 |---|---|
-| **PIE lifecycle** | `pie_start` · `pie_stop` · `pie_pause` · `pie_resume` · `pie_step` |
 | **PIE control** | `input_action` (Enhanced Input injection) · `input_key` · `possess` · `player_teleport` |
 | **PIE observation** | `watch_events` / `drain_events` (delegate capture) · `wait_until` · `get_world_state` · `perf_stats` |
 | Blueprints | `bp_query` · `bp_modify` · `bp_compile` |
@@ -79,6 +86,26 @@ Two pieces, one contract:
 cd bridge; npm install
 claude mcp add uplink -- node "<repo>\bridge\index.js"
 ```
+
+## Works with any MCP client
+
+Uplink speaks plain MCP — nothing here is Claude-specific. Any client that supports MCP servers can use it: Cursor, Windsurf, Cline, GitHub Copilot agent mode, Gemini CLI, Codex CLI, ChatGPT connectors, and so on.
+
+- Clients supporting **HTTP ("streamable HTTP") servers** → point them at `http://127.0.0.1:3777/mcp`. Typical config shape:
+
+  ```json
+  { "mcpServers": { "uplink": { "url": "http://127.0.0.1:3777/mcp" } } }
+  ```
+
+- Clients that only support **stdio servers** → use the bridge:
+
+  ```json
+  { "mcpServers": { "uplink": { "command": "node", "args": ["<repo>/bridge/index.js"] } } }
+  ```
+
+Exact config file names and key spellings vary per client — check your client's MCP documentation.
+
+**Security note:** the server binds to loopback only (`127.0.0.1` — your own machine; it is never reachable from the network), validates browser `Origin` headers, and refuses to start if the engine's HTTP listener has been reconfigured to a non-loopback address.
 
 ## Repository layout
 

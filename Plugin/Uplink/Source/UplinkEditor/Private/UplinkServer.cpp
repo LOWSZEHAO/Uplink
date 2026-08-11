@@ -72,6 +72,20 @@ bool FUplinkServer::Start(uint32 InPort)
 
 	Port = InPort;
 
+	// Safety: refuse to start if the engine's HTTP listener has been configured
+	// to bind beyond loopback — this server must never be network-reachable.
+	FString BindAddress;
+	if (GConfig && GConfig->GetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), BindAddress, GEngineIni))
+	{
+		if (!BindAddress.IsEmpty() && BindAddress != TEXT("localhost") && BindAddress != TEXT("127.0.0.1"))
+		{
+			UE_LOG(LogUplink, Error,
+				TEXT("Refusing to start: [HTTPServer.Listeners] DefaultBindAddress is '%s' (not loopback). Uplink only serves localhost."),
+				*BindAddress);
+			return false;
+		}
+	}
+
 	FHttpServerModule& HttpServerModule = FHttpServerModule::Get();
 	Router = HttpServerModule.GetHttpRouter(Port);
 	if (!Router.IsValid())

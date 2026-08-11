@@ -7,6 +7,7 @@
 class FUplinkToolRegistry;
 class FUplinkLogCapture;
 class FUplinkTaskManager;
+class FUplinkPieManager;
 
 namespace UplinkTools
 {
@@ -15,4 +16,5 @@ namespace UplinkTools
 	void RegisterObject(FUplinkToolRegistry& Registry);
 	void RegisterAssets(FUplinkToolRegistry& Registry);
 	void RegisterCapture(FUplinkToolRegistry& Registry);
+	void RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& Pie);
 }

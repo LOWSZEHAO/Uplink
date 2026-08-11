@@ -19,6 +19,7 @@ public class UplinkEditor : ModuleRules
 			"JsonUtilities",
 			"AssetRegistry",
 			"ImageWrapper",
+			"LevelEditor",
 		});
 	}
 }

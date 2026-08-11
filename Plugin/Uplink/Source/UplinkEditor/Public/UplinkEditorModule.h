@@ -6,6 +6,7 @@
 #include "Modules/ModuleManager.h"
 
 class FUplinkLogCapture;
+class FUplinkPieManager;
 class FUplinkServer;
 class FUplinkTaskManager;
 class FUplinkToolRegistry;
@@ -22,5 +23,6 @@ private:
 	TUniquePtr<FUplinkLogCapture> LogCapture;
 	TUniquePtr<FUplinkToolRegistry> Registry;
 	TUniquePtr<FUplinkTaskManager> Tasks;
+	TUniquePtr<FUplinkPieManager> Pie;
 	TUniquePtr<FUplinkServer> Server;
 };
