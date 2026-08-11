@@ -25,6 +25,9 @@ public class UplinkEditor : ModuleRules
 			"BlueprintGraph",
 			"UMG",
 			"UMGEditor",
+			"Niagara",
+			"NiagaraCore",
+			"NiagaraEditor",
 		});
 	}
 }

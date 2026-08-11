@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 46 tools, grouped by layer. Conventions used throughout:
+All 54 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -100,6 +100,23 @@ All 46 tools, grouped by layer. Conventions used throughout:
 |---|---|
 | `anim_query` | Montage/sequence timing truth: play length, frame rate + frame count (sequences), montage sections with times, and every notify with exact trigger time, duration, track and class. `{asset}` |
 | `anim_modify` | `add_notify` `{name, time \| frame, track?, notify_class?}` — a name-only notify becomes a skeleton notify (fires `AnimNotify_<Name>` / montage `OnNotifyBegin`); `remove_notify` `{name \| index}`. Assets are marked dirty, not saved. |
+
+## Niagara (authoring: UE 5.8+ · user parameters: 5.7+)
+
+Built on Epic's `UNiagaraExternalEditUtilities` (new in 5.8, marked experimental by Epic — expect churn between engine versions). On 5.7 the stack-authoring tools report unsupported.
+
+| Tool | What it does |
+|---|---|
+| `niagara_create` | New Niagara System asset, optionally from a template system and/or with an emitter from a template (engine templates like `/Niagara/DefaultAssets/Templates/Emitters/Fountain.Fountain` are always mounted). `{path, template_system?, emitter_template?, emitter_name?}` |
+| `niagara_query` | System summary (emitters, renderers), compile state per script, and stack issues **with Epic's own error/fix descriptions** — read this after edits. `{asset}` |
+| `niagara_add_module` | Add a module script to a stack (e.g. `/Niagara/Modules/Update/Forces/VortexForce.VortexForce` into `ParticleUpdateScript`). Pass `module` to insert after an existing module — **placement matters**: force modules must precede `SolveForcesAndVelocity`. Returns the module's input topology. `{asset, emitter?, script?, module_asset, module?}` |
+| `niagara_module_inputs` | A module's inputs with names, types, values and editability — inputs hidden by static switches are flagged and write-protected. `{asset, emitter?, script?, module}` |
+| `niagara_set_input` | Set a module input's local value (`float,int,bool,vec3,color`); array-form `input` addresses nested dynamic-input chains. `{asset, emitter?, script?, module, input, type, value}` |
+| `niagara_remove_module` | Remove a module from a stack. `{asset, emitter?, script?, module}` |
+| `niagara_set_user_param` | Set an exposed User parameter default on the asset (works on 5.7 too). `{asset, name, type, value}` |
+| `niagara_compile` | Compile + wait + report state and `ready_to_run`. Forced by default — newly added emitters only receive compiled data on a forced pass. `{asset, force?}` |
+
+Instance-level control needs no dedicated tools: `call_function` reaches `NiagaraFunctionLibrary.SpawnSystemAtLocation` and every `NiagaraComponent.SetVariable*`; `watch_events` binds `OnSystemFinished`. Created/edited assets are marked dirty — persist with `EditorAssetLibrary.SaveAsset` before closing the editor.
 
 ## Discovery — reaching everything else
 

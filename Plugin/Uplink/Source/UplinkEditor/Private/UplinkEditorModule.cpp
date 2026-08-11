@@ -42,6 +42,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterReflection(*Registry);
 	UplinkTools::RegisterWidget(*Registry);
 	UplinkTools::RegisterAnim(*Registry);
+	UplinkTools::RegisterNiagara(*Registry);
 
 	// Tools contributed by other plugins: already-loaded providers now, and
 	// late-loading ones as they register their modular feature.
