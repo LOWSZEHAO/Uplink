@@ -87,6 +87,30 @@ All 40 tools, grouped by layer. Conventions used throughout:
 | `bp_modify` | One edit per call, `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay} \| variable_get/variable_set{name}, graph?, x?, y?}` · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
 
+## Discovery — reaching everything else
+
+Two tools turn the engine's whole reflected surface into something searchable, so systems without a dedicated tool (materials, animation, editor asset operations, …) are still reachable:
+
+| Tool | What it does |
+|---|---|
+| `class_info` | Reflect any class: properties (→ `get_property`/`set_property`), functions with full signatures (→ `call_function`), multicast delegates (→ `watch_events`). `{class, contains?, include_inherited?, max?}` |
+| `find_functions` | Search every loaded class for functions by name keyword. Static library functions include `call_via_object_path` — the exact object path to pass to `call_function`. `{query, class_contains?, callable_only?, max?}` |
+
+The pattern, using Epic's scripting libraries (all static BlueprintCallable):
+
+```json
+// 1. discover:  find_functions {"query": "MaterialExpression"}
+//    -> MaterialEditingLibrary::CreateMaterialExpression(...)  [call_via_object_path: /Script/MaterialEditor.Default__MaterialEditingLibrary]
+// 2. call it:
+{ "object_path": "/Script/MaterialEditor.Default__MaterialEditingLibrary",
+  "function": "CreateMaterialExpression",
+  "args": { "Material": "/Game/M_Thing.M_Thing",
+            "ExpressionClass": "/Script/Engine.MaterialExpressionMultiply",
+            "NodePosX": -400 } }
+```
+
+Object and class arguments accept asset/class paths as strings. The same pattern reaches `EditorAssetLibrary` (duplicate/save/delete assets), `AnimationLibrary`, `WidgetBlueprintLibrary`, and every other scripting library in the engine or your project.
+
 ## Security model
 
 The HTTP server binds loopback only (never network-reachable), refuses to start if the engine's HTTP listener has been reconfigured to a non-loopback address or the port is taken by another process, validates browser `Origin` headers on every route, and caps request bodies at 2 MB.
