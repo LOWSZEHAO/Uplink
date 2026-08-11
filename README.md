@@ -28,7 +28,7 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 - **Assets:** `asset_search` / `asset_dependencies` / `asset_referencers`
 - **Tasks:** `task_status` / `task_result` / `task_cancel` / `task_list`
 
-Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play.
+Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play. Full parameter reference: [TOOLS.md](TOOLS.md).
 
 
 ## Extending Uplink with your own tools

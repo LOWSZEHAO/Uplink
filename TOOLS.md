@@ -1,0 +1,92 @@
+# Uplink tool reference
+
+All 40 tools, grouped by layer. Conventions used throughout:
+
+- **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
+- **Actors** are addressed by exact name, exact editor label, or label substring (first match).
+- **Vectors** are `{x,y,z}` objects; **rotators** are `{pitch,yaw,roll}`.
+- **Long-running calls** — pass `wait_ms` (REST) to bound how long the response waits; if the work is still running you get `{task_id, status:"running"}` back — poll with `task_status`, fetch with `task_result`.
+
+## Meta
+
+| Tool | What it does |
+|---|---|
+| `status` | Engine version, project, current map, PIE active? |
+| `console_command` | Run any console command (`stat fps`, `open Map`, …) and return its captured output. `{command, world?}` |
+| `output_log` | Read recent log lines from an in-memory ring buffer. `{since_index?, max?, category?, contains?, verbosity?}` → lines + `next_index` (pass back as `since_index` for incremental reads). |
+| `viewport_screenshot` | PNG of the active viewport — the game viewport during PIE, else the editor viewport. Returned as an MCP image block (HTTP: `image_base64`). |
+| `task_status` / `task_result` / `task_cancel` / `task_list` | Manage long-running tool calls. Results are retained ~3 minutes. |
+
+## Editor world
+
+| Tool | What it does |
+|---|---|
+| `level_actors` | List actors with name/label/class/location. `{world?, class_contains?, name_contains?, max?}` |
+| `spawn_actor` | Spawn by class path (`/Script/Engine.PointLight` or `/Game/BP_X.BP_X_C`). `{class_path, location?, rotation?, label?, world?}` |
+| `delete_actors` | Destroy actors by name/label. `{names:[...], world?}` |
+| `move_actor` | Set location/rotation/scale (any subset), physics-safe in PIE. `{actor, location?, rotation?, scale?, world?}` |
+
+## Reflection
+
+| Tool | What it does |
+|---|---|
+| `get_property` | Read any UPROPERTY as JSON. Target via `object_path`, or `actor` + optional `component`. `{..., property, world?}` |
+| `set_property` | Write any UPROPERTY from JSON; in the editor world also runs `PostEditChangeProperty`. `{..., property, value, world?}` |
+| `call_function` | Call any UFUNCTION by reflection: `args` maps parameter names to JSON values; the response carries the return value and out-params. Unknown arg names are rejected with the expected parameter list. `{..., function, args?, world?}` |
+
+## Assets
+
+| Tool | What it does |
+|---|---|
+| `asset_search` | Name-substring search. `{query?, class_contains?, path_prefix? (default /Game), max?}` — plugin content needs its mount point as `path_prefix` (e.g. `/MyPlugin`). |
+| `asset_dependencies` / `asset_referencers` | Package-level dependency graph. `{package}` |
+
+## PIE lifecycle
+
+| Tool | What it does |
+|---|---|
+| `pie_start` | Start Play-In-Editor; resolves only after BeginPlay has run. `{mode: viewport\|window, location?, rotation?, game_mode?, map?}` → map + `log_start_index` (feed to `output_log.since_index` for session-only logs). |
+| `pie_stop` | End the session; resolves on full shutdown. |
+| `pie_status` | `state` (none/starting/running/stopping), paused, map, elapsed, `log_start_index`. |
+| `pie_pause` / `pie_resume` | Freeze / unfreeze the game world. |
+| `pie_step` | Advance a **paused** session exactly N frames. `{frames?}` |
+
+## Player control (PIE only)
+
+| Tool | What it does |
+|---|---|
+| `input_action` | Enhanced Input injection at the action level — works with zero physical devices. `{action: <UInputAction path>, value: bool\|number\|{x,y,z}, mode: pulse\|hold\|update\|release, duration?}`. `hold`+`duration` auto-releases. |
+| `input_key` | Raw key on the player controller via the engine's simulated-input path. `{key: W\|SpaceBar\|Gamepad_LeftX\|..., event: tap\|pressed\|released\|axis, amount?, duration?}` |
+| `possess` | Switch the player controller to another pawn. `{pawn}` |
+| `player_teleport` | Physics-safe pawn teleport + optional facing. `{location, rotation?}` |
+| `player_info` | Controller, pawn (name/class/location), control rotation. |
+
+## Observation & assertion
+
+| Tool | What it does |
+|---|---|
+| `watch_events` | Record broadcasts of any dynamic multicast delegate (BlueprintAssignable events), with decoded parameter payloads. `{actor/object_path/component, delegate: <name>\|"*", world?}` → `watch_id`. Watches stop automatically when PIE ends. |
+| `drain_events` | Read captured events oldest-first. `{since_seq?, watch_id?, max?}` → events + `next_seq`. |
+| `unwatch` | `{watch_id}` or `{all:true}`. |
+| `wait_until` | Non-blocking assertion. `{condition:{type: property_equals\|actor_exists\|actor_gone\|event_count\|elapsed, ...}, timeout?, world?}` → `{condition_met, timed_out, waited_seconds}` — a timeout is a result, not an error. |
+| `get_world_state` | Actor snapshot with requested property values inline. `{world?, class_contains?, name_contains?, properties?:[...], max?}` |
+| `perf_stats` | Smoothed FPS, average frame ms, last delta, used physical memory. |
+
+## Scripted playtests
+
+| Tool | What it does |
+|---|---|
+| `run_scenario` | Ordered tool steps executed as one task with a structured pass/fail report. `{steps:[{tool, params?, expect?, timeout?}], stop_on_failure?}`. `expect` matches fields of the step's result data; a `wait_until` step whose condition times out fails the scenario unless explicitly expected. |
+
+## Blueprints
+
+| Tool | What it does |
+|---|---|
+| `bp_create` | New Blueprint asset (in memory, marked dirty). `{path, parent_class?}` |
+| `bp_query` | Parent class, compile status, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. `{blueprint, graph?, max_nodes?}` |
+| `bp_modify` | One edit per call, `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay} \| variable_get/variable_set{name}, graph?, x?, y?}` · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
+| `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
+
+## Security model
+
+The HTTP server binds loopback only (never network-reachable), refuses to start if the engine's HTTP listener has been reconfigured to a non-loopback address or the port is taken by another process, validates browser `Origin` headers on every route, and caps request bodies at 2 MB.

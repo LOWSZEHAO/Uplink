@@ -6,6 +6,7 @@
 #include "UplinkMcp.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkTaskManager.h"
+#include "UplinkVersion.h"
 
 #include "Editor.h"
 #include "HttpServerRequest.h"
@@ -33,11 +34,17 @@ namespace
 		return FHttpServerResponse::Create(SerializeJson(Json), TEXT("application/json"));
 	}
 
+	constexpr int32 MaxRequestBodyBytes = 2 * 1024 * 1024;
+
 	TSharedPtr<FJsonObject> ParseBody(const FHttpServerRequest& Request)
 	{
 		if (Request.Body.Num() == 0)
 		{
 			return MakeShared<FJsonObject>();
+		}
+		if (Request.Body.Num() > MaxRequestBodyBytes)
+		{
+			return nullptr;
 		}
 		FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(Request.Body.GetData()), Request.Body.Num());
 		const FString BodyString(Converter.Length(), Converter.Get());
@@ -49,6 +56,26 @@ namespace
 			return nullptr;
 		}
 		return Parsed;
+	}
+
+	// Same browser-CSRF guard as the /mcp endpoint: non-browser clients send no
+	// Origin header and pass; anything claiming a non-loopback origin is denied.
+	bool CheckOrigin(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+	{
+		const TArray<FString>* Origins = Request.Headers.Find(TEXT("Origin"));
+		if (Origins)
+		{
+			for (const FString& Origin : *Origins)
+			{
+				if (!Origin.StartsWith(TEXT("http://localhost")) && !Origin.StartsWith(TEXT("http://127.0.0.1")))
+				{
+					OnComplete(FHttpServerResponse::Error(EHttpServerResponseCodes::Denied,
+						TEXT("forbidden"), TEXT("Origin not allowed")));
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 }
 
@@ -87,9 +114,12 @@ bool FUplinkServer::Start(uint32 InPort)
 	}
 
 	FHttpServerModule& HttpServerModule = FHttpServerModule::Get();
-	Router = HttpServerModule.GetHttpRouter(Port);
+	Router = HttpServerModule.GetHttpRouter(Port, /*bFailOnBindFailure=*/true);
 	if (!Router.IsValid())
 	{
+		UE_LOG(LogUplink, Error,
+			TEXT("Could not bind port %u - is another editor with Uplink already running? This instance's tools are disabled."),
+			Port);
 		return false;
 	}
 
@@ -132,9 +162,13 @@ void FUplinkServer::Stop()
 
 bool FUplinkServer::HandleStatus(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
+	if (!CheckOrigin(Request, OnComplete))
+	{
+		return true;
+	}
 	const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetStringField(TEXT("name"), TEXT("uplink"));
-	Json->SetStringField(TEXT("version"), TEXT("0.2.0"));
+	Json->SetStringField(TEXT("version"), UPLINK_VERSION);
 	Json->SetStringField(TEXT("engine"), FEngineVersion::Current().ToString(EVersionComponent::Patch));
 	Json->SetStringField(TEXT("project"), FApp::GetProjectName());
 	Json->SetBoolField(TEXT("pie_active"), GEditor != nullptr && GEditor->PlayWorld != nullptr);
@@ -155,6 +189,10 @@ bool FUplinkServer::HandleStatus(const FHttpServerRequest& Request, const FHttpR
 
 bool FUplinkServer::HandleListTools(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
+	if (!CheckOrigin(Request, OnComplete))
+	{
+		return true;
+	}
 	const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetArrayField(TEXT("tools"), Registry.BuildMcpToolList());
 	OnComplete(JsonResponse(Json));
@@ -163,6 +201,10 @@ bool FUplinkServer::HandleListTools(const FHttpServerRequest& Request, const FHt
 
 bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
+	if (!CheckOrigin(Request, OnComplete))
+	{
+		return true;
+	}
 	// Path is /tool/{name}.
 	FString ToolName = Request.RelativePath.GetPath();
 	ToolName.RemoveFromStart(TEXT("/tool"));
@@ -183,7 +225,7 @@ bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttp
 	{
 		const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 		Json->SetBoolField(TEXT("success"), false);
-		Json->SetStringField(TEXT("message"), TEXT("request body is not valid JSON"));
+		Json->SetStringField(TEXT("message"), TEXT("request body is not valid JSON (or exceeds 2 MB)"));
 		OnComplete(JsonResponse(Json));
 		return true;
 	}

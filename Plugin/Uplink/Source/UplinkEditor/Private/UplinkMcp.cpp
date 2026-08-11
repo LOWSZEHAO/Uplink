@@ -4,6 +4,7 @@
 #include "UplinkEditorModule.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkTaskManager.h"
+#include "UplinkVersion.h"
 
 #include "HttpServerRequest.h"
 #include "HttpServerResponse.h"
@@ -119,6 +120,12 @@ bool UplinkMcp::Handle(
 		return true;
 	}
 
+	if (Request.Body.Num() > 2 * 1024 * 1024)
+	{
+		RpcError(OnComplete, nullptr, -32600, TEXT("request exceeds 2 MB"));
+		return true;
+	}
+
 	// Decode body (UTF-8 JSON).
 	FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(Request.Body.GetData()), Request.Body.Num());
 	const FString BodyString(Converter.Length(), Converter.Get());
@@ -165,7 +172,7 @@ bool UplinkMcp::Handle(
 		Result->SetObjectField(TEXT("capabilities"), Capabilities);
 		TSharedRef<FJsonObject> ServerInfo = MakeShared<FJsonObject>();
 		ServerInfo->SetStringField(TEXT("name"), TEXT("uplink"));
-		ServerInfo->SetStringField(TEXT("version"), TEXT("0.2.0"));
+		ServerInfo->SetStringField(TEXT("version"), UPLINK_VERSION);
 		Result->SetObjectField(TEXT("serverInfo"), ServerInfo);
 		RpcResult(OnComplete, Id, Result);
 		return true;
