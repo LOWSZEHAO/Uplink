@@ -20,6 +20,8 @@ public class UplinkEditor : ModuleRules
 			"AssetRegistry",
 			"ImageWrapper",
 			"LevelEditor",
+			"InputCore",
+			"EnhancedInput",
 		});
 	}
 }

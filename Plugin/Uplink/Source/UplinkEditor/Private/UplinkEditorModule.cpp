@@ -31,6 +31,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterAssets(*Registry);
 	UplinkTools::RegisterCapture(*Registry);
 	UplinkTools::RegisterPie(*Registry, *Pie);
+	UplinkTools::RegisterControl(*Registry);
 
 	Server = MakeUnique<FUplinkServer>(*Registry, *Tasks);
 	if (!Server->Start(GUplinkDefaultPort))

@@ -20,5 +20,11 @@
 			"LoadingPhase": "PostEngineInit",
 			"PlatformAllowList": [ "Win64" ]
 		}
+	],
+	"Plugins": [
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		}
 	]
 }

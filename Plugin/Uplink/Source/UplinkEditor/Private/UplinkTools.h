@@ -17,4 +17,5 @@ namespace UplinkTools
 	void RegisterAssets(FUplinkToolRegistry& Registry);
 	void RegisterCapture(FUplinkToolRegistry& Registry);
 	void RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& Pie);
+	void RegisterControl(FUplinkToolRegistry& Registry);
 }
