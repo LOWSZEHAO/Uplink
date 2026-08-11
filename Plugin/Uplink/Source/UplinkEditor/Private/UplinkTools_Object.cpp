@@ -2,6 +2,7 @@
 // Reflection tools: get_property, set_property, call_function.
 
 #include "UplinkTools.h"
+#include "UplinkCompat.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -154,6 +155,31 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 			else
 			{
 				Args = MakeShared<FJsonObject>();
+			}
+
+			// Reject arg names that match no parameter — otherwise a typo'd
+			// arg silently becomes a zero-default (found during live testing).
+			TArray<FString> ParamNames;
+			for (TFieldIterator<FProperty> ParamIt(Function); ParamIt; ++ParamIt)
+			{
+				if (ParamIt->HasAnyPropertyFlags(CPF_Parm) && !ParamIt->HasAnyPropertyFlags(CPF_ReturnParm))
+				{
+					ParamNames.Add(ParamIt->GetName());
+				}
+			}
+			for (const auto& ArgPair : Args->Values)
+			{
+				const FString ArgName = UplinkCompat::JsonKeyToString(ArgPair.Key);
+				const bool bKnown = ParamNames.ContainsByPredicate([&ArgName](const FString& ParamName)
+				{
+					return ParamName.Equals(ArgName, ESearchCase::IgnoreCase);
+				});
+				if (!bKnown)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("unknown arg '%s' for %s. Expected parameters: %s"),
+						*ArgName, *FunctionName, *FString::Join(ParamNames, TEXT(", "))));
+				}
 			}
 
 			FText FailReason;

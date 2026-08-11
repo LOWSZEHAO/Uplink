@@ -1,112 +1,83 @@
 // Copyright (c) 2026 Low Sze Hao. MIT License.
-// viewport_screenshot — latent capture of the active viewport (PIE game viewport
-// when a session is running, else the editor viewport).
+// viewport_screenshot — synchronous pixel readback of the active viewport
+// (PIE game viewport during play, else the active editor viewport).
+// Direct ReadPixels is used instead of FScreenshotRequest because the
+// screenshot-captured delegate does not fire for PIE-in-editor-viewport
+// sessions (found during live testing).
 
 #include "UplinkTools.h"
-#include "UplinkCompat.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
 #include "Editor.h"
+#include "Engine/GameViewportClient.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "UnrealClient.h"
 
-namespace
+void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 {
-	struct FCaptureState
-	{
-		bool bDone = false;
-		int32 Width = 0;
-		int32 Height = 0;
-		TArray<FColor> Pixels;
-	};
-
-	class FScreenshotInvocation final : public IUplinkInvocation
-	{
-	public:
-		virtual ~FScreenshotInvocation() override
+	Registry.RegisterQuick(
+		TEXT("viewport_screenshot"),
+		TEXT("Capture the active viewport as a PNG image. During PIE this captures the game viewport (what the player sees); otherwise the active editor viewport."),
+		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
-			if (DelegateHandle.IsValid())
+			FViewport* Viewport = nullptr;
+			FString Source;
+
+			if (GEditor && GEditor->PlayWorld && GEngine && GEngine->GameViewport)
 			{
-				FScreenshotRequest::OnScreenshotCaptured().Remove(DelegateHandle);
+				Viewport = GEngine->GameViewport->Viewport;
+				Source = TEXT("pie_game_viewport");
 			}
-		}
-
-		virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
-		{
-			State = MakeShared<FCaptureState>();
-			TSharedPtr<FCaptureState> LocalState = State;
-			DelegateHandle = FScreenshotRequest::OnScreenshotCaptured().AddLambda(
-				[LocalState](int32 Width, int32 Height, const TArray<FColor>& Colors)
-				{
-					LocalState->Width = Width;
-					LocalState->Height = Height;
-					LocalState->Pixels = Colors;
-					LocalState->bDone = true;
-				});
-
-			const bool bRestrictToGame = GEditor != nullptr && GEditor->PlayWorld != nullptr;
-			UplinkCompat::RequestViewportScreenshot(bRestrictToGame);
-
-			// The request is served on the next viewport draw; nudge non-realtime
-			// editor viewports so one actually happens.
-			if (GEditor)
+			else if (GEditor)
 			{
-				GEditor->RedrawAllViewports(false);
-			}
-			return EUplinkToolStep::Pending;
-		}
-
-		virtual EUplinkToolStep Tick(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
-		{
-			if (!State->bDone)
-			{
-				return EUplinkToolStep::Pending;
+				Viewport = GEditor->GetActiveViewport();
+				Source = TEXT("editor_viewport");
 			}
 
-			FScreenshotRequest::OnScreenshotCaptured().Remove(DelegateHandle);
-			DelegateHandle.Reset();
+			if (!Viewport)
+			{
+				return FUplinkToolResult::Error(TEXT("no viewport available to capture"));
+			}
+
+			const FIntPoint Size = Viewport->GetSizeXY();
+			if (Size.X <= 0 || Size.Y <= 0)
+			{
+				return FUplinkToolResult::Error(TEXT("viewport has zero size"));
+			}
+
+			TArray<FColor> Pixels;
+			if (!Viewport->ReadPixels(Pixels) || Pixels.Num() != Size.X * Size.Y)
+			{
+				return FUplinkToolResult::Error(TEXT("viewport pixel readback failed"));
+			}
+
+			// Scene readback often carries zero alpha; force opaque for the PNG.
+			for (FColor& Pixel : Pixels)
+			{
+				Pixel.A = 255;
+			}
 
 			IImageWrapperModule& ImageWrapperModule =
 				FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
 			const TSharedPtr<IImageWrapper> Png = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
 			if (!Png.IsValid() || !Png->SetRaw(
-				State->Pixels.GetData(), State->Pixels.Num() * sizeof(FColor),
-				State->Width, State->Height, ERGBFormat::BGRA, 8))
+				Pixels.GetData(), Pixels.Num() * sizeof(FColor), Size.X, Size.Y, ERGBFormat::BGRA, 8))
 			{
-				Out = FUplinkToolResult::Error(TEXT("PNG encoding failed"));
-				return EUplinkToolStep::Done;
+				return FUplinkToolResult::Error(TEXT("PNG encoding failed"));
 			}
 
-			Out = FUplinkToolResult::Ok();
+			FUplinkToolResult Out = FUplinkToolResult::Ok();
 			Out.Png = Png->GetCompressed(90);
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
-			Data->SetNumberField(TEXT("width"), State->Width);
-			Data->SetNumberField(TEXT("height"), State->Height);
+			Data->SetNumberField(TEXT("width"), Size.X);
+			Data->SetNumberField(TEXT("height"), Size.Y);
+			Data->SetStringField(TEXT("source"), Source);
 			Out.Data = Data;
-			return EUplinkToolStep::Done;
-		}
-
-	private:
-		TSharedPtr<FCaptureState> State;
-		FDelegateHandle DelegateHandle;
-	};
-}
-
-void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
-{
-	FUplinkToolInfo Info;
-	Info.Name = TEXT("viewport_screenshot");
-	Info.Description = TEXT("Capture the active viewport as a PNG image. During PIE this captures the game viewport (what the player sees); otherwise the editor viewport.");
-	Info.InputSchema = FUplinkToolRegistry::ParseSchema(
-		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"));
-	Info.bReadOnly = true;
-	Info.TimeoutSeconds = 15.0;
-
-	Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
-	{
-		return MakeShared<FScreenshotInvocation>();
-	});
+			return Out;
+		});
 }
