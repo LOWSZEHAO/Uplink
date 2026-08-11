@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 40 tools, grouped by layer. Conventions used throughout:
+All 46 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -84,8 +84,22 @@ All 40 tools, grouped by layer. Conventions used throughout:
 |---|---|
 | `bp_create` | New Blueprint asset (in memory, marked dirty). `{path, parent_class?}` |
 | `bp_query` | Parent class, compile status, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. `{blueprint, graph?, max_nodes?}` |
-| `bp_modify` | One edit per call, `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay} \| variable_get/variable_set{name}, graph?, x?, y?}` · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
+| `bp_modify` | One edit per call, `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay} \| component_bound_event{component, event} — bind a component's or widget's delegate as a graph event (button OnClicked, NiagaraComponent OnSystemFinished, …) \| variable_get/variable_set{name}, graph?, x?, y?}` · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
+
+## Widgets
+
+| Tool | What it does |
+|---|---|
+| `widget_tree` | A Widget Blueprint's hierarchy: name, class, parent, root flag, and `is_variable` (only variables can have events bound). `{blueprint}` |
+| `widget_add` | Construct a widget into the tree, marked as a variable so its events are immediately bindable with `bp_modify component_bound_event`. `{blueprint, class, name, parent?}` |
+
+## Animation
+
+| Tool | What it does |
+|---|---|
+| `anim_query` | Montage/sequence timing truth: play length, frame rate + frame count (sequences), montage sections with times, and every notify with exact trigger time, duration, track and class. `{asset}` |
+| `anim_modify` | `add_notify` `{name, time \| frame, track?, notify_class?}` — a name-only notify becomes a skeleton notify (fires `AnimNotify_<Name>` / montage `OnNotifyBegin`); `remove_notify` `{name \| index}`. Assets are marked dirty, not saved. |
 
 ## Discovery — reaching everything else
 

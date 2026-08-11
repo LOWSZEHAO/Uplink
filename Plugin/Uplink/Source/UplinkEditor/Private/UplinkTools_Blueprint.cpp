@@ -11,6 +11,7 @@
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_Event.h"
 #include "K2Node_VariableGet.h"
@@ -387,8 +388,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint. op: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick} | variable_get/variable_set {name}, graph?, x?, y?} | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. Node handles are guids from bp_query or the add_node response. Set compile=true to compile after the edit."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_node","connect","break_links","delete_node","set_pin_default"]},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"}},"required":["blueprint","op"]})json"),
+		TEXT("Edit a Blueprint. op: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?} | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. Node handles are guids from bp_query or the add_node response. Set compile=true to compile after the edit."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_node","connect","break_links","delete_node","set_pin_default"]},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"}},"required":["blueprint","op"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -466,6 +467,44 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 					UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
 					Node->EventReference.SetExternalMember(FName(*GetString(Ctx.Params, TEXT("name"))), Blueprint->ParentClass);
 					Node->bOverrideFunction = true;
+					NewNode = Node;
+				}
+				else if (Kind == TEXT("component_bound_event"))
+				{
+					// Bind a component's (or widget's) delegate as an event node -
+					// the graph equivalent of clicking + on OnClicked/OnSystemFinished.
+					UClass* OwnerClass = Blueprint->SkeletonGeneratedClass
+						? Blueprint->SkeletonGeneratedClass.Get()
+						: (Blueprint->GeneratedClass ? Blueprint->GeneratedClass.Get() : Blueprint->ParentClass.Get());
+					FObjectProperty* ComponentProperty =
+						FindFProperty<FObjectProperty>(OwnerClass, *GetString(Ctx.Params, TEXT("component")));
+					if (!ComponentProperty)
+					{
+						TArray<FString> Names;
+						for (TFieldIterator<FObjectProperty> It(OwnerClass); It && Names.Num() < 40; ++It)
+						{
+							Names.Add(It->GetName());
+						}
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("component property '%s' not found (widgets must have Is Variable set). Object properties: %s"),
+							*GetString(Ctx.Params, TEXT("component")), *FString::Join(Names, TEXT(", "))));
+					}
+					FMulticastDelegateProperty* DelegateProperty = FindFProperty<FMulticastDelegateProperty>(
+						ComponentProperty->PropertyClass, *GetString(Ctx.Params, TEXT("event")));
+					if (!DelegateProperty)
+					{
+						TArray<FString> Names;
+						for (TFieldIterator<FMulticastDelegateProperty> It(ComponentProperty->PropertyClass); It; ++It)
+						{
+							Names.Add(It->GetName());
+						}
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("event '%s' not found on %s. Delegates: %s"),
+							*GetString(Ctx.Params, TEXT("event")), *ComponentProperty->PropertyClass->GetName(),
+							*FString::Join(Names, TEXT(", "))));
+					}
+					UK2Node_ComponentBoundEvent* Node = NewObject<UK2Node_ComponentBoundEvent>(Graph);
+					Node->InitializeComponentBoundEventParams(ComponentProperty, DelegateProperty);
 					NewNode = Node;
 				}
 				else if (Kind == TEXT("variable_get") || Kind == TEXT("variable_set"))

@@ -40,6 +40,8 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterScenario(*Registry);
 	UplinkTools::RegisterBlueprint(*Registry);
 	UplinkTools::RegisterReflection(*Registry);
+	UplinkTools::RegisterWidget(*Registry);
+	UplinkTools::RegisterAnim(*Registry);
 
 	// Tools contributed by other plugins: already-loaded providers now, and
 	// late-loading ones as they register their modular feature.

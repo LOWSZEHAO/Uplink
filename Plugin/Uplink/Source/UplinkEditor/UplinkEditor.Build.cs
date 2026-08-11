@@ -23,6 +23,8 @@ public class UplinkEditor : ModuleRules
 			"InputCore",
 			"EnhancedInput",
 			"BlueprintGraph",
+			"UMG",
+			"UMGEditor",
 		});
 	}
 }

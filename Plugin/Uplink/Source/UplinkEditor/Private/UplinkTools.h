@@ -23,4 +23,6 @@ namespace UplinkTools
 	void RegisterScenario(FUplinkToolRegistry& Registry);
 	void RegisterBlueprint(FUplinkToolRegistry& Registry);
 	void RegisterReflection(FUplinkToolRegistry& Registry);
+	void RegisterWidget(FUplinkToolRegistry& Registry);
+	void RegisterAnim(FUplinkToolRegistry& Registry);
 }
