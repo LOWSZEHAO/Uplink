@@ -14,9 +14,9 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 ## Status
 
-🚧 **Early development, already usable for editor work.** Compiles against both UE 5.7 and 5.8.
+**v0.9.0 — feature-complete.** 40 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Remaining before 1.0: broader real-project mileage and API polish from feedback.
 
-**Available now (40 tools):**
+**The toolset (40 tools):**
 
 - **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
 - **Control the player:** `input_action` (Enhanced Input injection — pulse, timed hold, live value updates; no physical device needed) · `input_key` (raw key taps/edges/axis through the engine's simulated-input path) · `possess` · `player_teleport` · `player_info`
@@ -30,6 +30,31 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play. Full parameter reference: [TOOLS.md](TOOLS.md).
 
+## Seen in action
+
+Things Uplink has actually done over plain MCP calls, no human at the keyboard:
+
+- **Played a VR game with no headset and no keyboard** — a one-second `input_action` hold on an Enhanced Input move action walked the player pawn 300 units; a raw `input_key` W-tap moved it through the project's real key mappings.
+- **Ran a complete playtest in one call** — a single `run_scenario` request started PIE, teleported the player, walked them with injected input, verified the new position, took a screenshot of the player's view, and shut the session down: 7/7 steps passed in 7.4 seconds with a structured report.
+- **Caught gameplay events with proof** — one `watch_events` call bound all 16 delegates on an actor; destroying it produced captured `OnEndPlay` / `OnDestroyed` events with fully decoded payloads, resolving an asynchronous `wait_until` assertion in 0.33 s.
+- **Authored a working Blueprint from nothing** — created an Actor Blueprint, added a variable, placed and wired `ReceiveBeginPlay` → `PrintString`, compiled with zero errors, then spawned it in a running game: the variable read back correctly and its print appeared in the log.
+
+A taste of the scenario format:
+
+```json
+{ "steps": [
+    { "tool": "pie_start",       "params": { "mode": "viewport" } },
+    { "tool": "player_teleport", "params": { "location": { "x": 0, "y": 0, "z": 0 } } },
+    { "tool": "input_action",    "params": { "action": "/Game/Input/IA_Move.IA_Move",
+                                             "value": { "x": 0, "y": 1 },
+                                             "mode": "hold", "duration": 1.0 } },
+    { "tool": "wait_until",      "params": { "condition": { "type": "property_equals",
+                                             "actor": "MyPawn", "property": "bIsResting",
+                                             "value": false } } },
+    { "tool": "viewport_screenshot" },
+    { "tool": "pie_stop" }
+] }
+```
 
 ## Extending Uplink with your own tools
 
@@ -105,14 +130,15 @@ Uplink speaks plain MCP — nothing here is Claude-specific. Any client that sup
 
 Exact config file names and key spellings vary per client — check your client's MCP documentation.
 
-**Security note:** the server binds to loopback only (`127.0.0.1` — your own machine; it is never reachable from the network), validates browser `Origin` headers, and refuses to start if the engine's HTTP listener has been reconfigured to a non-loopback address.
+**Security note:** the server binds to loopback only (`127.0.0.1` — your own machine; it is never reachable from the network), validates browser `Origin` headers on every route, caps request bodies at 2 MB, and refuses to start if the port is already taken or the engine's HTTP listener has been reconfigured to a non-loopback address.
 
 ## Repository layout
 
 ```
 Plugin/Uplink/     the UE editor plugin (C++)
-bridge/            Node stdio MCP server
+bridge/            Node stdio MCP server (optional)
 scripts/           build + project-linking helpers (PowerShell)
+TOOLS.md           full tool reference (parameters, conventions, security model)
 ```
 
 ## License
