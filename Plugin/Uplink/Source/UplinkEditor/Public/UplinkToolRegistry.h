@@ -8,8 +8,10 @@
 /**
  * Name -> tool definition map. Registration happens once at module startup on
  * the game thread; lookups happen on the game thread (HTTP handlers tick there).
+ * Other plugins add their own tools through IUplinkToolProvider (see
+ * UplinkToolProvider.h) rather than touching this class directly.
  */
-class FUplinkToolRegistry
+class UPLINKEDITOR_API FUplinkToolRegistry
 {
 public:
 	/** Register a tool with a custom invocation factory (latent tools). */

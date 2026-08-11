@@ -20,4 +20,5 @@ namespace UplinkTools
 	void RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& Pie);
 	void RegisterControl(FUplinkToolRegistry& Registry);
 	void RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRecorder& Recorder);
+	void RegisterScenario(FUplinkToolRegistry& Registry);
 }

@@ -27,4 +27,5 @@ private:
 	TUniquePtr<FUplinkPieManager> Pie;
 	TUniquePtr<FUplinkEventRecorder> Recorder;
 	TUniquePtr<FUplinkServer> Server;
+	FDelegateHandle ProviderRegisteredHandle;
 };

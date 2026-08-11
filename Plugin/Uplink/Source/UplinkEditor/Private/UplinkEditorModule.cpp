@@ -6,8 +6,10 @@
 #include "UplinkPieManager.h"
 #include "UplinkServer.h"
 #include "UplinkTaskManager.h"
+#include "UplinkToolProvider.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkTools.h"
+#include "Features/IModularFeatures.h"
 #include "UObject/UObjectGlobals.h"
 
 DEFINE_LOG_CATEGORY(LogUplink);
@@ -35,6 +37,24 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterPie(*Registry, *Pie);
 	UplinkTools::RegisterControl(*Registry);
 	UplinkTools::RegisterObserve(*Registry, *Recorder);
+	UplinkTools::RegisterScenario(*Registry);
+
+	// Tools contributed by other plugins: already-loaded providers now, and
+	// late-loading ones as they register their modular feature.
+	IModularFeatures& ModularFeatures = IModularFeatures::Get();
+	for (IUplinkToolProvider* Provider :
+		ModularFeatures.GetModularFeatureImplementations<IUplinkToolProvider>(IUplinkToolProvider::GetModularFeatureName()))
+	{
+		Provider->RegisterUplinkTools(*Registry);
+	}
+	ProviderRegisteredHandle = ModularFeatures.OnModularFeatureRegistered().AddLambda(
+		[this](const FName& Type, IModularFeature* Feature)
+		{
+			if (Type == IUplinkToolProvider::GetModularFeatureName() && Registry.IsValid() && Feature)
+			{
+				static_cast<IUplinkToolProvider*>(Feature)->RegisterUplinkTools(*Registry);
+			}
+		});
 
 	Server = MakeUnique<FUplinkServer>(*Registry, *Tasks);
 	if (!Server->Start(GUplinkDefaultPort))
@@ -46,6 +66,11 @@ void FUplinkEditorModule::StartupModule()
 
 void FUplinkEditorModule::ShutdownModule()
 {
+	if (ProviderRegisteredHandle.IsValid())
+	{
+		IModularFeatures::Get().OnModularFeatureRegistered().Remove(ProviderRegisteredHandle);
+		ProviderRegisteredHandle.Reset();
+	}
 	Server.Reset();
 	Recorder.Reset();
 	Pie.Reset();
