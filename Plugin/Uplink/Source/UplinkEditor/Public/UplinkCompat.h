@@ -8,6 +8,7 @@
 
 #include "CoreMinimal.h"
 #include "Runtime/Launch/Resources/Version.h"
+#include "UnrealClient.h"
 
 #define UPLINK_UE_AT_LEAST(Major, Minor) \
 	(ENGINE_MAJOR_VERSION > (Major) || (ENGINE_MAJOR_VERSION == (Major) && ENGINE_MINOR_VERSION >= (Minor)))
@@ -21,5 +22,18 @@ namespace UplinkCompat
 	FORCEINLINE FString JsonKeyToString(const KeyType& Key)
 	{
 		return FString(*Key);
+	}
+
+	// UE 5.8 added the bInRestrictToGameViewport parameter to
+	// FScreenshotRequest::RequestScreenshot. On 5.7 the no-UI request already
+	// captures the game viewport when one exists (PIE), so dropping the flag
+	// there preserves the intended behavior.
+	FORCEINLINE void RequestViewportScreenshot(bool bRestrictToGameViewport)
+	{
+#if UPLINK_UE_AT_LEAST(5, 8)
+		FScreenshotRequest::RequestScreenshot(/*bInShowUI=*/false, bRestrictToGameViewport);
+#else
+		FScreenshotRequest::RequestScreenshot(/*bInShowUI=*/false);
+#endif
 	}
 }

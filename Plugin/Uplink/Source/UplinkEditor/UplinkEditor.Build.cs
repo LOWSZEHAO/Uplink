@@ -17,6 +17,8 @@ public class UplinkEditor : ModuleRules
 			"HTTPServer",
 			"Json",
 			"JsonUtilities",
+			"AssetRegistry",
+			"ImageWrapper",
 		});
 	}
 }

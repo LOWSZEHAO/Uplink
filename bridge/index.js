@@ -70,7 +70,9 @@ async function listTools() {
       const { ok, json } = await fetchJson("/tools");
       if (ok && Array.isArray(json.tools)) {
         tools = tools.concat(
-          json.tools.map((t) => ({
+          json.tools
+            .filter((t) => t.name !== "status") // the bridge serves its own status tool
+            .map((t) => ({
             name: t.name,
             description: t.description ?? "",
             inputSchema: t.inputSchema ?? {

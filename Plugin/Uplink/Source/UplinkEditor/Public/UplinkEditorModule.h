@@ -5,7 +5,10 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
+class FUplinkLogCapture;
 class FUplinkServer;
+class FUplinkTaskManager;
+class FUplinkToolRegistry;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogUplink, Log, All);
 
@@ -16,5 +19,8 @@ public:
 	virtual void ShutdownModule() override;
 
 private:
+	TUniquePtr<FUplinkLogCapture> LogCapture;
+	TUniquePtr<FUplinkToolRegistry> Registry;
+	TUniquePtr<FUplinkTaskManager> Tasks;
 	TUniquePtr<FUplinkServer> Server;
 };

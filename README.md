@@ -14,20 +14,19 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 ## Status
 
-🚧 **Early development.** The plugin skeleton (HTTP server on `127.0.0.1:3777` with `/status` and `/tools`) and the MCP stdio bridge are in place and compile against both UE 5.7 and 5.8. The tool registry, editor tools, and the PIE layer land next.
+🚧 **Early development, already usable for editor work.** Compiles against both UE 5.7 and 5.8.
 
-## Capability roadmap
+**Available now (18 tools):** `status` · `console_command` · `output_log` (incremental log reads) · `viewport_screenshot` (PNG image results) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor` · `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION by reflection — args in, return value and out-params back as JSON) · `asset_search` / `asset_dependencies` / `asset_referencers` · `task_status` / `task_result` / `task_cancel` / `task_list`. Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play.
 
-| Layer | Tools (planned) | Phase |
-|---|---|---|
-| Meta | `status` · `console_command` · `output_log` · `viewport_screenshot` · task polling | 1 |
-| Assets | `asset_search` · `asset_dependencies` · `asset_referencers` · `asset_open` | 1 |
-| Blueprints | `bp_query` · `bp_modify` · `bp_compile` | 1 |
-| Editor world | `level_actors` · `spawn_actor` · `delete_actors` · `move_actor` · `get/set_property` · `open_level` | 1 |
-| **PIE lifecycle** | `pie_start` · `pie_stop` · `pie_status` · `pie_pause` · `pie_resume` · `pie_step` | 2 |
-| **PIE control** | `input_action` (Enhanced Input injection) · `input_key` · `call_function` (any UFUNCTION, JSON in/out) · `possess` · `player_teleport` | 3 |
-| **PIE observation** | `watch_events` / `drain_events` (delegate capture) · `wait_until` · `get_world_state` · `pie_screenshot` · `perf_stats` | 4 |
-| Scenarios | `run_scenario` — scripted play/wait/assert sequences with structured reports | 5 |
+**Coming next:**
+
+| Layer | Tools |
+|---|---|
+| **PIE lifecycle** | `pie_start` · `pie_stop` · `pie_pause` · `pie_resume` · `pie_step` |
+| **PIE control** | `input_action` (Enhanced Input injection) · `input_key` · `possess` · `player_teleport` |
+| **PIE observation** | `watch_events` / `drain_events` (delegate capture) · `wait_until` · `get_world_state` · `perf_stats` |
+| Blueprints | `bp_query` · `bp_modify` · `bp_compile` |
+| Scenarios | `run_scenario` — scripted play/wait/assert sequences with structured reports |
 
 ## Architecture
 
@@ -64,14 +63,22 @@ Two pieces, one contract:
    .\scripts\build_all.ps1
    ```
 
-3. **Install the bridge and register it with Claude Code:**
+3. **Register with Claude Code — once, no Node required.** The plugin speaks MCP natively over HTTP:
 
    ```powershell
-   cd bridge; npm install
-   claude mcp add uplink -- node "<repo>\bridge\index.js"
+   claude mcp add --transport http uplink http://127.0.0.1:3777/mcp
    ```
 
-4. In Claude Code, ask for the `status` tool — with the editor running you'll get engine/project/PIE state; without it, a clean "not connected".
+   From then on the flow is just: enable the plugin, start the editor, and the tools are live.
+
+4. In Claude Code, ask for the `status` tool — you'll get engine/project/PIE state back.
+
+**Optional bridge mode.** The native HTTP endpoint only exists while the editor runs, so Claude Code shows the server as disconnected when the editor is closed (reconnect via `/mcp` after launching it). If you prefer tools that stay visible with a clean "editor not running" answer instead, use the Node bridge:
+
+```powershell
+cd bridge; npm install
+claude mcp add uplink -- node "<repo>\bridge\index.js"
+```
 
 ## Repository layout
 
