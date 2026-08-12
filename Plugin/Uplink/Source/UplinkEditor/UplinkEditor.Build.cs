@@ -31,6 +31,9 @@ public class UplinkEditor : ModuleRules
 			"Slate",
 			"SlateCore",
 			"EditorSubsystem",
+			"LevelSequence",
+			"MovieScene",
+			"AnimGraph",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)

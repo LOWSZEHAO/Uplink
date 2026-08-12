@@ -1,6 +1,6 @@
 {
   "name": "uplink-bridge",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "description": "MCP stdio bridge for the Uplink Unreal Engine plugin",

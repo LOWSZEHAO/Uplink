@@ -7,12 +7,20 @@
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
+#include "AnimGraphNode_StateMachineBase.h"
+#include "AnimStateNodeBase.h"
+#include "AnimStateTransitionNode.h"
+#include "Animation/AnimBlueprint.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimTypes.h"
 #include "Animation/Skeleton.h"
+#include "AnimationStateMachineGraph.h"
+#include "EdGraph/EdGraph.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
 
 using namespace UplinkToolUtil;
 
@@ -197,5 +205,278 @@ void UplinkTools::RegisterAnim(FUplinkToolRegistry& Registry)
 			}
 
 			return FUplinkToolResult::Error(TEXT("op must be add_notify or remove_notify"));
+		});
+
+	Registry.RegisterQuick(
+		TEXT("skeleton_query"),
+		TEXT("Read a skeleton's bone hierarchy and sockets. 'asset' is a Skeleton or SkeletalMesh. Bones: name, parent, index (+ local ref-pose transforms with transforms:true). Sockets: name, bone, relative location/rotation."),
+		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string"},"transforms":{"type":"boolean","default":false},"bone_contains":{"type":"string"}},"required":["asset"]})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Path = GetString(Ctx.Params, TEXT("asset"));
+			UObject* Asset = LoadObject<UObject>(nullptr, *Path);
+			USkeleton* Skeleton = Cast<USkeleton>(Asset);
+			USkeletalMesh* Mesh = Cast<USkeletalMesh>(Asset);
+			if (Mesh && !Skeleton)
+			{
+				Skeleton = Mesh->GetSkeleton();
+			}
+			if (!Skeleton)
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("no skeleton found at %s (pass a Skeleton or SkeletalMesh)"), *Path));
+			}
+
+			const FReferenceSkeleton& RefSkeleton = Mesh ? Mesh->GetRefSkeleton() : Skeleton->GetReferenceSkeleton();
+			bool bTransforms = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("transforms")), bTransforms);
+			const FString BoneFilter = GetString(Ctx.Params, TEXT("bone_contains"));
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("skeleton"), Skeleton->GetPathName());
+
+			const TArray<FMeshBoneInfo>& BoneInfo = RefSkeleton.GetRefBoneInfo();
+			const TArray<FTransform>& BonePose = RefSkeleton.GetRefBonePose();
+			TArray<TSharedPtr<FJsonValue>> Bones;
+			for (int32 Index = 0; Index < BoneInfo.Num(); ++Index)
+			{
+				const FString BoneName = BoneInfo[Index].Name.ToString();
+				if (!BoneFilter.IsEmpty() && !BoneName.Contains(BoneFilter, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("name"), BoneName);
+				Row->SetNumberField(TEXT("index"), Index);
+				const int32 ParentIndex = BoneInfo[Index].ParentIndex;
+				if (ParentIndex != INDEX_NONE)
+				{
+					Row->SetStringField(TEXT("parent"), BoneInfo[ParentIndex].Name.ToString());
+				}
+				if (bTransforms && BonePose.IsValidIndex(Index))
+				{
+					Row->SetObjectField(TEXT("location"), VectorToJson(BonePose[Index].GetLocation()));
+					const FRotator Rotation = BonePose[Index].GetRotation().Rotator();
+					TSharedRef<FJsonObject> RotJson = MakeShared<FJsonObject>();
+					RotJson->SetNumberField(TEXT("pitch"), Rotation.Pitch);
+					RotJson->SetNumberField(TEXT("yaw"), Rotation.Yaw);
+					RotJson->SetNumberField(TEXT("roll"), Rotation.Roll);
+					Row->SetObjectField(TEXT("rotation"), RotJson);
+				}
+				Bones.Add(MakeShared<FJsonValueObject>(Row));
+			}
+			Data->SetArrayField(TEXT("bones"), Bones);
+			Data->SetNumberField(TEXT("total_bones"), BoneInfo.Num());
+
+			TArray<TSharedPtr<FJsonValue>> Sockets;
+			auto AddSocket = [&Sockets](const USkeletalMeshSocket* Socket, const TCHAR* Source)
+			{
+				if (!Socket)
+				{
+					return;
+				}
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("name"), Socket->SocketName.ToString());
+				Row->SetStringField(TEXT("bone"), Socket->BoneName.ToString());
+				Row->SetObjectField(TEXT("location"), VectorToJson(Socket->RelativeLocation));
+				TSharedRef<FJsonObject> RotJson = MakeShared<FJsonObject>();
+				RotJson->SetNumberField(TEXT("pitch"), Socket->RelativeRotation.Pitch);
+				RotJson->SetNumberField(TEXT("yaw"), Socket->RelativeRotation.Yaw);
+				RotJson->SetNumberField(TEXT("roll"), Socket->RelativeRotation.Roll);
+				Row->SetObjectField(TEXT("rotation"), RotJson);
+				Row->SetStringField(TEXT("owner"), Source);
+				Sockets.Add(MakeShared<FJsonValueObject>(Row));
+			};
+			for (const TObjectPtr<USkeletalMeshSocket>& Socket : Skeleton->Sockets)
+			{
+				AddSocket(Socket, TEXT("skeleton"));
+			}
+			if (Mesh)
+			{
+				for (const USkeletalMeshSocket* Socket : Mesh->GetMeshOnlySocketList())
+				{
+					AddSocket(Socket, TEXT("mesh"));
+				}
+			}
+			Data->SetArrayField(TEXT("sockets"), Sockets);
+			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("socket_modify"),
+		TEXT("Add, update, or remove a skeleton socket - attachment points for weapons/props. 'asset' is a Skeleton or SkeletalMesh (writes go to the skeleton). op: add {name, bone, location?, rotation?, scale?} | update {name, bone?, location?, rotation?, scale?} | remove {name}. Marked dirty, not saved."),
+		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string"},"op":{"type":"string","enum":["add","update","remove"]},"name":{"type":"string"},"bone":{"type":"string"},"location":{"type":"object"},"rotation":{"type":"object"},"scale":{"type":"object"}},"required":["asset","op","name"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Path = GetString(Ctx.Params, TEXT("asset"));
+			UObject* Asset = LoadObject<UObject>(nullptr, *Path);
+			USkeleton* Skeleton = Cast<USkeleton>(Asset);
+			if (USkeletalMesh* Mesh = Cast<USkeletalMesh>(Asset))
+			{
+				Skeleton = Mesh->GetSkeleton();
+			}
+			if (!Skeleton)
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("no skeleton found at %s"), *Path));
+			}
+
+			const FString Op = GetString(Ctx.Params, TEXT("op"));
+			const FName SocketName(*GetString(Ctx.Params, TEXT("name")));
+			USkeletalMeshSocket* Existing = nullptr;
+			for (const TObjectPtr<USkeletalMeshSocket>& Socket : Skeleton->Sockets)
+			{
+				if (Socket && Socket->SocketName == SocketName)
+				{
+					Existing = Socket;
+					break;
+				}
+			}
+
+			Skeleton->Modify();
+			if (Op == TEXT("add"))
+			{
+				if (Existing)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("socket '%s' already exists"), *SocketName.ToString()));
+				}
+				const FName BoneName(*GetString(Ctx.Params, TEXT("bone")));
+				if (Skeleton->GetReferenceSkeleton().FindBoneIndex(BoneName) == INDEX_NONE)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("bone '%s' not found on %s (skeleton_query lists bones)"), *BoneName.ToString(), *Skeleton->GetName()));
+				}
+				USkeletalMeshSocket* Socket = NewObject<USkeletalMeshSocket>(Skeleton);
+				Socket->SocketName = SocketName;
+				Socket->BoneName = BoneName;
+				Existing = Socket;
+				Skeleton->Sockets.Add(Socket);
+			}
+			else if (Op == TEXT("remove"))
+			{
+				if (!Existing)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("socket '%s' not found"), *SocketName.ToString()));
+				}
+				Skeleton->Sockets.Remove(Existing);
+				Skeleton->MarkPackageDirty();
+				return FUplinkToolResult::Ok(nullptr, TEXT("socket removed"));
+			}
+			else if (Op != TEXT("update"))
+			{
+				return FUplinkToolResult::Error(TEXT("op must be add, update, or remove"));
+			}
+			if (!Existing)
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("socket '%s' not found"), *SocketName.ToString()));
+			}
+
+			const FString NewBone = GetString(Ctx.Params, TEXT("bone"));
+			if (Op == TEXT("update") && !NewBone.IsEmpty())
+			{
+				const FName BoneName(*NewBone);
+				if (Skeleton->GetReferenceSkeleton().FindBoneIndex(BoneName) == INDEX_NONE)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("bone '%s' not found"), *NewBone));
+				}
+				Existing->BoneName = BoneName;
+			}
+			FVector Location, Scale;
+			FRotator Rotation;
+			if (TryGetVector(Ctx.Params, TEXT("location"), Location))
+			{
+				Existing->RelativeLocation = Location;
+			}
+			if (TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation))
+			{
+				Existing->RelativeRotation = Rotation;
+			}
+			if (TryGetVector(Ctx.Params, TEXT("scale"), Scale))
+			{
+				Existing->RelativeScale = Scale;
+			}
+			Skeleton->MarkPackageDirty();
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("socket"), Existing->SocketName.ToString());
+			Data->SetStringField(TEXT("bone"), Existing->BoneName.ToString());
+			Data->SetObjectField(TEXT("location"), VectorToJson(Existing->RelativeLocation));
+			Data->SetStringField(TEXT("skeleton"), Skeleton->GetPathName());
+			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("animbp_query"),
+		TEXT("Read an Animation Blueprint's anim-specific structure: target skeleton, state machines with their states and transitions, and every anim graph node (class + title, which names the assets it plays). Pair with bp_query for the event graph."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"}},"required":["blueprint"]})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Path = GetString(Ctx.Params, TEXT("blueprint"));
+			UAnimBlueprint* AnimBlueprint = LoadObject<UAnimBlueprint>(nullptr, *Path);
+			if (!AnimBlueprint)
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("anim blueprint not found: %s"), *Path));
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("blueprint"), AnimBlueprint->GetPathName());
+			Data->SetStringField(TEXT("skeleton"), AnimBlueprint->TargetSkeleton ? AnimBlueprint->TargetSkeleton->GetPathName() : TEXT(""));
+
+			TArray<UEdGraph*> AllGraphs;
+			AnimBlueprint->GetAllGraphs(AllGraphs);
+
+			TArray<TSharedPtr<FJsonValue>> StateMachines;
+			TArray<TSharedPtr<FJsonValue>> AnimNodes;
+			for (UEdGraph* Graph : AllGraphs)
+			{
+				if (!Graph)
+				{
+					continue;
+				}
+				for (UEdGraphNode* Node : Graph->Nodes)
+				{
+					if (UAnimGraphNode_StateMachineBase* Machine = Cast<UAnimGraphNode_StateMachineBase>(Node))
+					{
+						TSharedRef<FJsonObject> MachineRow = MakeShared<FJsonObject>();
+						MachineRow->SetStringField(TEXT("name"), Machine->GetNodeTitle(ENodeTitleType::ListView).ToString());
+						TArray<TSharedPtr<FJsonValue>> States;
+						TArray<TSharedPtr<FJsonValue>> Transitions;
+						if (Machine->EditorStateMachineGraph)
+						{
+							for (UEdGraphNode* StateGraphNode : Machine->EditorStateMachineGraph->Nodes)
+							{
+								if (UAnimStateTransitionNode* Transition = Cast<UAnimStateTransitionNode>(StateGraphNode))
+								{
+									TSharedRef<FJsonObject> TransitionRow = MakeShared<FJsonObject>();
+									UAnimStateNodeBase* From = Transition->GetPreviousState();
+									UAnimStateNodeBase* To = Transition->GetNextState();
+									TransitionRow->SetStringField(TEXT("from"), From ? From->GetStateName() : TEXT(""));
+									TransitionRow->SetStringField(TEXT("to"), To ? To->GetStateName() : TEXT(""));
+									Transitions.Add(MakeShared<FJsonValueObject>(TransitionRow));
+								}
+								else if (UAnimStateNodeBase* State = Cast<UAnimStateNodeBase>(StateGraphNode))
+								{
+									States.Add(MakeShared<FJsonValueString>(State->GetStateName()));
+								}
+							}
+						}
+						MachineRow->SetArrayField(TEXT("states"), States);
+						MachineRow->SetArrayField(TEXT("transitions"), Transitions);
+						StateMachines.Add(MakeShared<FJsonValueObject>(MachineRow));
+					}
+					else if (Node && Node->GetClass()->GetName().StartsWith(TEXT("AnimGraphNode_")))
+					{
+						TSharedRef<FJsonObject> NodeRow = MakeShared<FJsonObject>();
+						NodeRow->SetStringField(TEXT("class"), Node->GetClass()->GetName());
+						NodeRow->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+						NodeRow->SetStringField(TEXT("graph"), Graph->GetName());
+						AnimNodes.Add(MakeShared<FJsonValueObject>(NodeRow));
+					}
+				}
+			}
+			Data->SetArrayField(TEXT("state_machines"), StateMachines);
+			Data->SetArrayField(TEXT("anim_nodes"), AnimNodes);
+			return FUplinkToolResult::Ok(Data);
 		});
 }

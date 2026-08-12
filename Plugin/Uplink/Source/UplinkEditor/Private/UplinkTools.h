@@ -9,6 +9,7 @@ class FUplinkLogCapture;
 class FUplinkTaskManager;
 class FUplinkPieManager;
 class FUplinkEventRecorder;
+class FUplinkInputRecorder;
 
 namespace UplinkTools
 {
@@ -28,4 +29,8 @@ namespace UplinkTools
 	void RegisterNiagara(FUplinkToolRegistry& Registry);
 	void RegisterSlate(FUplinkToolRegistry& Registry);
 	void RegisterDev(FUplinkToolRegistry& Registry);
+	void RegisterRecord(FUplinkToolRegistry& Registry, FUplinkInputRecorder& Recorder);
+	void RegisterData(FUplinkToolRegistry& Registry);
+	void RegisterTests(FUplinkToolRegistry& Registry);
+	void RegisterSequencer(FUplinkToolRegistry& Registry);
 }

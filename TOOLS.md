@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 61 tools, grouped by layer. Conventions used throughout:
+All 71 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -63,6 +63,31 @@ All 61 tools, grouped by layer. Conventions used throughout:
 | `player_teleport` | Physics-safe pawn teleport + optional facing. `{location, rotation?}` |
 | `player_info` | Controller, pawn (name/class/location), control rotation. |
 | `click_widget` | Click a UMG widget in the running game — menus, buttons, HUD — by synthesizing a real mouse press at the widget's screen position (real hit-testing, like a player's click). `{widget: name (exact, then contains) \| position: {x,y}, world?}` — failure lists the live widget names. |
+
+## Record & replay
+
+| Tool | What it does |
+|---|---|
+| `input_record` | Capture the human's real input (keys, mouse buttons, axes, mouse moves) through a passive Slate tap — play is unaffected. `{action: start\|stop\|status}`; `stop` returns the timestamped events and keeps them as the last take. Auto-stops when PIE ends. |
+| `input_replay` | Replay a take into the running game through the engine's simulated-input path — a regression test from a real play session. `{events? (from a stop; omit = last take), speed?}` |
+
+## Tests & data
+
+| Tool | What it does |
+|---|---|
+| `run_tests` | Run engine/project automation tests whose name contains `filter`, sequentially, with per-test pass/fail, errors and durations. Be specific — some editor tests open maps or take minutes. `{filter, max?}` |
+| `datatable_create` | New DataTable for a row struct. `{path, row_struct}` |
+| `datatable_query` | Row struct, columns, and rows as JSON. `{asset, row?, max?}` |
+| `datatable_modify` | `add_row` `{row, values?}` · `update_row` `{row, values}` · `remove_row` `{row}` · `rename_row` `{row, new_name}` — `values` maps columns to JSON. |
+
+## Skeleton & cinematics
+
+| Tool | What it does |
+|---|---|
+| `skeleton_query` | Bone hierarchy (name/parent/index, optional ref-pose transforms) and sockets of a Skeleton or SkeletalMesh. `{asset, transforms?, bone_contains?}` |
+| `socket_modify` | Add / update / remove skeleton sockets — attachment points for weapons and props. `{asset, op, name, bone?, location?, rotation?, scale?}` |
+| `animbp_query` | Anim Blueprint structure: target skeleton, state machines (states + transitions), and every anim graph node with its title (which names the assets it plays). `{blueprint}` — pair with `bp_query` for the event graph. |
+| `sequence_query` | Level Sequence timing truth: playback range and frame rate, bindings (possessable/spawnable) with tracks, and section start/end in seconds. Playback needs no tool: `call_function` `LevelSequencePlayer.CreateLevelSequencePlayer` + `Play`. `{asset}` |
 
 ## Observation & assertion
 

@@ -2,6 +2,7 @@
 
 #include "UplinkEditorModule.h"
 #include "UplinkEventRecorder.h"
+#include "UplinkInputRecorder.h"
 #include "UplinkLogCapture.h"
 #include "UplinkPieManager.h"
 #include "UplinkServer.h"
@@ -28,6 +29,7 @@ void FUplinkEditorModule::StartupModule()
 	Tasks = MakeUnique<FUplinkTaskManager>();
 	Pie = MakeUnique<FUplinkPieManager>(LogCapture.Get());
 	Recorder = MakeUnique<FUplinkEventRecorder>();
+	InputRecorder = MakeUnique<FUplinkInputRecorder>();
 
 	UplinkTools::RegisterCore(*Registry, *LogCapture, *Tasks);
 	UplinkTools::RegisterWorld(*Registry);
@@ -45,6 +47,10 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterNiagara(*Registry);
 	UplinkTools::RegisterSlate(*Registry);
 	UplinkTools::RegisterDev(*Registry);
+	UplinkTools::RegisterRecord(*Registry, *InputRecorder);
+	UplinkTools::RegisterData(*Registry);
+	UplinkTools::RegisterTests(*Registry);
+	UplinkTools::RegisterSequencer(*Registry);
 
 	// Tools contributed by other plugins: already-loaded providers now, and
 	// late-loading ones as they register their modular feature.
@@ -79,6 +85,7 @@ void FUplinkEditorModule::ShutdownModule()
 		ProviderRegisteredHandle.Reset();
 	}
 	Server.Reset();
+	InputRecorder.Reset();
 	Recorder.Reset();
 	Pie.Reset();
 	Tasks.Reset();

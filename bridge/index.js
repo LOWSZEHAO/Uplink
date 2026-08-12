@@ -95,7 +95,7 @@ async function listTools() {
 // --- server ----------------------------------------------------------------
 
 const server = new Server(
-  { name: "uplink", version: "0.13.0" },
+  { name: "uplink", version: "0.14.0" },
   { capabilities: { tools: {} } }
 );
 
