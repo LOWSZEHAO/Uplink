@@ -6,7 +6,11 @@
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
+#include "Interfaces/IPluginManager.h"
+#include "Interfaces/IProjectManager.h"
 #include "Modules/ModuleManager.h"
+
+using namespace UplinkToolUtil;
 
 #if WITH_LIVE_CODING
 #include "ILiveCodingModule.h"
@@ -130,4 +134,81 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 		return MakeShared<FUnsupported>();
 	});
 #endif
+
+	Registry.RegisterQuick(
+		TEXT("plugin_list"),
+		TEXT("List engine and project plugins with their enabled state - what capabilities this project can draw on. Content and classes of every ENABLED plugin are already reachable (asset_search with path_prefix /PluginName, call_function/class_info see all loaded classes)."),
+		TEXT(R"json({"type":"object","properties":{"filter":{"type":"string"},"enabled_only":{"type":"boolean","default":false},"max":{"type":"number","default":60}}})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Filter = GetString(Ctx.Params, TEXT("filter"));
+			bool bEnabledOnly = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("enabled_only")), bEnabledOnly);
+			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 60)), 1, 500);
+
+			TArray<TSharedPtr<FJsonValue>> Rows;
+			int32 Total = 0;
+			for (const TSharedRef<IPlugin>& Plugin : IPluginManager::Get().GetDiscoveredPlugins())
+			{
+				if (bEnabledOnly && !Plugin->IsEnabled())
+				{
+					continue;
+				}
+				if (!Filter.IsEmpty()
+					&& !Plugin->GetName().Contains(Filter, ESearchCase::IgnoreCase)
+					&& !Plugin->GetDescriptor().FriendlyName.Contains(Filter, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+				++Total;
+				if (Rows.Num() >= Max)
+				{
+					continue;
+				}
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("name"), Plugin->GetName());
+				Row->SetBoolField(TEXT("enabled"), Plugin->IsEnabled());
+				Row->SetStringField(TEXT("category"), Plugin->GetDescriptor().Category);
+				if (Plugin->CanContainContent())
+				{
+					Row->SetStringField(TEXT("content_root"), FString::Printf(TEXT("/%s"), *Plugin->GetName()));
+				}
+				Rows.Add(MakeShared<FJsonValueObject>(Row));
+			}
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetArrayField(TEXT("plugins"), Rows);
+			Data->SetNumberField(TEXT("total_matching"), Total);
+			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("plugin_enable"),
+		TEXT("Enable or disable a plugin for THIS project (writes the .uproject). The editor must restart for the change to load/unload modules - the result says so. Use plugin_list to find names."),
+		TEXT(R"json({"type":"object","properties":{"name":{"type":"string"},"enable":{"type":"boolean","default":true}},"required":["name"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Name = GetString(Ctx.Params, TEXT("name"));
+			bool bEnable = true;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("enable")), bEnable);
+
+			if (!IPluginManager::Get().FindPlugin(Name).IsValid())
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("no plugin named '%s' (plugin_list to browse)"), *Name));
+			}
+			FText FailReason;
+			if (!IProjectManager::Get().SetPluginEnabled(Name, bEnable, FailReason))
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("could not %s '%s': %s"),
+					bEnable ? TEXT("enable") : TEXT("disable"), *Name, *FailReason.ToString()));
+			}
+			if (!IProjectManager::Get().SaveCurrentProjectToDisk(FailReason))
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT(".uproject save failed: %s"), *FailReason.ToString()));
+			}
+			return FUplinkToolResult::Ok(nullptr, FString::Printf(
+				TEXT("'%s' %s in the .uproject - restart the editor for it to take effect"),
+				*Name, bEnable ? TEXT("enabled") : TEXT("disabled")));
+		});
 }

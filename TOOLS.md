@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 75 tools, grouped by layer. Conventions used throughout:
+All 80 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -90,6 +90,16 @@ All 75 tools, grouped by layer. Conventions used throughout:
 | `socket_modify` | Add / update / remove skeleton sockets — attachment points for weapons and props. `{asset, op, name, bone?, location?, rotation?, scale?}` |
 | `animbp_query` | Anim Blueprint structure: target skeleton, state machines (states + transitions), and every anim graph node with its title (which names the assets it plays). `{blueprint}` — pair with `bp_query` for the event graph. |
 | `sequence_query` | Level Sequence timing truth: playback range and frame rate, bindings (possessable/spawnable) with tracks, and section start/end in seconds. Playback needs no tool: `call_function` `LevelSequencePlayer.CreateLevelSequencePlayer` + `Play`. `{asset}` |
+
+## Environment
+
+| Tool | What it does |
+|---|---|
+| `lighting_setup` | One-call scene lighting: ensures the standard stack exists (sun, sky light, sky atmosphere, height fog, volumetric clouds, unbound post-process volume) and applies your per-actor settings JSON. The style knowledge is the caller's; this is the atomic apply. |
+| `landscape_create` | Heightmap file (8/16-bit grayscale PNG or raw .r16, 32768 = zero) → a real Landscape actor, resampled to a valid layout. Generate the heightmap or use real DEM data. `{heightmap_file, location?, scale?, material?}` |
+| `foliage_scatter` | Scatter N instances of a mesh over a circle, each traced down onto the ground — one instanced-mesh actor. `{mesh, count, center, radius, min_scale?, max_scale?, seed?}` |
+| `plugin_list` | Engine + project plugins with enabled state and content roots. Enabled plugins are already fully reachable (assets via `path_prefix`, classes via reflection). |
+| `plugin_enable` | Enable/disable a plugin in the .uproject (editor restart required to take effect). `{name, enable}` |
 
 ## Observation & assertion
 

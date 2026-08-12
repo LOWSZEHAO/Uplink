@@ -33,6 +33,8 @@ public class UplinkEditor : ModuleRules
 			"EditorSubsystem",
 			"AIModule",
 			"AssetTools",
+			"Landscape",
+			"Projects",
 			"LevelSequence",
 			"MovieScene",
 			"AnimGraph",

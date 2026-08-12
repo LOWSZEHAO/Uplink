@@ -30,6 +30,7 @@ namespace UplinkTools
 	void RegisterSlate(FUplinkToolRegistry& Registry);
 	void RegisterDev(FUplinkToolRegistry& Registry);
 	void RegisterRecord(FUplinkToolRegistry& Registry, FUplinkInputRecorder& Recorder);
+	void RegisterEnvironment(FUplinkToolRegistry& Registry);
 	void RegisterData(FUplinkToolRegistry& Registry);
 	void RegisterTests(FUplinkToolRegistry& Registry);
 	void RegisterSequencer(FUplinkToolRegistry& Registry);

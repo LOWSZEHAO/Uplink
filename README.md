@@ -14,9 +14,9 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 ## Status
 
-**v0.15.0 — the fast editor.** 75 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Graphs it authors follow strict style rules: nodes never overlap, exec chains lay out as straight horizontal lanes, and turning wires get reroute knots so runs stay level and clean (`bp_modify` `arrange`; wire rendering is stock Unreal). Remaining before 1.0: broader real-project mileage and API polish from feedback.
+**v0.16.0 — the fast editor.** 80 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Graphs it authors follow strict style rules: nodes never overlap, exec chains lay out as straight horizontal lanes, and turning wires get reroute knots so runs stay level and clean (`bp_modify` `arrange`; wire rendering is stock Unreal). Remaining before 1.0: broader real-project mileage and API polish from feedback.
 
-**The toolset (75 tools):**
+**The toolset (80 tools):**
 
 - **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
 - **Control the player:** `input_action` (Enhanced Input injection — pulse, timed hold, live value updates; no physical device needed) · `input_key` (raw key taps/edges/axis through the engine's simulated-input path) · `click_widget` (click UMG menus and buttons in the running game via real hit-testing) · `possess` · `player_teleport` · `player_info` · `navigate_to` (walk the pawn to a goal on the navmesh, like a click-to-move player)
@@ -31,6 +31,7 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 - **Editor & world:** `status` · `console_command` · `output_log` (incremental log reads — pair with `pie_status.log_start_index` to read just the current session) · `viewport_screenshot` (PNG image results) · `viewport_camera` (frame an actor or set the editor camera before capturing) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor` · `live_compile` (Live Coding patch of the running editor — C++ iteration without restarts)
 - **Reflection:** `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION — args in, return value and out-params back as JSON)
 - **Assets:** `asset_search` / `asset_dependencies` / `asset_referencers` / `asset_import` (bring FBX/textures/audio from disk into the project, automated)
+- **Environment:** `lighting_setup` (whole scene lighting stack in one call) · `landscape_create` (heightmap → real Landscape terrain) · `foliage_scatter` (instanced meshes traced onto the ground) · `plugin_list` / `plugin_enable` (see and toggle the project's plugins)
 - **Tasks:** `task_status` / `task_result` / `task_cancel` / `task_list`
 
 Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play. Full parameter reference: [TOOLS.md](TOOLS.md).

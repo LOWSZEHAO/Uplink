@@ -48,6 +48,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterSlate(*Registry);
 	UplinkTools::RegisterDev(*Registry);
 	UplinkTools::RegisterRecord(*Registry, *InputRecorder);
+	UplinkTools::RegisterEnvironment(*Registry);
 	UplinkTools::RegisterData(*Registry);
 	UplinkTools::RegisterTests(*Registry);
 	UplinkTools::RegisterSequencer(*Registry);
