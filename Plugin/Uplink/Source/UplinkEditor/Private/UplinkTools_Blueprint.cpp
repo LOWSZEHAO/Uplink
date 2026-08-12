@@ -192,6 +192,80 @@ namespace
 		return true;
 	}
 
+	FVector2D EstimateNodeSize(const UEdGraphNode* Node)
+	{
+		int32 In = 0;
+		int32 Out = 0;
+		for (const UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && !Pin->bHidden)
+			{
+				(Pin->Direction == EGPD_Input ? In : Out)++;
+			}
+		}
+		const float Width = (Node->NodeWidth > 0) ? Node->NodeWidth : 280.0f;
+		const float Height = (Node->NodeHeight > 0) ? Node->NodeHeight : (52.0f + 24.0f * FMath::Max(In, Out));
+		return FVector2D(Width, Height);
+	}
+
+	/**
+	 * Authoring style rule: nodes never overlap. Explicit positions are nudged
+	 * down out of occupied space; without a position the node goes on a fresh
+	 * row below everything, aligned with the leftmost column.
+	 */
+	void PlaceNodeWithoutOverlap(UEdGraph* Graph, UEdGraphNode* Node, bool bHasExplicitPos)
+	{
+		if (!bHasExplicitPos)
+		{
+			float MinX = 0.0f;
+			float MaxBottom = 0.0f;
+			bool bAny = false;
+			for (const UEdGraphNode* Other : Graph->Nodes)
+			{
+				if (!Other || Other == Node)
+				{
+					continue;
+				}
+				MinX = bAny ? FMath::Min(MinX, static_cast<float>(Other->NodePosX)) : Other->NodePosX;
+				MaxBottom = FMath::Max(MaxBottom, Other->NodePosY + static_cast<float>(EstimateNodeSize(Other).Y));
+				bAny = true;
+			}
+			if (bAny)
+			{
+				Node->NodePosX = static_cast<int32>(MinX);
+				Node->NodePosY = static_cast<int32>(MaxBottom + 60.0f);
+			}
+		}
+
+		const FVector2D MySize = EstimateNodeSize(Node);
+		const float Margin = 20.0f;
+		for (int32 Guard = 0; Guard < 200; ++Guard)
+		{
+			bool bMoved = false;
+			for (const UEdGraphNode* Other : Graph->Nodes)
+			{
+				if (!Other || Other == Node)
+				{
+					continue;
+				}
+				const FVector2D OtherSize = EstimateNodeSize(Other);
+				const bool bOverlapX = Node->NodePosX < Other->NodePosX + OtherSize.X + Margin
+					&& Other->NodePosX < Node->NodePosX + MySize.X + Margin;
+				const bool bOverlapY = Node->NodePosY < Other->NodePosY + OtherSize.Y + Margin
+					&& Other->NodePosY < Node->NodePosY + MySize.Y + Margin;
+				if (bOverlapX && bOverlapY)
+				{
+					Node->NodePosY = static_cast<int32>(Other->NodePosY + OtherSize.Y + Margin + 8.0f);
+					bMoved = true;
+				}
+			}
+			if (!bMoved)
+			{
+				break;
+			}
+		}
+	}
+
 	void FinalizeNewNode(UEdGraph* Graph, UEdGraphNode* Node, const FUplinkToolContext& Ctx)
 	{
 		Graph->Modify();
@@ -201,6 +275,257 @@ namespace
 		Node->AllocateDefaultPins();
 		Node->NodePosX = static_cast<int32>(GetNumber(Ctx.Params, TEXT("x"), 0));
 		Node->NodePosY = static_cast<int32>(GetNumber(Ctx.Params, TEXT("y"), 0));
+		const bool bHasExplicitPos = Ctx.Params->HasField(FStringView(TEXT("x"))) || Ctx.Params->HasField(FStringView(TEXT("y")));
+		PlaceNodeWithoutOverlap(Graph, Node, bHasExplicitPos);
+	}
+
+	/**
+	 * Authoring style rule: tidy graphs. Left-to-right dependency columns; each
+	 * exec chain becomes one horizontal lane (level pins render as straight
+	 * wires under the orthogonal wire style); pure data nodes sit below the
+	 * lane they feed, one column left of their first consumer.
+	 */
+	int32 ArrangeGraph(UEdGraph* Graph)
+	{
+		TArray<UEdGraphNode*> Nodes;
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (Node)
+			{
+				Nodes.Add(Node);
+			}
+		}
+		if (Nodes.Num() == 0)
+		{
+			return 0;
+		}
+
+		auto IsExecPin = [](const UEdGraphPin* Pin)
+		{
+			return Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec;
+		};
+		auto HasExecPins = [&IsExecPin](const UEdGraphNode* Node)
+		{
+			for (const UEdGraphPin* Pin : Node->Pins)
+			{
+				if (IsExecPin(Pin))
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> Preds;
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> Succs;
+		for (UEdGraphNode* Node : Nodes)
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (!Pin || Pin->Direction != EGPD_Input)
+				{
+					continue;
+				}
+				for (UEdGraphPin* Linked : Pin->LinkedTo)
+				{
+					if (Linked && Linked->GetOwningNode())
+					{
+						Preds.FindOrAdd(Node).AddUnique(Linked->GetOwningNode());
+						Succs.FindOrAdd(Linked->GetOwningNode()).AddUnique(Node);
+					}
+				}
+			}
+		}
+
+		// Longest-path ranks give the left-to-right column order.
+		TMap<UEdGraphNode*, int32> Rank;
+		for (UEdGraphNode* Node : Nodes)
+		{
+			Rank.Add(Node, 0);
+		}
+		for (int32 Pass = 0; Pass < Nodes.Num() + 2; ++Pass)
+		{
+			bool bChanged = false;
+			for (UEdGraphNode* Node : Nodes)
+			{
+				if (const TArray<UEdGraphNode*>* NodePreds = Preds.Find(Node))
+				{
+					for (UEdGraphNode* Pred : *NodePreds)
+					{
+						if (Rank[Node] < Rank[Pred] + 1)
+						{
+							Rank[Node] = Rank[Pred] + 1;
+							bChanged = true;
+						}
+					}
+				}
+			}
+			if (!bChanged)
+			{
+				break;
+			}
+		}
+		// Pure data nodes compress rightward, next to their first consumer.
+		for (UEdGraphNode* Node : Nodes)
+		{
+			if (HasExecPins(Node))
+			{
+				continue;
+			}
+			if (const TArray<UEdGraphNode*>* Consumers = Succs.Find(Node))
+			{
+				int32 MinConsumer = TNumericLimits<int32>::Max();
+				for (UEdGraphNode* Consumer : *Consumers)
+				{
+					MinConsumer = FMath::Min(MinConsumer, Rank[Consumer]);
+				}
+				if (MinConsumer != TNumericLimits<int32>::Max() && MinConsumer > 0)
+				{
+					Rank[Node] = MinConsumer - 1;
+				}
+			}
+		}
+
+		int32 MaxRank = 0;
+		for (const auto& Pair : Rank)
+		{
+			MaxRank = FMath::Max(MaxRank, Pair.Value);
+		}
+		TArray<float> ColWidth;
+		ColWidth.SetNumZeroed(MaxRank + 1);
+		for (UEdGraphNode* Node : Nodes)
+		{
+			ColWidth[Rank[Node]] = FMath::Max(ColWidth[Rank[Node]], static_cast<float>(EstimateNodeSize(Node).X));
+		}
+		TArray<float> ColX;
+		ColX.SetNumZeroed(MaxRank + 1);
+		for (int32 Col = 1; Col <= MaxRank; ++Col)
+		{
+			ColX[Col] = ColX[Col - 1] + ColWidth[Col - 1] + 130.0f;
+		}
+
+		// Exec chains become horizontal lanes: roots first, in visual order.
+		TArray<UEdGraphNode*> Roots;
+		for (UEdGraphNode* Node : Nodes)
+		{
+			if (!HasExecPins(Node))
+			{
+				continue;
+			}
+			bool bHasExecIn = false;
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (IsExecPin(Pin) && Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
+				{
+					bHasExecIn = true;
+					break;
+				}
+			}
+			if (!bHasExecIn)
+			{
+				Roots.Add(Node);
+			}
+		}
+		Roots.Sort([](const UEdGraphNode& A, const UEdGraphNode& B) { return A.NodePosY < B.NodePosY; });
+
+		TSet<UEdGraphNode*> Placed;
+		auto WalkChain = [&IsExecPin, &Placed](UEdGraphNode* Start)
+		{
+			TArray<UEdGraphNode*> Chain;
+			UEdGraphNode* Current = Start;
+			while (Current && !Placed.Contains(Current))
+			{
+				Chain.Add(Current);
+				Placed.Add(Current);
+				UEdGraphNode* Next = nullptr;
+				for (UEdGraphPin* Pin : Current->Pins)
+				{
+					if (IsExecPin(Pin) && Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
+					{
+						Next = Pin->LinkedTo[0]->GetOwningNode();
+						break;
+					}
+				}
+				Current = Next;
+			}
+			return Chain;
+		};
+
+		TArray<TArray<UEdGraphNode*>> Lanes;
+		for (UEdGraphNode* Root : Roots)
+		{
+			if (!Placed.Contains(Root))
+			{
+				Lanes.Add(WalkChain(Root));
+			}
+		}
+		for (UEdGraphNode* Node : Nodes)
+		{
+			if (HasExecPins(Node) && !Placed.Contains(Node))
+			{
+				Lanes.Add(WalkChain(Node));
+			}
+		}
+
+		Graph->Modify();
+		int32 Moved = 0;
+		float LaneY = 0.0f;
+		for (const TArray<UEdGraphNode*>& Chain : Lanes)
+		{
+			float LaneMaxHeight = 0.0f;
+			for (UEdGraphNode* Node : Chain)
+			{
+				Node->Modify();
+				Node->NodePosX = static_cast<int32>(ColX[Rank[Node]]);
+				Node->NodePosY = static_cast<int32>(LaneY);
+				LaneMaxHeight = FMath::Max(LaneMaxHeight, static_cast<float>(EstimateNodeSize(Node).Y));
+				++Moved;
+			}
+
+			// Pure feeders of this chain (transitively) stack below the lane.
+			const float DataY = LaneY + LaneMaxHeight + 60.0f;
+			float MaxBottom = DataY;
+			TMap<int32, float> ColNextY;
+			TArray<UEdGraphNode*> Frontier = Chain;
+			for (int32 Index = 0; Index < Frontier.Num(); ++Index)
+			{
+				if (const TArray<UEdGraphNode*>* NodePreds = Preds.Find(Frontier[Index]))
+				{
+					for (UEdGraphNode* Pred : *NodePreds)
+					{
+						if (HasExecPins(Pred) || Placed.Contains(Pred))
+						{
+							continue;
+						}
+						Placed.Add(Pred);
+						Frontier.Add(Pred);
+						Pred->Modify();
+						Pred->NodePosX = static_cast<int32>(ColX[Rank[Pred]]);
+						float& NextY = ColNextY.FindOrAdd(Rank[Pred]);
+						NextY = FMath::Max(NextY, DataY);
+						Pred->NodePosY = static_cast<int32>(NextY);
+						NextY += EstimateNodeSize(Pred).Y + 40.0f;
+						MaxBottom = FMath::Max(MaxBottom, NextY);
+						++Moved;
+					}
+				}
+			}
+			LaneY = MaxBottom + 100.0f;
+		}
+
+		// Anything left (unconnected pure nodes) goes on its own rows at the end.
+		for (UEdGraphNode* Node : Nodes)
+		{
+			if (!Placed.Contains(Node))
+			{
+				Node->Modify();
+				Node->NodePosX = static_cast<int32>(ColX[Rank[Node]]);
+				Node->NodePosY = static_cast<int32>(LaneY);
+				LaneY += EstimateNodeSize(Node).Y + 40.0f;
+				++Moved;
+			}
+		}
+		return Moved;
 	}
 
 	TSharedRef<FJsonObject> NodeToJson(const UEdGraphNode* Node)
@@ -425,8 +750,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint. op: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?} | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. Node handles are guids from bp_query or the add_node response. Set compile=true to compile after the edit."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_node","connect","break_links","delete_node","set_pin_default"]},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"}},"required":["blueprint","op"]})json"),
+		TEXT("Edit a Blueprint. op: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below; run it after building a graph | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query or the add_node response. Set compile=true to compile after the edit."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_node","arrange","connect","break_links","delete_node","set_pin_default"]},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"}},"required":["blueprint","op"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -501,10 +826,35 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 				}
 				else if (Kind == TEXT("event"))
 				{
-					UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
-					Node->EventReference.SetExternalMember(FName(*GetString(Ctx.Params, TEXT("name"))), Blueprint->ParentClass);
-					Node->bOverrideFunction = true;
-					NewNode = Node;
+					// New actor blueprints carry disabled ghost placeholders for the
+					// common events; reuse (and enable) a matching one instead of
+					// stacking a duplicate on top of it.
+					const FName EventName(*GetString(Ctx.Params, TEXT("name")));
+					UK2Node_Event* Existing = nullptr;
+					for (UEdGraphNode* GraphNode : Graph->Nodes)
+					{
+						UK2Node_Event* Event = Cast<UK2Node_Event>(GraphNode);
+						if (Event && Event->bOverrideFunction && Event->EventReference.GetMemberName() == EventName)
+						{
+							Existing = Event;
+							break;
+						}
+					}
+					if (Existing)
+					{
+						Existing->Modify();
+						Existing->SetEnabledState(ENodeEnabledState::Enabled);
+						Data->SetObjectField(TEXT("node"), NodeToJson(Existing));
+						Data->SetBoolField(TEXT("reused"), true);
+						NewNode = nullptr;
+					}
+					else
+					{
+						UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
+						Node->EventReference.SetExternalMember(EventName, Blueprint->ParentClass);
+						Node->bOverrideFunction = true;
+						NewNode = Node;
+					}
 				}
 				else if (Kind == TEXT("component_bound_event"))
 				{
@@ -565,8 +915,20 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 					return FUplinkToolResult::Error(TEXT("kind must be call_function, custom_event, event, variable_get, or variable_set"));
 				}
 
-				FinalizeNewNode(Graph, NewNode, Ctx);
-				Data->SetObjectField(TEXT("node"), NodeToJson(NewNode));
+				if (NewNode)
+				{
+					FinalizeNewNode(Graph, NewNode, Ctx);
+					Data->SetObjectField(TEXT("node"), NodeToJson(NewNode));
+				}
+			}
+			else if (Op == TEXT("arrange"))
+			{
+				UEdGraph* Graph = FindGraph(Blueprint, GetString(Ctx.Params, TEXT("graph")), Error);
+				if (!Graph)
+				{
+					return FUplinkToolResult::Error(Error);
+				}
+				Data->SetNumberField(TEXT("moved"), ArrangeGraph(Graph));
 			}
 			else if (Op == TEXT("connect"))
 			{
@@ -643,7 +1005,7 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 			}
 			else
 			{
-				return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_node, connect, break_links, delete_node, set_pin_default)"));
+				return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_node, arrange, connect, break_links, delete_node, set_pin_default)"));
 			}
 
 			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
