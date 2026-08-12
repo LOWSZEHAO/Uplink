@@ -157,6 +157,18 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				Args = MakeShared<FJsonObject>();
 			}
 
+			// Calling an instance method on a class-default object runs with a
+			// bogus 'this' and can take the editor down (crashed it once by
+			// calling a subsystem's OpenEditorForAssets through its CDO).
+			// Statics are safe - that is how the scripting libraries are used.
+			if (Object->HasAnyFlags(RF_ClassDefaultObject) && !Function->HasAnyFunctionFlags(FUNC_Static))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is an instance method and '%s' is a class-default object; calling it would run without a valid instance and can crash the editor. ")
+					TEXT("Use a real instance (spawn/find the actor, or a subsystem instance) - only static library functions may be called through a Default__ path."),
+					*FunctionName, *Object->GetName()));
+			}
+
 			// Reject arg names that match no parameter — otherwise a typo'd
 			// arg silently becomes a zero-default (found during live testing).
 			TArray<FString> ParamNames;
