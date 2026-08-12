@@ -46,9 +46,22 @@ namespace
 		return Text;
 	}
 
+	/**
+	 * Every reachable window. Asset editors can spawn as CHILD windows of the
+	 * main frame (5.7 does this; 5.8 docks them as tabs instead) and child
+	 * windows are absent from the top-level list - walk them in too.
+	 */
 	TArray<TSharedRef<SWindow>> TopLevelWindows()
 	{
-		return FSlateApplication::Get().GetInteractiveTopLevelWindows();
+		TArray<TSharedRef<SWindow>> Windows = FSlateApplication::Get().GetInteractiveTopLevelWindows();
+		for (int32 Index = 0; Index < Windows.Num(); ++Index)
+		{
+			for (const TSharedRef<SWindow>& Child : Windows[Index]->GetChildWindows())
+			{
+				Windows.Add(Child);
+			}
+		}
+		return Windows;
 	}
 
 	/**
