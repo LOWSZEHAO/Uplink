@@ -14,9 +14,9 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 ## Status
 
-**v0.9.0 — feature-complete.** 40 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Remaining before 1.0: broader real-project mileage and API polish from feedback.
+**v0.10.0 — the wide editor.** 54 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Remaining before 1.0: broader real-project mileage and API polish from feedback.
 
-**The toolset (40 tools):**
+**The toolset (54 tools):**
 
 - **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
 - **Control the player:** `input_action` (Enhanced Input injection — pulse, timed hold, live value updates; no physical device needed) · `input_key` (raw key taps/edges/axis through the engine's simulated-input path) · `possess` · `player_teleport` · `player_info`

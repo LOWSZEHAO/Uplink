@@ -142,6 +142,18 @@ The pattern, using Epic's scripting libraries (all static BlueprintCallable):
 
 Object and class arguments accept asset/class paths as strings. The same pattern reaches `EditorAssetLibrary` (duplicate/save/delete assets), `AnimationLibrary`, `WidgetBlueprintLibrary`, and every other scripting library in the engine or your project.
 
+**Worked recipe — material graph authoring** (no dedicated tools needed; every call verified):
+
+```json
+// duplicate a base:      EditorAssetLibrary.DuplicateAsset {SourceAssetPath, DestinationAssetPath}
+// add an expression:     MaterialEditingLibrary.CreateMaterialExpression {Material, ExpressionClass, NodePosX, NodePosY}
+// wire two expressions:  MaterialEditingLibrary.ConnectMaterialExpressions {FromExpression, FromOutputName, ToExpression, ToInputName}
+// wire to an output pin: MaterialEditingLibrary.ConnectMaterialProperty {FromExpression, FromOutputName, Property (e.g. MP_BaseColor)}
+// tidy + rebuild:        MaterialEditingLibrary.LayoutMaterialExpressions {Material} · RecompileMaterial {Material}
+```
+
+Expression object paths come back from each create call; set their fields (e.g. a Constant3Vector's `Constant`) with `set_property`.
+
 ## Security model
 
 The HTTP server binds loopback only (never network-reachable), refuses to start if the engine's HTTP listener has been reconfigured to a non-loopback address or the port is taken by another process, validates browser `Origin` headers on every route, and caps request bodies at 2 MB.
