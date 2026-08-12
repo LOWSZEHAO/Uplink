@@ -6,7 +6,6 @@
 #include "Modules/ModuleManager.h"
 
 class FUplinkEventRecorder;
-class FUplinkGraphWires;
 class FUplinkLogCapture;
 class FUplinkPieManager;
 class FUplinkServer;
@@ -27,7 +26,6 @@ private:
 	TUniquePtr<FUplinkTaskManager> Tasks;
 	TUniquePtr<FUplinkPieManager> Pie;
 	TUniquePtr<FUplinkEventRecorder> Recorder;
-	TUniquePtr<FUplinkGraphWires> GraphWires;
 	TUniquePtr<FUplinkServer> Server;
 	FDelegateHandle ProviderRegisteredHandle;
 };

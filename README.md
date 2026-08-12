@@ -14,7 +14,7 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 ## Status
 
-**v0.12.0 — the wide editor.** 58 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Graphs it authors follow strict style rules: nodes never overlap, exec chains lay out as straight horizontal lanes (`bp_modify` `arrange`), and wires in every graph editor render as clean lines with rounded 90° elbows instead of splines (`uplink.TidyWires`). Remaining before 1.0: broader real-project mileage and API polish from feedback.
+**v0.12.2 — the wide editor.** 58 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Graphs it authors follow strict style rules: nodes never overlap, exec chains lay out as straight horizontal lanes, and turning wires get reroute knots so runs stay level and clean (`bp_modify` `arrange`; wire rendering is stock Unreal). Remaining before 1.0: broader real-project mileage and API polish from feedback.
 
 **The toolset (58 tools):**
 

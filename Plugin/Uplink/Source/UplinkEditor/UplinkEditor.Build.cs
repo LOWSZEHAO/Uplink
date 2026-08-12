@@ -31,7 +31,6 @@ public class UplinkEditor : ModuleRules
 			"Slate",
 			"SlateCore",
 			"EditorSubsystem",
-			"GraphEditor",
 		});
 	}
 }

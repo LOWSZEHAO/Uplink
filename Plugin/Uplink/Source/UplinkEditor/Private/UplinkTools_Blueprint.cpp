@@ -21,6 +21,7 @@
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_Event.h"
+#include "K2Node_Knot.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -279,14 +280,141 @@ namespace
 		PlaceNodeWithoutOverlap(Graph, Node, bHasExplicitPos);
 	}
 
+	/** Estimated Y of a pin's row, for headless layout decisions. */
+	float EstimatePinY(const UEdGraphNode* Node, const UEdGraphPin* Pin)
+	{
+		int32 Row = 0;
+		for (const UEdGraphPin* Other : Node->Pins)
+		{
+			if (Other == Pin)
+			{
+				break;
+			}
+			if (Other && !Other->bHidden && Other->Direction == Pin->Direction)
+			{
+				++Row;
+			}
+		}
+		return Node->NodePosY + 38.0f + 24.0f * Row;
+	}
+
+	/** Remove every reroute knot, reconnecting what flowed through it. */
+	void RemoveKnots(UEdGraph* Graph)
+	{
+		TArray<UK2Node_Knot*> Knots;
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UK2Node_Knot* Knot = Cast<UK2Node_Knot>(Node))
+			{
+				Knots.Add(Knot);
+			}
+		}
+		for (UK2Node_Knot* Knot : Knots)
+		{
+			UEdGraphPin* In = Knot->GetInputPin();
+			UEdGraphPin* Out = Knot->GetOutputPin();
+			if (In && Out)
+			{
+				TArray<UEdGraphPin*> Sources = In->LinkedTo;
+				TArray<UEdGraphPin*> Targets = Out->LinkedTo;
+				for (UEdGraphPin* Source : Sources)
+				{
+					for (UEdGraphPin* Target : Targets)
+					{
+						Source->MakeLinkTo(Target);
+					}
+				}
+			}
+			Knot->BreakAllNodeLinks();
+			Graph->RemoveNode(Knot);
+		}
+	}
+
+	/**
+	 * The stock way to tidy a turning wire: a reroute knot. The wire leaves the
+	 * source pin dead level, hits the knot just before the target column, and
+	 * the engine's own spline makes the drop into the pin.
+	 */
+	int32 InsertKnotsAtTurns(UEdGraph* Graph)
+	{
+		struct FTurn
+		{
+			UEdGraphPin* Source = nullptr;
+			UEdGraphPin* Target = nullptr;
+			float KnotX = 0.0f;
+			float KnotY = 0.0f;
+		};
+		TArray<FTurn> Turns;
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node || Node->IsA<UK2Node_Knot>())
+			{
+				continue;
+			}
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (!Pin || Pin->Direction != EGPD_Output)
+				{
+					continue;
+				}
+				for (UEdGraphPin* Linked : Pin->LinkedTo)
+				{
+					UEdGraphNode* TargetNode = Linked ? Linked->GetOwningNode() : nullptr;
+					if (!TargetNode || TargetNode->IsA<UK2Node_Knot>())
+					{
+						continue;
+					}
+					const float SourceY = EstimatePinY(Node, Pin);
+					const float TargetY = EstimatePinY(TargetNode, Linked);
+					const float SourceRight = Node->NodePosX + static_cast<float>(EstimateNodeSize(Node).X);
+					const float Gap = TargetNode->NodePosX - SourceRight;
+					if (FMath::Abs(SourceY - TargetY) > 40.0f && Gap > 120.0f)
+					{
+						FTurn Turn;
+						Turn.Source = Pin;
+						Turn.Target = Linked;
+						Turn.KnotX = TargetNode->NodePosX - 56.0f;
+						Turn.KnotY = SourceY - 8.0f;
+						Turns.Add(Turn);
+					}
+				}
+			}
+		}
+
+		for (const FTurn& Turn : Turns)
+		{
+			UK2Node_Knot* Knot = NewObject<UK2Node_Knot>(Graph);
+			Graph->AddNode(Knot, /*bFromUI=*/false, /*bSelectNewNode=*/false);
+			Knot->CreateNewGuid();
+			Knot->PostPlacedNewNode();
+			Knot->AllocateDefaultPins();
+			Knot->NodePosX = static_cast<int32>(Turn.KnotX);
+			Knot->NodePosY = static_cast<int32>(Turn.KnotY);
+
+			Turn.Source->BreakLinkTo(Turn.Target);
+			if (!Graph->GetSchema()->TryCreateConnection(Turn.Source, Knot->GetInputPin())
+				|| !Graph->GetSchema()->TryCreateConnection(Knot->GetOutputPin(), Turn.Target))
+			{
+				// Knot rejected (wildcard propagation failed) - restore the direct wire.
+				Knot->BreakAllNodeLinks();
+				Graph->RemoveNode(Knot);
+				Turn.Source->MakeLinkTo(Turn.Target);
+			}
+		}
+		return Turns.Num();
+	}
+
 	/**
 	 * Authoring style rule: tidy graphs. Left-to-right dependency columns; each
-	 * exec chain becomes one horizontal lane (level pins render as straight
-	 * wires under the orthogonal wire style); pure data nodes sit below the
-	 * lane they feed, one column left of their first consumer.
+	 * exec chain becomes one horizontal lane (level pins = straight wires);
+	 * pure data nodes sit below the lane they feed, one column left of their
+	 * first consumer; wires that change height get a reroute knot at the turn.
 	 */
 	int32 ArrangeGraph(UEdGraph* Graph)
 	{
+		RemoveKnots(Graph);
+
 		TArray<UEdGraphNode*> Nodes;
 		for (UEdGraphNode* Node : Graph->Nodes)
 		{
@@ -525,6 +653,8 @@ namespace
 				++Moved;
 			}
 		}
+
+		InsertKnotsAtTurns(Graph);
 		return Moved;
 	}
 

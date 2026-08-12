@@ -2,7 +2,6 @@
 
 #include "UplinkEditorModule.h"
 #include "UplinkEventRecorder.h"
-#include "UplinkGraphWires.h"
 #include "UplinkLogCapture.h"
 #include "UplinkPieManager.h"
 #include "UplinkServer.h"
@@ -63,9 +62,6 @@ void FUplinkEditorModule::StartupModule()
 			}
 		});
 
-	GraphWires = MakeUnique<FUplinkGraphWires>();
-	GraphWires->Startup();
-
 	Server = MakeUnique<FUplinkServer>(*Registry, *Tasks);
 	if (!Server->Start(GUplinkDefaultPort))
 	{
@@ -82,11 +78,6 @@ void FUplinkEditorModule::ShutdownModule()
 		ProviderRegisteredHandle.Reset();
 	}
 	Server.Reset();
-	if (GraphWires.IsValid())
-	{
-		GraphWires->Shutdown();
-		GraphWires.Reset();
-	}
 	Recorder.Reset();
 	Pie.Reset();
 	Tasks.Reset();
