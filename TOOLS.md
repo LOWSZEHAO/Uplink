@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 54 tools, grouped by layer. Conventions used throughout:
+All 55 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -113,6 +113,7 @@ Built on Epic's `UNiagaraExternalEditUtilities` (new in 5.8, marked experimental
 | `niagara_module_inputs` | A module's inputs with names, types, values and editability — inputs hidden by static switches are flagged and write-protected. `{asset, emitter?, script?, module}` |
 | `niagara_set_input` | Set a module input's local value (`float,int,bool,vec3,color`); array-form `input` addresses nested dynamic-input chains. `{asset, emitter?, script?, module, input, type, value}` |
 | `niagara_remove_module` | Remove a module from a stack. `{asset, emitter?, script?, module}` |
+| `niagara_renderer` | Read or write a renderer's properties as JSON — most usefully the sprite material: `{"Material":{"refPath":"/Game/FX/M_Dust.M_Dust"}}`. Partial updates merge over current values. `{asset, emitter, renderer_index?, properties?}` |
 | `niagara_set_user_param` | Set an exposed User parameter default on the asset (works on 5.7 too). `{asset, name, type, value}` |
 | `niagara_compile` | Compile + wait + report state and `ready_to_run`. Forced by default — newly added emitters only receive compiled data on a forced pass. `{asset, force?}` |
 

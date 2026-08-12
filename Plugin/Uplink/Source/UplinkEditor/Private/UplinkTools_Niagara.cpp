@@ -10,6 +10,9 @@
 #include "UplinkToolUtil.h"
 
 #include "JsonObjectConverter.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraScript.h"
 #include "NiagaraSystem.h"
@@ -348,6 +351,75 @@ void UplinkTools::RegisterNiagara(FUplinkToolRegistry& Registry)
 			}
 			System->MarkPackageDirty();
 			return FUplinkToolResult::Ok(nullptr, TEXT("input set"));
+#else
+			return FUplinkToolResult::Error(NotSupportedMessage);
+#endif
+		});
+
+	Registry.RegisterQuick(
+		TEXT("niagara_renderer"),
+		TEXT("Read or write a renderer's properties as JSON (e.g. swap the sprite material: properties {\"Material\":\"/Game/FX/M_Dust.M_Dust\"}). Omit 'properties' to read the current values. renderer_index defaults to 0. UE 5.8+ only."),
+		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string"},"emitter":{"type":"string"},"renderer_index":{"type":"number","default":0},"properties":{"type":"object","description":"Fields to change; omit to read"}},"required":["asset","emitter"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+#if UPLINK_UE_AT_LEAST(5, 8)
+			FString Error;
+			UNiagaraSystem* System = LoadSystem(Ctx, Error);
+			if (!System)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+
+			FNiagaraExt_StackItemReference Ref;
+			Ref.System = System;
+			Ref.EmitterName = FName(*GetString(Ctx.Params, TEXT("emitter")));
+			Ref.RendererIndex = static_cast<int32>(GetNumber(Ctx.Params, TEXT("renderer_index"), 0));
+
+			FNiagaraExternalEditContext Context(System);
+			FNiagaraExt_RendererData Current;
+			UNiagaraExternalEditUtilities::GetRendererData(Ref, Current, Context);
+			if (Context.HasErrors())
+			{
+				return ContextErrors(Context, TEXT("GetRendererData"));
+			}
+
+			const TSharedPtr<FJsonObject>* Changes = nullptr;
+			if (Ctx.Params->TryGetObjectField(FStringView(TEXT("properties")), Changes) && Changes->IsValid())
+			{
+				// Merge the requested fields over the current property JSON so a
+				// partial update never wipes the rest of the renderer's setup.
+				TSharedPtr<FJsonObject> Merged;
+				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Current.PropertyValues);
+				if (!FJsonSerializer::Deserialize(Reader, Merged) || !Merged.IsValid())
+				{
+					Merged = MakeShared<FJsonObject>();
+				}
+				for (const auto& Pair : (*Changes)->Values)
+				{
+					Merged->SetField(UplinkCompat::JsonKeyToString(Pair.Key), Pair.Value);
+				}
+
+				FNiagaraExt_RendererData NewData;
+				{
+					const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&NewData.PropertyValues);
+					FJsonSerializer::Serialize(Merged.ToSharedRef(), Writer);
+				}
+				UNiagaraExternalEditUtilities::SetRendererData(Ref, NewData, Context);
+				if (Context.HasErrors())
+				{
+					return ContextErrors(Context, TEXT("SetRendererData"));
+				}
+				System->MarkPackageDirty();
+				UNiagaraExternalEditUtilities::GetRendererData(Ref, Current, Context);
+			}
+
+			TSharedPtr<FJsonObject> CurrentJson;
+			const TSharedRef<TJsonReader<>> CurrentReader = TJsonReaderFactory<>::Create(Current.PropertyValues);
+			FJsonSerializer::Deserialize(CurrentReader, CurrentJson);
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetObjectField(TEXT("renderer"), CurrentJson.IsValid() ? CurrentJson.ToSharedRef() : MakeShared<FJsonObject>());
+			return FUplinkToolResult::Ok(Data);
 #else
 			return FUplinkToolResult::Error(NotSupportedMessage);
 #endif
