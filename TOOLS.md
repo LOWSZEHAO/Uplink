@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 80 tools, grouped by layer. Conventions used throughout:
+All 81 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -23,6 +23,7 @@ All 80 tools, grouped by layer. Conventions used throughout:
 |---|---|
 | `level_actors` | List actors with name/label/class/location. `{world?, class_contains?, name_contains?, max?}` |
 | `spawn_actor` | Spawn by class path (`/Script/Engine.PointLight` or `/Game/BP_X.BP_X_C`). `{class_path, location?, rotation?, label?, world?}` |
+| `spawn_batch` | Spawn up to 1000 actors in one call — scene assembly at scale. Each entry is `{mesh \| class_path, location, rotation?, scale?, label?, material?}`; `mesh` spawns a movable StaticMeshActor with optional material override. Fails fast with the failing index. `{actors:[...], world?}` |
 | `delete_actors` | Destroy actors by name/label. `{names:[...], world?}` |
 | `move_actor` | Set location/rotation/scale (any subset), physics-safe in PIE. `{actor, location?, rotation?, scale?, world?}` |
 | `viewport_camera` | Move the editor viewport camera: `focus_actor` frames an actor (like pressing F), or set `location`/`rotation` directly — pair with `viewport_screenshot`. `{focus_actor?, location?, rotation?}` |

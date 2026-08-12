@@ -7,7 +7,10 @@
 
 #include "Editor.h"
 #include "LevelEditorViewport.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
+#include "Materials/MaterialInterface.h"
 #include "GameFramework/Actor.h"
 
 using namespace UplinkToolUtil;
@@ -221,6 +224,109 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("name"), Actor->GetName());
 			Data->SetObjectField(TEXT("location"), VectorToJson(Actor->GetActorLocation()));
+			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("spawn_batch"),
+		TEXT("Spawn many actors in one call - the scene-assembly workhorse. Each entry: {mesh: static mesh path (spawns a StaticMeshActor with it) OR class_path, location, rotation?, scale?, label?, material?}. A city block, a prop set, or a whole layout lands in a single request. Returns each spawned actor's name."),
+		TEXT(R"json({"type":"object","properties":{"actors":{"type":"array","items":{"type":"object"}},"world":{"type":"string","enum":["editor","pie"]}},"required":["actors"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			FString Error;
+			UWorld* World = Ctx.ResolveWorld(Error);
+			if (!World)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Specs = nullptr;
+			if (!Ctx.Params->TryGetArrayField(FStringView(TEXT("actors")), Specs) || Specs->Num() == 0)
+			{
+				return FUplinkToolResult::Error(TEXT("'actors' must be a non-empty array"));
+			}
+			if (Specs->Num() > 1000)
+			{
+				return FUplinkToolResult::Error(TEXT("max 1000 actors per call"));
+			}
+
+			UClass* StaticMeshActorClass = StaticLoadClass(AActor::StaticClass(), nullptr, TEXT("/Script/Engine.StaticMeshActor"));
+			TArray<TSharedPtr<FJsonValue>> Spawned;
+			for (int32 Index = 0; Index < Specs->Num(); ++Index)
+			{
+				const TSharedPtr<FJsonObject>* Spec = nullptr;
+				if (!(*Specs)[Index]->TryGetObject(Spec) || !Spec->IsValid())
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d] is not an object - %d spawned before the failure"), Index, Spawned.Num()));
+				}
+
+				FVector Location = FVector::ZeroVector;
+				TryGetVector(*Spec, TEXT("location"), Location);
+				FRotator Rotation = FRotator::ZeroRotator;
+				TryGetRotator(*Spec, TEXT("rotation"), Rotation);
+
+				const FString MeshPath = GetString(*Spec, TEXT("mesh"));
+				UClass* Class = StaticMeshActorClass;
+				if (MeshPath.IsEmpty())
+				{
+					Class = StaticLoadClass(AActor::StaticClass(), nullptr, *GetString(*Spec, TEXT("class_path")));
+					if (!Class)
+					{
+						return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d]: provide 'mesh' or a valid 'class_path' - %d spawned before the failure"), Index, Spawned.Num()));
+					}
+				}
+
+				FActorSpawnParameters SpawnParams;
+				SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				AActor* Actor = World->SpawnActor<AActor>(Class, Location, Rotation, SpawnParams);
+				if (!Actor)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d]: spawn failed - %d spawned before the failure"), Index, Spawned.Num()));
+				}
+
+				FVector Scale;
+				if (TryGetVector(*Spec, TEXT("scale"), Scale))
+				{
+					Actor->SetActorScale3D(Scale);
+				}
+#if WITH_EDITOR
+				const FString Label = GetString(*Spec, TEXT("label"));
+				if (!Label.IsEmpty())
+				{
+					Actor->SetActorLabel(Label);
+				}
+#endif
+				if (!MeshPath.IsEmpty())
+				{
+					if (UStaticMeshComponent* MeshComponent = Actor->FindComponentByClass<UStaticMeshComponent>())
+					{
+						UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+						if (!Mesh)
+						{
+							return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d]: mesh not found: %s"), Index, *MeshPath));
+						}
+						MeshComponent->SetMobility(EComponentMobility::Movable);
+						MeshComponent->SetStaticMesh(Mesh);
+						const FString MaterialPath = GetString(*Spec, TEXT("material"));
+						if (!MaterialPath.IsEmpty())
+						{
+							if (UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath))
+							{
+								MeshComponent->SetMaterial(0, Material);
+							}
+						}
+					}
+				}
+				Spawned.Add(MakeShared<FJsonValueString>(Actor->GetName()));
+			}
+			if (!Ctx.IsPieWorld())
+			{
+				World->MarkPackageDirty();
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetArrayField(TEXT("spawned"), Spawned);
+			Data->SetNumberField(TEXT("count"), Spawned.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 
