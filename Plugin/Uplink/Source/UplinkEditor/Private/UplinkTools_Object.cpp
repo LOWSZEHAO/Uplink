@@ -30,7 +30,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("get_property"),
-		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path', or 'actor' (name/label) plus optional 'component'."),
+		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path' (also accepts 'subsystem:<Class>' for live subsystem instances), or 'actor' (name/label) plus optional 'component'."),
 		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"world":{"type":"string","enum":["editor","pie"]}},"required":["property"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -116,7 +116,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("call_function"),
-		TEXT("Call any UFUNCTION (BlueprintCallable, BlueprintPure, or plain UFUNCTION) on an object by reflection. 'args' maps parameter names to JSON values; the response contains the return value and all out-parameters. This exposes the entire Blueprint-callable API of a project through one tool."),
+		TEXT("Call any UFUNCTION (BlueprintCallable, BlueprintPure, or plain UFUNCTION) on an object by reflection. 'args' maps parameter names to JSON values; the response contains the return value and all out-parameters. This exposes the entire Blueprint-callable API of a project through one tool. 'object_path' also accepts 'subsystem:<Class>' to reach live subsystem instances (e.g. subsystem:AssetEditorSubsystem to open asset editors)."),
 		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"function":{"type":"string"},"args":{"type":"object","description":"Parameter name -> JSON value"},"world":{"type":"string","enum":["editor","pie"]}},"required":["function"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult

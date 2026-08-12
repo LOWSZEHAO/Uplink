@@ -30,6 +30,7 @@ public class UplinkEditor : ModuleRules
 			"NiagaraEditor",
 			"Slate",
 			"SlateCore",
+			"EditorSubsystem",
 		});
 	}
 }

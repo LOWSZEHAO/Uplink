@@ -12,6 +12,7 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Layout/Children.h"
+#include "Layout/WidgetPath.h"
 #include "Modules/ModuleManager.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/SWindow.h"
@@ -125,7 +126,12 @@ namespace
 		return Current;
 	}
 
-	/** Depth-first search for the first descendant whose type name contains the filter. */
+	/**
+	 * Depth-first search for the first descendant whose type name contains the
+	 * filter. Only visible widgets with rendered geometry qualify - editors keep
+	 * hidden duplicates around (collapsed viewport panes, inactive tabs), and
+	 * those cannot be screenshotted.
+	 */
 	TSharedPtr<SWidget> FindByType(const TSharedRef<SWidget>& Root, const FString& TypeFilter,
 		FString& OutPath, const FString& PathSoFar, int32& Budget)
 	{
@@ -133,7 +139,9 @@ namespace
 		{
 			return nullptr;
 		}
-		if (Root->GetTypeAsString().Contains(TypeFilter, ESearchCase::IgnoreCase))
+		if (Root->GetTypeAsString().Contains(TypeFilter, ESearchCase::IgnoreCase)
+			&& Root->GetVisibility().IsVisible()
+			&& Root->GetCachedGeometry().GetAbsoluteSize().X > 0.0f)
 		{
 			OutPath = PathSoFar;
 			return Root;
@@ -358,6 +366,22 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 				}
 				Target = Found.ToSharedRef();
 				TargetPath = FString::Printf(TEXT("w%d/%s"), WindowIndex, *FoundPath);
+			}
+
+			// TakeScreenshot resolves the widget's path with a check() - feeding it
+			// a widget that is not currently rendered would assert and kill the
+			// editor (found the hard way with a collapsed level-viewport pane).
+			// Validate with the unchecked lookup first and fail politely.
+			if (Target != Window.ToSharedRef())
+			{
+				FWidgetPath PathToWidget;
+				if (!FSlateApplication::Get().GeneratePathToWidgetUnchecked(Target, PathToWidget))
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("%s at %s is not currently rendered (hidden tab or collapsed pane) and cannot be captured. ")
+						TEXT("Pick a visible widget - ui_tree rows without 'hidden' and with a 'rect' are capturable."),
+						*Target->GetTypeAsString(), *TargetPath));
+				}
 			}
 
 			TArray<FColor> Pixels;

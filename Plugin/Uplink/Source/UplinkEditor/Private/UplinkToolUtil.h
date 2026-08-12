@@ -5,8 +5,19 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Editor.h"
+#include "Editor/EditorEngine.h"
+#include "EditorSubsystem.h"
+#include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "Subsystems/EngineSubsystem.h"
+#include "Subsystems/GameInstanceSubsystem.h"
+#include "Subsystems/LocalPlayerSubsystem.h"
+#include "Subsystems/WorldSubsystem.h"
 #include "UObject/UObjectGlobals.h"
 
 /** Small param/lookup helpers shared by the tool implementations. */
@@ -102,6 +113,60 @@ namespace UplinkToolUtil
 	inline UObject* ResolveObject(const TSharedPtr<FJsonObject>& Params, UWorld* World, FString& OutError)
 	{
 		const FString ObjectPath = GetString(Params, TEXT("object_path"));
+
+		// "subsystem:AssetEditorSubsystem" (or a full class path after the colon)
+		// resolves the live subsystem instance - editor, engine, game-instance,
+		// world or local-player - whose object paths are otherwise unguessable.
+		if (ObjectPath.StartsWith(TEXT("subsystem:")))
+		{
+			const FString ClassSpec = ObjectPath.RightChop(10);
+			UClass* Class = ClassSpec.StartsWith(TEXT("/"))
+				? StaticLoadClass(UObject::StaticClass(), nullptr, *ClassSpec)
+				: FindFirstObject<UClass>(*ClassSpec, EFindFirstObjectOptions::None);
+			if (!Class)
+			{
+				OutError = FString::Printf(TEXT("subsystem class not found: %s"), *ClassSpec);
+				return nullptr;
+			}
+
+			UObject* Subsystem = nullptr;
+			if (Class->IsChildOf(UEditorSubsystem::StaticClass()))
+			{
+				Subsystem = GEditor ? GEditor->GetEditorSubsystemBase(Class) : nullptr;
+			}
+			else if (Class->IsChildOf(UEngineSubsystem::StaticClass()))
+			{
+				Subsystem = GEngine ? GEngine->GetEngineSubsystemBase(Class) : nullptr;
+			}
+			else if (Class->IsChildOf(UGameInstanceSubsystem::StaticClass()))
+			{
+				Subsystem = (World && World->GetGameInstance())
+					? World->GetGameInstance()->GetSubsystemBase(Class) : nullptr;
+			}
+			else if (Class->IsChildOf(UWorldSubsystem::StaticClass()))
+			{
+				Subsystem = World ? World->GetSubsystemBase(Class) : nullptr;
+			}
+			else if (Class->IsChildOf(ULocalPlayerSubsystem::StaticClass()))
+			{
+				ULocalPlayer* Player = World ? World->GetFirstLocalPlayerFromController() : nullptr;
+				Subsystem = Player ? Player->GetSubsystemBase(Class) : nullptr;
+			}
+			else
+			{
+				OutError = FString::Printf(TEXT("%s is not a subsystem class"), *Class->GetName());
+				return nullptr;
+			}
+
+			if (!Subsystem)
+			{
+				OutError = FString::Printf(
+					TEXT("no live instance of %s (game-instance/world/player subsystems need a running world - pass world:'pie')"),
+					*Class->GetName());
+			}
+			return Subsystem;
+		}
+
 		if (!ObjectPath.IsEmpty())
 		{
 			UObject* Found = StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath);

@@ -153,6 +153,8 @@ The pattern, using Epic's scripting libraries (all static BlueprintCallable):
 
 Object and class arguments accept asset/class paths as strings. The same pattern reaches `EditorAssetLibrary` (duplicate/save/delete assets), `AnimationLibrary`, `WidgetBlueprintLibrary`, and every other scripting library in the engine or your project.
 
+**Subsystems**: `object_path` accepts `subsystem:<Class>` to resolve live subsystem instances, whose real object paths are unguessable. Editor and engine subsystems resolve anytime; game-instance/world/local-player subsystems resolve against the chosen world (`world:"pie"` during play). Example — open any asset's editor: `call_function {object_path:"subsystem:AssetEditorSubsystem", function:"OpenEditorForAssets", args:{Assets:["/Game/Path/Asset"]}}` — then `capture_widget` can screenshot the editor it opened. Note the CDO guard: instance methods must be called on instances like these, never through `Default__` paths.
+
 **Worked recipe — material graph authoring** (no dedicated tools needed; every call verified):
 
 ```json
