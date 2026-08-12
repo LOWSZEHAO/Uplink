@@ -113,7 +113,7 @@ namespace
 			{
 				continue; // window prefix - already resolved
 			}
-			FChildren* Children = Current->GetChildren();
+			FChildren* Children = Current->GetAllChildren();
 			const int32 Index = FCString::Atoi(*Step);
 			if (!Children || Index < 0 || Index >= Children->Num())
 			{
@@ -146,7 +146,7 @@ namespace
 			OutPath = PathSoFar;
 			return Root;
 		}
-		FChildren* Children = Root->GetChildren();
+		FChildren* Children = Root->GetAllChildren();
 		if (!Children)
 		{
 			return nullptr;
@@ -235,7 +235,7 @@ namespace
 		{
 			return;
 		}
-		FChildren* Children = Widget->GetChildren();
+		FChildren* Children = Widget->GetAllChildren();
 		if (!Children)
 		{
 			return;
