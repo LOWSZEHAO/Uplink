@@ -351,4 +351,79 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 			Data->SetNumberField(TEXT("used_physical_mb"), MemoryStats.UsedPhysical / (1024.0 * 1024.0));
 			return FUplinkToolResult::Ok(Data);
 		});
+
+	{
+		// profile_capture: sample frame times for N seconds and report the
+		// distribution plus hitch counts - the frame-budget truth for a scene
+		// or scenario, not a single-moment FPS read.
+		class FProfileCaptureInvocation final : public IUplinkInvocation
+		{
+		public:
+			virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+			{
+				DurationSeconds = FMath::Clamp(GetNumber(Ctx.Params, TEXT("seconds"), 5.0), 1.0, 120.0);
+				StartedAt = FPlatformTime::Seconds();
+				return EUplinkToolStep::Pending;
+			}
+
+			virtual EUplinkToolStep Tick(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+			{
+				SamplesMs.Add(FApp::GetDeltaTime() * 1000.0);
+				if (FPlatformTime::Seconds() - StartedAt < DurationSeconds)
+				{
+					return EUplinkToolStep::Pending;
+				}
+
+				SamplesMs.Sort();
+				double Total = 0.0;
+				int32 HitchesOver33 = 0;
+				int32 HitchesOver100 = 0;
+				for (double Sample : SamplesMs)
+				{
+					Total += Sample;
+					HitchesOver33 += Sample > 33.4 ? 1 : 0;
+					HitchesOver100 += Sample > 100.0 ? 1 : 0;
+				}
+				const double AverageMs = SamplesMs.Num() ? Total / SamplesMs.Num() : 0.0;
+				auto Percentile = [this](double P) -> double
+				{
+					if (SamplesMs.Num() == 0) { return 0.0; }
+					const int32 Index = FMath::Clamp(
+						static_cast<int32>(P * (SamplesMs.Num() - 1)), 0, SamplesMs.Num() - 1);
+					return SamplesMs[Index];
+				};
+
+				TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+				Data->SetNumberField(TEXT("frames"), SamplesMs.Num());
+				Data->SetNumberField(TEXT("seconds"), FPlatformTime::Seconds() - StartedAt);
+				Data->SetNumberField(TEXT("avg_fps"), AverageMs > 0.0 ? 1000.0 / AverageMs : 0.0);
+				Data->SetNumberField(TEXT("avg_ms"), AverageMs);
+				Data->SetNumberField(TEXT("p50_ms"), Percentile(0.50));
+				Data->SetNumberField(TEXT("p95_ms"), Percentile(0.95));
+				Data->SetNumberField(TEXT("p99_ms"), Percentile(0.99));
+				Data->SetNumberField(TEXT("worst_ms"), SamplesMs.Num() ? SamplesMs.Last() : 0.0);
+				Data->SetNumberField(TEXT("hitches_over_33ms"), HitchesOver33);
+				Data->SetNumberField(TEXT("hitches_over_100ms"), HitchesOver100);
+				Data->SetBoolField(TEXT("pie_active"), GEditor && GEditor->PlayWorld != nullptr);
+				Out = FUplinkToolResult::Ok(Data);
+				return EUplinkToolStep::Done;
+			}
+
+		private:
+			TArray<double> SamplesMs;
+			double DurationSeconds = 5.0;
+			double StartedAt = 0.0;
+		};
+
+		FUplinkToolInfo Info;
+		Info.Name = TEXT("profile_capture");
+		Info.Description = TEXT("Sample frame times for 'seconds' and report the distribution: average FPS/ms, p50/p95/p99, worst frame, and hitch counts (>33ms, >100ms). Run it while a scenario or PIE session plays to judge the frame budget properly - perf_stats is a single-moment read, this is the truth over time.");
+		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"seconds":{"type":"number","default":5}}})json"));
+		Info.bReadOnly = true;
+		Info.TimeoutSeconds = 180.0;
+		Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
+		{
+			return MakeShared<FProfileCaptureInvocation>();
+		});
+	}
 }

@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 71 tools, grouped by layer. Conventions used throughout:
+All 75 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -42,6 +42,7 @@ All 71 tools, grouped by layer. Conventions used throughout:
 |---|---|
 | `asset_search` | Name-substring search. `{query?, class_contains?, path_prefix? (default /Game), max?}` — plugin content needs its mount point as `path_prefix` (e.g. `/MyPlugin`). |
 | `asset_dependencies` / `asset_referencers` | Package-level dependency graph. `{package}` |
+| `asset_import` | Import a disk file into the project — FBX/OBJ, textures, audio, anything the editor imports — fully automated, no dialogs. `{file, destination, name?, save?}` |
 
 ## PIE lifecycle
 
@@ -62,6 +63,7 @@ All 71 tools, grouped by layer. Conventions used throughout:
 | `possess` | Switch the player controller to another pawn. `{pawn}` |
 | `player_teleport` | Physics-safe pawn teleport + optional facing. `{location, rotation?}` |
 | `player_info` | Controller, pawn (name/class/location), control rotation. |
+| `navigate_to` | Walk the player pawn to a location or actor using the game's navmesh — like a click-to-move player. Resolves on arrival within `accept_radius`; reports a stall instead of hanging when there is no path (usually a missing NavMeshBoundsVolume). `{location | actor, accept_radius?}` |
 | `click_widget` | Click a UMG widget in the running game — menus, buttons, HUD — by synthesizing a real mouse press at the widget's screen position (real hit-testing, like a player's click). `{widget: name (exact, then contains) \| position: {x,y}, world?}` — failure lists the live widget names. |
 
 ## Record & replay
@@ -99,6 +101,7 @@ All 71 tools, grouped by layer. Conventions used throughout:
 | `wait_until` | Non-blocking assertion. `{condition:{type: property_equals\|actor_exists\|actor_gone\|event_count\|elapsed, ...}, timeout?, world?}` → `{condition_met, timed_out, waited_seconds}` — a timeout is a result, not an error. |
 | `get_world_state` | Actor snapshot with requested property values inline. `{world?, class_contains?, name_contains?, properties?:[...], max?}` |
 | `perf_stats` | Smoothed FPS, average frame ms, last delta, used physical memory. |
+| `profile_capture` | Sample frame times for N seconds: avg FPS/ms, p50/p95/p99, worst frame, hitch counts (>33ms, >100ms) — the frame-budget truth over time. `{seconds?}` |
 
 ## Scripted playtests
 

@@ -13,6 +13,7 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputKeyEventArgs.h"
+#include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Blueprint/WidgetTree.h"
@@ -229,6 +230,97 @@ namespace
 	private:
 		FKey Key;
 		double ReleaseAt = 0.0;
+	};
+
+	/**
+	 * navigate_to: walk the player pawn to a goal using the game's own navmesh,
+	 * like a click-to-move player. Resolves when the pawn arrives, and reports
+	 * a stall (usually: no NavMeshBoundsVolume in the level) instead of hanging.
+	 */
+	class FNavigateInvocation final : public IUplinkInvocation
+	{
+	public:
+		virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+		{
+			FString Error;
+			FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/false);
+			if (!Player.PC || !Player.PC->GetPawn())
+			{
+				Out = FUplinkToolResult::Error(Error.IsEmpty() ? TEXT("player has no pawn") : Error);
+				return EUplinkToolStep::Done;
+			}
+
+			const FString TargetActorName = GetString(Ctx.Params, TEXT("actor"));
+			if (!TargetActorName.IsEmpty())
+			{
+				AActor* Target = FindActor(GEditor->PlayWorld.Get(), TargetActorName);
+				if (!Target)
+				{
+					Out = FUplinkToolResult::Error(FString::Printf(TEXT("actor not found: %s"), *TargetActorName));
+					return EUplinkToolStep::Done;
+				}
+				Goal = Target->GetActorLocation();
+			}
+			else if (!TryGetVector(Ctx.Params, TEXT("location"), Goal))
+			{
+				Out = FUplinkToolResult::Error(TEXT("provide 'location' {x,y,z} or 'actor'"));
+				return EUplinkToolStep::Done;
+			}
+
+			AcceptRadius = FMath::Clamp(GetNumber(Ctx.Params, TEXT("accept_radius"), 100.0), 10.0, 2000.0);
+			UAIBlueprintHelperLibrary::SimpleMoveToLocation(Player.PC, Goal);
+			LastPosition = Player.PC->GetPawn()->GetActorLocation();
+			LastProgressAt = FPlatformTime::Seconds();
+			return EUplinkToolStep::Pending;
+		}
+
+		virtual EUplinkToolStep Tick(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+		{
+			FString Error;
+			FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/false);
+			APawn* Pawn = Player.PC ? Player.PC->GetPawn() : nullptr;
+			if (!Pawn)
+			{
+				Out = FUplinkToolResult::Error(TEXT("PIE or pawn went away mid-navigation"));
+				return EUplinkToolStep::Done;
+			}
+
+			const FVector Position = Pawn->GetActorLocation();
+			const double Distance = FVector::Dist2D(Position, Goal);
+			if (Distance <= AcceptRadius)
+			{
+				return Finish(Pawn, true, TEXT("arrived"), Out);
+			}
+
+			if (FVector::Dist2D(Position, LastPosition) > 5.0)
+			{
+				LastPosition = Position;
+				LastProgressAt = FPlatformTime::Seconds();
+			}
+			else if (FPlatformTime::Seconds() - LastProgressAt > 3.0)
+			{
+				return Finish(Pawn, false,
+					TEXT("stalled - no path progress for 3s (is there a NavMeshBoundsVolume covering the area? spawn one and run console 'RebuildNavigation')"), Out);
+			}
+			return EUplinkToolStep::Pending;
+		}
+
+	private:
+		EUplinkToolStep Finish(APawn* Pawn, bool bReached, const TCHAR* Message, FUplinkToolResult& Out)
+		{
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetBoolField(TEXT("reached"), bReached);
+			Data->SetObjectField(TEXT("location"), VectorToJson(Pawn->GetActorLocation()));
+			Data->SetNumberField(TEXT("distance_to_goal"), FVector::Dist2D(Pawn->GetActorLocation(), Goal));
+			Out = FUplinkToolResult::Ok(Data, Message);
+			Out.bError = !bReached;
+			return EUplinkToolStep::Done;
+		}
+
+		FVector Goal = FVector::ZeroVector;
+		FVector LastPosition = FVector::ZeroVector;
+		double AcceptRadius = 100.0;
+		double LastProgressAt = 0.0;
 	};
 }
 
@@ -603,4 +695,17 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			Data->SetObjectField(TEXT("position"), PosJson);
 			return FUplinkToolResult::Ok(Data, TEXT("clicked"));
 		});
+
+	{
+		FUplinkToolInfo Info;
+		Info.Name = TEXT("navigate_to");
+		Info.Description = TEXT("Walk the player pawn to a location or actor using the game's navmesh - like a click-to-move player, no manual input math. Resolves when within 'accept_radius' of the goal; reports a stall instead of hanging if there is no path (most often: the level has no NavMeshBoundsVolume - spawn one and run console 'RebuildNavigation'). PIE only.");
+		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"location":{"type":"object"},"actor":{"type":"string"},"accept_radius":{"type":"number","default":100}}})json"));
+		Info.bReadOnly = false;
+		Info.TimeoutSeconds = 120.0;
+		Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
+		{
+			return MakeShared<FNavigateInvocation>();
+		});
+	}
 }

@@ -31,6 +31,8 @@ public class UplinkEditor : ModuleRules
 			"Slate",
 			"SlateCore",
 			"EditorSubsystem",
+			"AIModule",
+			"AssetTools",
 			"LevelSequence",
 			"MovieScene",
 			"AnimGraph",

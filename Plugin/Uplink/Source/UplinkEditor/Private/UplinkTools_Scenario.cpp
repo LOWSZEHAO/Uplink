@@ -21,6 +21,103 @@ namespace
 		double TimeoutSeconds = 60.0;
 	};
 
+	/**
+	 * "$steps[N].path.to.field" pulls a value out of an earlier step's result
+	 * data, so a spawn's returned name can feed a later teleport or assert.
+	 */
+	TSharedPtr<FJsonValue> ResolveStepReference(const FString& Token,
+		const TArray<TSharedPtr<FJsonValue>>& Reports, FString& OutError)
+	{
+		if (!Token.StartsWith(TEXT("$steps[")))
+		{
+			return nullptr;
+		}
+		int32 CloseBracket = INDEX_NONE;
+		if (!Token.FindChar(TEXT(']'), CloseBracket) || !Token.IsValidIndex(CloseBracket + 1) || Token[CloseBracket + 1] != TEXT('.'))
+		{
+			OutError = FString::Printf(TEXT("bad step reference '%s' (expected $steps[N].field.path)"), *Token);
+			return nullptr;
+		}
+		const int32 StepIndex = FCString::Atoi(*Token.Mid(7, CloseBracket - 7));
+		if (!Reports.IsValidIndex(StepIndex))
+		{
+			OutError = FString::Printf(TEXT("'%s' references step %d, but only %d step(s) have run"), *Token, StepIndex, Reports.Num());
+			return nullptr;
+		}
+		const TSharedPtr<FJsonObject>* Report = nullptr;
+		const TSharedPtr<FJsonObject>* StepData = nullptr;
+		if (!Reports[StepIndex]->TryGetObject(Report)
+			|| !(*Report)->TryGetObjectField(FStringView(TEXT("data")), StepData) || !StepData->IsValid())
+		{
+			OutError = FString::Printf(TEXT("step %d returned no data for '%s'"), StepIndex, *Token);
+			return nullptr;
+		}
+
+		TSharedPtr<FJsonValue> Current = MakeShared<FJsonValueObject>(*StepData);
+		TArray<FString> Segments;
+		Token.Mid(CloseBracket + 2).ParseIntoArray(Segments, TEXT("."));
+		for (const FString& Segment : Segments)
+		{
+			const TSharedPtr<FJsonObject>* AsObject = nullptr;
+			const TArray<TSharedPtr<FJsonValue>>* AsArray = nullptr;
+			if (Current.IsValid() && Current->TryGetObject(AsObject))
+			{
+				Current = (*AsObject)->TryGetField(FStringView(Segment));
+			}
+			else if (Current.IsValid() && Current->TryGetArray(AsArray) && Segment.IsNumeric())
+			{
+				const int32 Index = FCString::Atoi(*Segment);
+				Current = AsArray->IsValidIndex(Index) ? (*AsArray)[Index] : nullptr;
+			}
+			else
+			{
+				Current = nullptr;
+			}
+			if (!Current.IsValid())
+			{
+				OutError = FString::Printf(TEXT("'%s': field '%s' not found in step data"), *Token, *Segment);
+				return nullptr;
+			}
+		}
+		return Current;
+	}
+
+	/** Deep-copy a params JSON value, expanding every "$steps[...]" string. */
+	TSharedPtr<FJsonValue> ExpandTemplates(const TSharedPtr<FJsonValue>& Value,
+		const TArray<TSharedPtr<FJsonValue>>& Reports, FString& OutError)
+	{
+		if (!Value.IsValid() || !OutError.IsEmpty())
+		{
+			return Value;
+		}
+		FString AsString;
+		if (Value->TryGetString(AsString) && AsString.StartsWith(TEXT("$steps[")))
+		{
+			return ResolveStepReference(AsString, Reports, OutError);
+		}
+		const TSharedPtr<FJsonObject>* AsObject = nullptr;
+		if (Value->TryGetObject(AsObject))
+		{
+			TSharedRef<FJsonObject> Copy = MakeShared<FJsonObject>();
+			for (const auto& Pair : (*AsObject)->Values)
+			{
+				Copy->SetField(UplinkCompat::JsonKeyToString(Pair.Key), ExpandTemplates(Pair.Value, Reports, OutError));
+			}
+			return MakeShared<FJsonValueObject>(Copy);
+		}
+		const TArray<TSharedPtr<FJsonValue>>* AsArray = nullptr;
+		if (Value->TryGetArray(AsArray))
+		{
+			TArray<TSharedPtr<FJsonValue>> Copy;
+			for (const TSharedPtr<FJsonValue>& Element : *AsArray)
+			{
+				Copy.Add(ExpandTemplates(Element, Reports, OutError));
+			}
+			return MakeShared<FJsonValueArray>(Copy);
+		}
+		return Value;
+	}
+
 	bool ValuesMatch(const TSharedPtr<FJsonValue>& Expected, const TSharedPtr<FJsonValue>& Actual)
 	{
 		if (!Expected.IsValid() || !Actual.IsValid())
@@ -104,11 +201,24 @@ namespace
 					RecordStep(FUplinkToolResult::Error(TEXT("tool disappeared mid-scenario")), 0.0);
 					return AdvanceOrFinish(Out);
 				}
+				// Expand "$steps[N].field" references against earlier results.
+				FString TemplateError;
+				TSharedPtr<FJsonValue> Expanded = ExpandTemplates(
+					MakeShared<FJsonValueObject>(Spec.Params.ToSharedRef()), StepReports, TemplateError);
+				const TSharedPtr<FJsonObject>* ExpandedParams = nullptr;
+				if (!TemplateError.IsEmpty()
+					|| !Expanded.IsValid() || !Expanded->TryGetObject(ExpandedParams) || !ExpandedParams->IsValid())
+				{
+					RecordStep(FUplinkToolResult::Error(TemplateError.IsEmpty()
+						? TEXT("parameter template expansion failed") : TemplateError), 0.0);
+					return AdvanceOrFinish(Out);
+				}
+
 				Child = Def->Factory();
 				bChildStarted = false;
-				ChildContext.Params = Spec.Params;
+				ChildContext.Params = *ExpandedParams;
 				ChildContext.WorldSpec.Empty();
-				Spec.Params->TryGetStringField(FStringView(TEXT("world")), ChildContext.WorldSpec);
+				ChildContext.Params->TryGetStringField(FStringView(TEXT("world")), ChildContext.WorldSpec);
 				StepStartedAt = FPlatformTime::Seconds();
 			}
 
@@ -268,7 +378,7 @@ void UplinkTools::RegisterScenario(FUplinkToolRegistry& Registry)
 {
 	FUplinkToolInfo Info;
 	Info.Name = TEXT("run_scenario");
-	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step.");
+	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"timeout":{"type":"number","default":60}},"required":["tool"]}},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
 	Info.bReadOnly = false;
 	Info.TimeoutSeconds = 600.0;

@@ -5,7 +5,10 @@
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
+#include "AssetImportTask.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 
 using namespace UplinkToolUtil;
@@ -107,5 +110,57 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			GetAssetRegistry().GetReferencers(FName(*GetString(Ctx.Params, TEXT("package"))), Referencers,
 				UE::AssetRegistry::EDependencyCategory::Package);
 			return PackageNameList(Referencers, TEXT("referencers"));
+		});
+
+	Registry.RegisterQuick(
+		TEXT("asset_import"),
+		TEXT("Import a file from disk into the project - FBX/OBJ meshes, textures (png/jpg/tga/exr), audio (wav), and anything else the editor's importers handle - fully automated (no dialogs, sensible defaults). 'file' is an absolute path; 'destination' a /Game/ folder. Set save:true to write the .uasset immediately."),
+		TEXT(R"json({"type":"object","properties":{"file":{"type":"string","description":"Absolute source file path"},"destination":{"type":"string","description":"e.g. /Game/Imported"},"name":{"type":"string","description":"Optional asset name (default: file name)"},"save":{"type":"boolean","default":false}},"required":["file","destination"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString File = GetString(Ctx.Params, TEXT("file"));
+			if (!FPaths::FileExists(File))
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("file not found: %s"), *File));
+			}
+			const FString Destination = GetString(Ctx.Params, TEXT("destination"));
+			if (!Destination.StartsWith(TEXT("/Game")))
+			{
+				return FUplinkToolResult::Error(TEXT("'destination' must start with /Game"));
+			}
+
+			UAssetImportTask* Task = NewObject<UAssetImportTask>();
+			Task->Filename = File;
+			Task->DestinationPath = Destination;
+			Task->DestinationName = GetString(Ctx.Params, TEXT("name"));
+			Task->bAutomated = true;
+			Task->bReplaceExisting = true;
+			bool bSave = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSave);
+			Task->bSave = bSave;
+
+			FAssetToolsModule& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+			AssetTools.Get().ImportAssetTasks({ Task });
+
+			TArray<TSharedPtr<FJsonValue>> Imported;
+			for (const UObject* Object : Task->GetObjects())
+			{
+				if (Object)
+				{
+					TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+					Row->SetStringField(TEXT("asset"), Object->GetPathName());
+					Row->SetStringField(TEXT("class"), Object->GetClass()->GetName());
+					Imported.Add(MakeShared<FJsonValueObject>(Row));
+				}
+			}
+			if (Imported.Num() == 0)
+			{
+				return FUplinkToolResult::Error(TEXT("import produced no assets (unsupported format or importer error - see output_log)"));
+			}
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetArrayField(TEXT("imported"), Imported);
+			Data->SetBoolField(TEXT("saved"), bSave);
+			return FUplinkToolResult::Ok(Data);
 		});
 }
