@@ -85,7 +85,17 @@ All 55 tools, grouped by layer. Conventions used throughout:
 | `bp_create` | New Blueprint asset (in memory, marked dirty). `{path, parent_class?}` |
 | `bp_query` | Parent class, compile status, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. `{blueprint, graph?, max_nodes?}` |
 | `bp_modify` | One edit per call, `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay} \| component_bound_event{component, event} — bind a component's or widget's delegate as a graph event (button OnClicked, NiagaraComponent OnSystemFinished, …) \| variable_get/variable_set{name}, graph?, x?, y?}` · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
+| `bp_add_component` | Add a component to an actor Blueprint's construction script, like the editor's Add Component button. `class` is a short engine name (`StaticMeshComponent`, `BoxComponent`, `SceneComponent`) or a full path; `parent` attaches under an existing component (default: the scene root). Template conveniences: `location`/`rotation`/`scale`, `static_mesh` (asset path), `collision_profile` (`OverlapOnlyPawn`, `BlockAll`, …), and `properties` as a generic name→JSON map. The component becomes a Blueprint variable — after a compile its delegates bind with `bp_modify component_bound_event`. `{blueprint, class, name, parent?, …, compile?}` |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
+
+## Editor UI (Slate)
+
+See the editor itself — every window and panel, not just viewports. `ui_tree` is the map, `capture_widget` is the camera.
+
+| Tool | What it does |
+|---|---|
+| `ui_tree` | Query the live Slate widget hierarchy. Default: structure of the main window to `max_depth`. `window` picks a window by title substring; `find` searches every window, full depth, for widgets whose type or text contains the string (`find:"NiagaraSystemViewport"`, `find:"Content Browser"`). Rows carry a path (`w0/1/0/3`), type, label text where the widget has one, and `rect` `[x,y,w,h]` in desktop pixels. `{window?, find?, path?, max_depth?, max_nodes?}` |
+| `capture_widget` | Screenshot any editor window or single widget as a PNG — asset-editor previews, graph panels, details panels — even when the window is behind others. Target by `path` (from `ui_tree`) or `type` (first descendant type-name match, e.g. `SNiagaraSystemViewport`, `SGraphEditor`); with neither, the whole window. `{window?, path?, type?}` |
 
 ## Widgets
 

@@ -14,15 +14,16 @@ Every notable Unreal MCP today (including UE 5.8's official MCP plugin) is an *e
 
 ## Status
 
-**v0.10.0 — the wide editor.** 55 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Remaining before 1.0: broader real-project mileage and API polish from feedback.
+**v0.11.0 — the wide editor.** 58 tools across every layer, one codebase compiling against both **UE 5.7 and 5.8**, every capability verified against a live editor and running game. Remaining before 1.0: broader real-project mileage and API polish from feedback.
 
-**The toolset (55 tools):**
+**The toolset (58 tools):**
 
 - **Play the game:** `pie_start` (waits until BeginPlay has actually run; viewport or new window, spawn/game-mode/map overrides) · `pie_stop` · `pie_status` · `pie_pause` / `pie_resume` · `pie_step` (advance a paused game exactly N frames)
 - **Control the player:** `input_action` (Enhanced Input injection — pulse, timed hold, live value updates; no physical device needed) · `input_key` (raw key taps/edges/axis through the engine's simulated-input path) · `possess` · `player_teleport` · `player_info`
 - **Observe & assert:** `watch_events` / `drain_events` / `unwatch` (record any BlueprintAssignable delegate firing, with decoded parameter payloads) · `wait_until` (non-blocking assertions: property values, actor existence, event counts, elapsed time) · `get_world_state` (actor snapshot with arbitrary property values) · `perf_stats`
 - **Scripted playtests:** `run_scenario` — a whole playtest in one call: ordered tool steps with per-step expectations, timeouts, and a structured pass/fail report. Example: start PIE → teleport → injected-input walk → assert position → screenshot → stop, in a single request.
-- **Blueprints:** `bp_create` · `bp_query` (variables, graphs, nodes, pins, connections) · `bp_modify` (variables; call-function / custom-event / engine-event / component-bound-event / variable get-set nodes; wiring; pin defaults) · `bp_compile` (full diagnostics)
+- **Blueprints:** `bp_create` · `bp_query` (variables, components, graphs, nodes, pins, connections) · `bp_add_component` (build a component hierarchy — meshes, triggers, scene parents — with transforms, mesh assignment and collision profiles) · `bp_modify` (variables; call-function / custom-event / engine-event / component-bound-event / variable get-set nodes; wiring; pin defaults) · `bp_compile` (full diagnostics)
+- **Editor UI:** `ui_tree` (query the live Slate widget hierarchy — every window, tab and panel, with labels and screen rects) · `capture_widget` (screenshot any editor window or single panel — asset-editor previews included — even when occluded)
 - **Niagara (UE 5.8+):** `niagara_create` (from engine templates) · `niagara_query` (stack, compile state, issues with fix hints) · `niagara_add_module` / `niagara_remove_module` · `niagara_module_inputs` · `niagara_set_input` · `niagara_renderer` (read/write renderer properties, e.g. swap the sprite material) · `niagara_set_user_param` · `niagara_compile`
 - **Editor & world:** `status` · `console_command` · `output_log` (incremental log reads — pair with `pie_status.log_start_index` to read just the current session) · `viewport_screenshot` (PNG image results) · `level_actors` · `spawn_actor` · `delete_actors` · `move_actor`
 - **Reflection:** `get_property` / `set_property` (any UPROPERTY as JSON) · **`call_function`** (any UFUNCTION — args in, return value and out-params back as JSON)

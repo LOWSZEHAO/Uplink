@@ -2,14 +2,21 @@
 // Blueprint tools: bp_create, bp_query, bp_modify, bp_compile.
 
 #include "UplinkTools.h"
+#include "UplinkCompat.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/StaticMesh.h"
+#include "JsonObjectConverter.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
@@ -348,6 +355,36 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 			}
 			Data->SetArrayField(TEXT("variables"), Variables);
 
+			if (Blueprint->SimpleConstructionScript)
+			{
+				TArray<TSharedPtr<FJsonValue>> Components;
+				TFunction<void(USCS_Node*, const FString&)> AddNodeRow =
+					[&Components, &AddNodeRow](USCS_Node* Node, const FString& ParentName)
+				{
+					if (!Node)
+					{
+						return;
+					}
+					TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+					Row->SetStringField(TEXT("name"), Node->GetVariableName().ToString());
+					Row->SetStringField(TEXT("class"), Node->ComponentClass ? Node->ComponentClass->GetName() : TEXT(""));
+					if (!ParentName.IsEmpty())
+					{
+						Row->SetStringField(TEXT("parent"), ParentName);
+					}
+					Components.Add(MakeShared<FJsonValueObject>(Row));
+					for (USCS_Node* Child : Node->GetChildNodes())
+					{
+						AddNodeRow(Child, Node->GetVariableName().ToString());
+					}
+				};
+				for (USCS_Node* Root : Blueprint->SimpleConstructionScript->GetRootNodes())
+				{
+					AddNodeRow(Root, FString());
+				}
+				Data->SetArrayField(TEXT("components"), Components);
+			}
+
 			const FString GraphFilter = GetString(Ctx.Params, TEXT("graph"));
 			const int32 MaxNodes = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max_nodes"), 100)), 1, 500);
 			TArray<UEdGraph*> AllGraphs;
@@ -625,6 +662,219 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 				return Out;
 			}
 			return FUplinkToolResult::Ok(Data, TEXT("modified (not compiled)"));
+		});
+
+	Registry.RegisterQuick(
+		TEXT("bp_add_component"),
+		TEXT("Add a component to a Blueprint's construction script (like the editor's Add Component button). 'class': component class - short name ('StaticMeshComponent', 'BoxComponent') or full path. 'parent': attach under this existing component (default: the scene root for scene components). Conveniences on the template: 'location'/'rotation'/'scale' (relative), 'static_mesh' (asset path), 'collision_profile' (e.g. 'OverlapOnlyPawn', 'BlockAll'), plus 'properties' as a generic name->JSON map. The component becomes a Blueprint variable of the same name (usable by bp_modify's component_bound_event after a compile - set compile:true)."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"class":{"type":"string"},"name":{"type":"string"},"parent":{"type":"string"},"location":{"type":"object"},"rotation":{"type":"object"},"scale":{"type":"object"},"static_mesh":{"type":"string"},"collision_profile":{"type":"string"},"properties":{"type":"object"},"compile":{"type":"boolean","default":false}},"required":["blueprint","class","name"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			FString Error;
+			UBlueprint* Blueprint = LoadBlueprint(Ctx, Error);
+			if (!Blueprint)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			if (!Blueprint->SimpleConstructionScript)
+			{
+				return FUplinkToolResult::Error(TEXT("blueprint has no construction script (not an actor blueprint?)"));
+			}
+			USimpleConstructionScript* Scs = Blueprint->SimpleConstructionScript;
+
+			// Resolve the component class: full path, or short name under /Script/Engine.
+			FString ClassSpec = GetString(Ctx.Params, TEXT("class"));
+			UClass* Class = nullptr;
+			if (ClassSpec.StartsWith(TEXT("/")))
+			{
+				Class = StaticLoadClass(UActorComponent::StaticClass(), nullptr, *ClassSpec);
+			}
+			else
+			{
+				Class = StaticLoadClass(UActorComponent::StaticClass(), nullptr,
+					*FString::Printf(TEXT("/Script/Engine.%s"), *ClassSpec));
+			}
+			if (!Class)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("component class not found: %s (use a short engine name like 'StaticMeshComponent' or a full path like /Script/UMG.WidgetComponent)"), *ClassSpec));
+			}
+			if (Class->HasAnyClassFlags(CLASS_Abstract))
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("%s is abstract"), *Class->GetName()));
+			}
+
+			const FString Name = GetString(Ctx.Params, TEXT("name"));
+			if (Name.IsEmpty() || Scs->FindSCSNode(FName(*Name)))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("component name '%s' is empty or already used in this blueprint"), *Name));
+			}
+
+			const bool bScene = Class->IsChildOf(USceneComponent::StaticClass());
+			const FString ParentName = GetString(Ctx.Params, TEXT("parent"));
+			USCS_Node* ParentNode = nullptr;
+			if (!ParentName.IsEmpty())
+			{
+				if (!bScene)
+				{
+					return FUplinkToolResult::Error(TEXT("'parent' only applies to scene components"));
+				}
+				ParentNode = Scs->FindSCSNode(FName(*ParentName));
+				if (!ParentNode)
+				{
+					TArray<FString> Names;
+					for (const USCS_Node* Existing : Scs->GetAllNodes())
+					{
+						if (Existing)
+						{
+							Names.Add(Existing->GetVariableName().ToString());
+						}
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("parent component '%s' not found. Components: %s"),
+						*ParentName, *FString::Join(Names, TEXT(", "))));
+				}
+			}
+
+			Blueprint->Modify();
+			USCS_Node* Node = Scs->CreateNode(Class, FName(*Name));
+			if (!Node)
+			{
+				return FUplinkToolResult::Error(TEXT("CreateNode failed"));
+			}
+			if (ParentNode)
+			{
+				ParentNode->AddChildNode(Node);
+			}
+			else if (bScene && Scs->GetDefaultSceneRootNode())
+			{
+				Scs->GetDefaultSceneRootNode()->AddChildNode(Node);
+			}
+			else
+			{
+				Scs->AddNode(Node);
+			}
+
+			// Apply template setup. Errors past this point report but keep the node.
+			TArray<FString> Applied;
+			TArray<FString> Failed;
+			UActorComponent* Template = Node->ComponentTemplate;
+
+			FVector Location, Scale;
+			FRotator Rotation;
+			if (USceneComponent* SceneTemplate = Cast<USceneComponent>(Template))
+			{
+				if (TryGetVector(Ctx.Params, TEXT("location"), Location))
+				{
+					SceneTemplate->SetRelativeLocation_Direct(Location);
+					Applied.Add(TEXT("location"));
+				}
+				if (TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation))
+				{
+					SceneTemplate->SetRelativeRotation_Direct(Rotation);
+					Applied.Add(TEXT("rotation"));
+				}
+				if (TryGetVector(Ctx.Params, TEXT("scale"), Scale))
+				{
+					SceneTemplate->SetRelativeScale3D_Direct(Scale);
+					Applied.Add(TEXT("scale"));
+				}
+			}
+
+			const FString MeshPath = GetString(Ctx.Params, TEXT("static_mesh"));
+			if (!MeshPath.IsEmpty())
+			{
+				UStaticMeshComponent* MeshTemplate = Cast<UStaticMeshComponent>(Template);
+				UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+				if (MeshTemplate && Mesh)
+				{
+					MeshTemplate->SetStaticMesh(Mesh);
+					Applied.Add(TEXT("static_mesh"));
+				}
+				else
+				{
+					Failed.Add(FString::Printf(TEXT("static_mesh: %s"),
+						Mesh ? TEXT("component is not a StaticMeshComponent") : TEXT("mesh asset not found")));
+				}
+			}
+
+			const FString Profile = GetString(Ctx.Params, TEXT("collision_profile"));
+			if (!Profile.IsEmpty())
+			{
+				if (UPrimitiveComponent* PrimitiveTemplate = Cast<UPrimitiveComponent>(Template))
+				{
+					PrimitiveTemplate->SetCollisionProfileName(FName(*Profile));
+					Applied.Add(TEXT("collision_profile"));
+				}
+				else
+				{
+					Failed.Add(TEXT("collision_profile: component is not a PrimitiveComponent"));
+				}
+			}
+
+			const TSharedPtr<FJsonObject>* Properties = nullptr;
+			if (Ctx.Params->TryGetObjectField(FStringView(TEXT("properties")), Properties) && Properties->IsValid())
+			{
+				for (const auto& Pair : (*Properties)->Values)
+				{
+					const FString PropertyName = UplinkCompat::JsonKeyToString(Pair.Key);
+					FProperty* Property = FindFProperty<FProperty>(Template->GetClass(), *PropertyName);
+					if (!Property)
+					{
+						Failed.Add(FString::Printf(TEXT("%s: no such property on %s"), *PropertyName, *Class->GetName()));
+						continue;
+					}
+					if (FJsonObjectConverter::JsonValueToUProperty(
+						Pair.Value, Property, Property->ContainerPtrToValuePtr<void>(Template)))
+					{
+						Applied.Add(PropertyName);
+					}
+					else
+					{
+						Failed.Add(FString::Printf(TEXT("%s: JSON conversion failed"), *PropertyName));
+					}
+				}
+			}
+
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("blueprint"), Blueprint->GetPathName());
+			Data->SetStringField(TEXT("component"), Name);
+			Data->SetStringField(TEXT("class"), Class->GetName());
+			Data->SetStringField(TEXT("parent"), ParentNode
+				? ParentNode->GetVariableName().ToString()
+				: (bScene && Scs->GetDefaultSceneRootNode() && Node != Scs->GetDefaultSceneRootNode()
+					? Scs->GetDefaultSceneRootNode()->GetVariableName().ToString() : TEXT("")));
+			if (Applied.Num() > 0)
+			{
+				TArray<TSharedPtr<FJsonValue>> Values;
+				for (const FString& Entry : Applied) { Values.Add(MakeShared<FJsonValueString>(Entry)); }
+				Data->SetArrayField(TEXT("applied"), Values);
+			}
+			if (Failed.Num() > 0)
+			{
+				TArray<TSharedPtr<FJsonValue>> Values;
+				for (const FString& Entry : Failed) { Values.Add(MakeShared<FJsonValueString>(Entry)); }
+				Data->SetArrayField(TEXT("failed"), Values);
+			}
+
+			bool bCompile = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("compile")), bCompile);
+			if (bCompile)
+			{
+				FUplinkToolResult CompileResult = CompileAndReport(Blueprint);
+				if (CompileResult.Data.IsValid())
+				{
+					Data->SetObjectField(TEXT("compile"), CompileResult.Data);
+				}
+				FUplinkToolResult Out = FUplinkToolResult::Ok(Data, CompileResult.Message);
+				Out.bError = CompileResult.bError;
+				return Out;
+			}
+			return FUplinkToolResult::Ok(Data, TEXT("component added (not compiled)"));
 		});
 
 	Registry.RegisterQuick(

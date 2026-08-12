@@ -28,6 +28,8 @@ public class UplinkEditor : ModuleRules
 			"Niagara",
 			"NiagaraCore",
 			"NiagaraEditor",
+			"Slate",
+			"SlateCore",
 		});
 	}
 }
