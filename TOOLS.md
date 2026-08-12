@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 55 tools, grouped by layer. Conventions used throughout:
+All 61 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -25,6 +25,8 @@ All 55 tools, grouped by layer. Conventions used throughout:
 | `spawn_actor` | Spawn by class path (`/Script/Engine.PointLight` or `/Game/BP_X.BP_X_C`). `{class_path, location?, rotation?, label?, world?}` |
 | `delete_actors` | Destroy actors by name/label. `{names:[...], world?}` |
 | `move_actor` | Set location/rotation/scale (any subset), physics-safe in PIE. `{actor, location?, rotation?, scale?, world?}` |
+| `viewport_camera` | Move the editor viewport camera: `focus_actor` frames an actor (like pressing F), or set `location`/`rotation` directly — pair with `viewport_screenshot`. `{focus_actor?, location?, rotation?}` |
+| `live_compile` | Trigger a Live Coding compile and patch the RUNNING editor with changed C++ — no restart. Function-body edits land in seconds; structural changes (new classes/members/virtuals) still need a real build. Resolves when the compiler goes idle; `patched: true` = new code is live. |
 
 ## Reflection
 
@@ -60,6 +62,7 @@ All 55 tools, grouped by layer. Conventions used throughout:
 | `possess` | Switch the player controller to another pawn. `{pawn}` |
 | `player_teleport` | Physics-safe pawn teleport + optional facing. `{location, rotation?}` |
 | `player_info` | Controller, pawn (name/class/location), control rotation. |
+| `click_widget` | Click a UMG widget in the running game — menus, buttons, HUD — by synthesizing a real mouse press at the widget's screen position (real hit-testing, like a player's click). `{widget: name (exact, then contains) \| position: {x,y}, world?}` — failure lists the live widget names. |
 
 ## Observation & assertion
 
@@ -84,7 +87,7 @@ All 55 tools, grouped by layer. Conventions used throughout:
 |---|---|
 | `bp_create` | New Blueprint asset (in memory, marked dirty). `{path, parent_class?}` |
 | `bp_query` | Parent class, compile status, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. `{blueprint, graph?, max_nodes?}` |
-| `bp_modify` | One edit per call, `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay — reuses a matching ghost/existing event node instead of stacking a duplicate} \| component_bound_event{component, event} — bind a component's or widget's delegate as a graph event (button OnClicked, NiagaraComponent OnSystemFinished, …) \| variable_get/variable_set{name}, graph?, x?, y?}` · `arrange` `{graph?}` — auto-layout the graph (see style rules below) · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
+| `bp_modify` | One edit — or a whole batch: `{blueprint, ops: [{op:..., ...}, ...], compile?}` builds an entire event graph in a single call. Give `add_node` ops a `ref` name and later ops address that node as `@ref` in `from_node`/`to_node`/`node`. A failed op stops the batch (earlier ops stay applied). Single-op form: `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay — reuses a matching ghost/existing event node instead of stacking a duplicate} \| component_bound_event{component, event} — bind a component's or widget's delegate as a graph event (button OnClicked, NiagaraComponent OnSystemFinished, …) \| variable_get/variable_set{name}, graph?, x?, y?}` · `arrange` `{graph?}` — auto-layout the graph (see style rules below) · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
 | `bp_add_component` | Add a component to an actor Blueprint's construction script, like the editor's Add Component button. `class` is a short engine name (`StaticMeshComponent`, `BoxComponent`, `SceneComponent`) or a full path; `parent` attaches under an existing component (default: the scene root). Template conveniences: `location`/`rotation`/`scale`, `static_mesh` (asset path), `collision_profile` (`OverlapOnlyPawn`, `BlockAll`, …), and `properties` as a generic name→JSON map. The component becomes a Blueprint variable — after a compile its delegates bind with `bp_modify component_bound_event`. `{blueprint, class, name, parent?, …, compile?}` |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
 

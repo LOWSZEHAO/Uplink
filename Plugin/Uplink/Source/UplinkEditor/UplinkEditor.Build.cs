@@ -32,5 +32,10 @@ public class UplinkEditor : ModuleRules
 			"SlateCore",
 			"EditorSubsystem",
 		});
+
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			PrivateDependencyModuleNames.Add("LiveCoding");
+		}
 	}
 }

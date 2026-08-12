@@ -13,6 +13,11 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputKeyEventArgs.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Widget.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Misc/App.h"
 
 using namespace UplinkToolUtil;
@@ -481,5 +486,121 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			RotationJson->SetNumberField(TEXT("roll"), ControlRotation.Roll);
 			Data->SetObjectField(TEXT("control_rotation"), RotationJson);
 			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("click_widget"),
+		TEXT("Click a UMG widget in the running game - menus, buttons, HUD elements - by synthesizing a real mouse press at the widget's screen position (so it goes through actual hit-testing, like a player's click). 'widget' matches by name (exact first, then contains) across all live UserWidgets; or pass a raw screen 'position'. The widget must be on screen."),
+		TEXT(R"json({"type":"object","properties":{"widget":{"type":"string","description":"Widget name, e.g. 'BtnStart'"},"position":{"type":"object","description":"{x,y} desktop pixels, instead of 'widget'"},"world":{"type":"string","enum":["editor","pie"]}}})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			if (!FSlateApplication::IsInitialized())
+			{
+				return FUplinkToolResult::Error(TEXT("Slate is not initialized"));
+			}
+
+			FVector2f ClickPos = FVector2f::ZeroVector;
+			FString ClickedName;
+
+			const FString WidgetName = GetString(Ctx.Params, TEXT("widget"));
+			if (!WidgetName.IsEmpty())
+			{
+				FString Error;
+				UWorld* World = Ctx.ResolveWorld(Error);
+				if (!World)
+				{
+					return FUplinkToolResult::Error(Error);
+				}
+
+				TArray<UUserWidget*> Roots;
+				UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, Roots, UUserWidget::StaticClass(), /*TopLevelOnly=*/false);
+
+				UWidget* Exact = nullptr;
+				UWidget* Contains = nullptr;
+				TArray<FString> Available;
+				for (UUserWidget* Root : Roots)
+				{
+					if (!Root || !Root->WidgetTree)
+					{
+						continue;
+					}
+					Root->WidgetTree->ForEachWidget([&](UWidget* Widget)
+					{
+						if (!Widget)
+						{
+							return;
+						}
+						const FString Name = Widget->GetName();
+						if (Available.Num() < 60)
+						{
+							Available.Add(Name);
+						}
+						if (Name.Equals(WidgetName, ESearchCase::IgnoreCase) && !Exact)
+						{
+							Exact = Widget;
+						}
+						else if (Name.Contains(WidgetName, ESearchCase::IgnoreCase) && !Contains)
+						{
+							Contains = Widget;
+						}
+					});
+				}
+				UWidget* Target = Exact ? Exact : Contains;
+				if (!Target)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no widget named '%s'. Live widgets: %s"), *WidgetName, *FString::Join(Available, TEXT(", "))));
+				}
+
+				const FGeometry Geometry = Target->GetCachedGeometry();
+				const FVector2D Size = Geometry.GetAbsoluteSize();
+				if (Size.X <= 0.0 || Size.Y <= 0.0)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("widget '%s' exists but is not on screen (zero geometry)"), *Target->GetName()));
+				}
+				ClickPos = FVector2f(Geometry.GetAbsolutePosition()) + FVector2f(Size) * 0.5f;
+				ClickedName = Target->GetName();
+			}
+			else
+			{
+				FVector PosVector;
+				if (!TryGetVector(Ctx.Params, TEXT("position"), PosVector))
+				{
+					const TSharedPtr<FJsonObject>* PosObject = nullptr;
+					if (Ctx.Params->TryGetObjectField(FStringView(TEXT("position")), PosObject) && PosObject->IsValid())
+					{
+						PosVector.X = (*PosObject)->GetNumberField(FStringView(TEXT("x")));
+						PosVector.Y = (*PosObject)->GetNumberField(FStringView(TEXT("y")));
+					}
+					else
+					{
+						return FUplinkToolResult::Error(TEXT("provide 'widget' or 'position' {x,y}"));
+					}
+				}
+				ClickPos = FVector2f(PosVector.X, PosVector.Y);
+			}
+
+			const FPointerEvent MouseDown(
+				0, ClickPos, ClickPos, TSet<FKey>{ EKeys::LeftMouseButton },
+				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
+			FSlateApplication::Get().ProcessMouseButtonDownEvent(nullptr, MouseDown);
+
+			const FPointerEvent MouseUp(
+				0, ClickPos, ClickPos, TSet<FKey>(),
+				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
+			FSlateApplication::Get().ProcessMouseButtonUpEvent(MouseUp);
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			if (!ClickedName.IsEmpty())
+			{
+				Data->SetStringField(TEXT("widget"), ClickedName);
+			}
+			TSharedRef<FJsonObject> PosJson = MakeShared<FJsonObject>();
+			PosJson->SetNumberField(TEXT("x"), ClickPos.X);
+			PosJson->SetNumberField(TEXT("y"), ClickPos.Y);
+			Data->SetObjectField(TEXT("position"), PosJson);
+			return FUplinkToolResult::Ok(Data, TEXT("clicked"));
 		});
 }

@@ -6,6 +6,7 @@
 #include "UplinkToolUtil.h"
 
 #include "Editor.h"
+#include "LevelEditorViewport.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 
@@ -220,6 +221,70 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("name"), Actor->GetName());
 			Data->SetObjectField(TEXT("location"), VectorToJson(Actor->GetActorLocation()));
+			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("viewport_camera"),
+		TEXT("Move the editor viewport camera: 'focus_actor' frames an actor (like pressing F), or set 'location'/'rotation' directly. Pair with viewport_screenshot or capture_widget to look at a specific thing. Editor viewport only - during PIE use player_teleport for the game camera."),
+		TEXT(R"json({"type":"object","properties":{"focus_actor":{"type":"string","description":"Actor name/label to frame"},"location":{"type":"object"},"rotation":{"type":"object"}}})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			if (!GEditor)
+			{
+				return FUplinkToolResult::Error(TEXT("no editor"));
+			}
+
+			const FString FocusName = GetString(Ctx.Params, TEXT("focus_actor"));
+			if (!FocusName.IsEmpty())
+			{
+				UWorld* World = GEditor->GetEditorWorldContext().World();
+				AActor* Actor = World ? FindActor(World, FocusName) : nullptr;
+				if (!Actor)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("actor not found: %s"), *FocusName));
+				}
+				GEditor->MoveViewportCamerasToActor(*Actor, /*bActiveViewportOnly=*/false);
+			}
+
+			FLevelEditorViewportClient* Client = GCurrentLevelEditingViewportClient;
+			if (!Client)
+			{
+				for (FLevelEditorViewportClient* Candidate : GEditor->GetLevelViewportClients())
+				{
+					if (Candidate && Candidate->IsPerspective())
+					{
+						Client = Candidate;
+						break;
+					}
+				}
+			}
+			if (!Client)
+			{
+				return FUplinkToolResult::Error(TEXT("no level viewport available"));
+			}
+
+			FVector Location;
+			if (TryGetVector(Ctx.Params, TEXT("location"), Location))
+			{
+				Client->SetViewLocation(Location);
+			}
+			FRotator Rotation;
+			if (TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation))
+			{
+				Client->SetViewRotation(Rotation);
+			}
+			Client->Invalidate();
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetObjectField(TEXT("location"), VectorToJson(Client->GetViewLocation()));
+			const FRotator ViewRotation = Client->GetViewRotation();
+			TSharedRef<FJsonObject> RotJson = MakeShared<FJsonObject>();
+			RotJson->SetNumberField(TEXT("pitch"), ViewRotation.Pitch);
+			RotJson->SetNumberField(TEXT("yaw"), ViewRotation.Yaw);
+			RotJson->SetNumberField(TEXT("roll"), ViewRotation.Roll);
+			Data->SetObjectField(TEXT("rotation"), RotJson);
 			return FUplinkToolResult::Ok(Data);
 		});
 }

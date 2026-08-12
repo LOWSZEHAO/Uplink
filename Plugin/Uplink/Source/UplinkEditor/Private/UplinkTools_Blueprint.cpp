@@ -267,17 +267,38 @@ namespace
 		}
 	}
 
-	void FinalizeNewNode(UEdGraph* Graph, UEdGraphNode* Node, const FUplinkToolContext& Ctx)
+	void FinalizeNewNode(UEdGraph* Graph, UEdGraphNode* Node, const TSharedPtr<FJsonObject>& Op)
 	{
 		Graph->Modify();
 		Graph->AddNode(Node, /*bFromUI=*/true, /*bSelectNewNode=*/false);
 		Node->CreateNewGuid();
 		Node->PostPlacedNewNode();
 		Node->AllocateDefaultPins();
-		Node->NodePosX = static_cast<int32>(GetNumber(Ctx.Params, TEXT("x"), 0));
-		Node->NodePosY = static_cast<int32>(GetNumber(Ctx.Params, TEXT("y"), 0));
-		const bool bHasExplicitPos = Ctx.Params->HasField(FStringView(TEXT("x"))) || Ctx.Params->HasField(FStringView(TEXT("y")));
+		Node->NodePosX = static_cast<int32>(GetNumber(Op, TEXT("x"), 0));
+		Node->NodePosY = static_cast<int32>(GetNumber(Op, TEXT("y"), 0));
+		const bool bHasExplicitPos = Op->HasField(FStringView(TEXT("x"))) || Op->HasField(FStringView(TEXT("y")));
 		PlaceNodeWithoutOverlap(Graph, Node, bHasExplicitPos);
+	}
+
+	/** Node handle: a guid from bp_query, or '@ref' naming an earlier batch op. */
+	UEdGraphNode* ResolveNodeHandle(UEdGraph* Graph, const FString& Handle,
+		const TMap<FString, FString>& NodeRefs, FString& OutError)
+	{
+		FString Resolved = Handle;
+		if (Handle.StartsWith(TEXT("@")))
+		{
+			const FString* Guid = NodeRefs.Find(Handle.RightChop(1));
+			if (!Guid)
+			{
+				TArray<FString> Known;
+				NodeRefs.GetKeys(Known);
+				OutError = FString::Printf(TEXT("unknown node ref '%s'. Refs defined so far: %s"),
+					*Handle, Known.Num() ? *FString::Join(Known, TEXT(", ")) : TEXT("(none)"));
+				return nullptr;
+			}
+			Resolved = *Guid;
+		}
+		return FindNodeByGuid(Graph, Resolved, OutError);
 	}
 
 	/** Estimated Y of a pin's row, for headless layout decisions. */
@@ -729,6 +750,268 @@ namespace
 		Out.bError = Results.NumErrors > 0;
 		return Out;
 	}
+	/**
+	 * One graph edit. Op fields match bp_modify's single-op form; NodeRefs maps
+	 * batch 'ref' names to node guids so later ops can say '@ref'.
+	 */
+	FUplinkToolResult ApplyGraphOp(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& OpParams,
+		TMap<FString, FString>& NodeRefs, TSharedRef<FJsonObject> Data)
+	{
+		FString Error;
+		const FString Op = GetString(OpParams, TEXT("op"));
+
+		if (Op == TEXT("add_variable"))
+		{
+			FEdGraphPinType PinType;
+			if (!MakePinType(GetString(OpParams, TEXT("type"), TEXT("float")), PinType, Error))
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			const FName VarName(*GetString(OpParams, TEXT("name")));
+			if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, VarName, PinType, GetString(OpParams, TEXT("default"))))
+			{
+				return FUplinkToolResult::Error(TEXT("AddMemberVariable failed (name collision?)"));
+			}
+			Data->SetStringField(TEXT("variable"), VarName.ToString());
+		}
+		else if (Op == TEXT("remove_variable"))
+		{
+			FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, FName(*GetString(OpParams, TEXT("name"))));
+		}
+		else if (Op == TEXT("add_node"))
+		{
+			UEdGraph* Graph = FindGraph(Blueprint, GetString(OpParams, TEXT("graph")), Error);
+			if (!Graph)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			const FString Kind = GetString(OpParams, TEXT("kind"));
+			UEdGraphNode* NewNode = nullptr;
+			UEdGraphNode* ResultNode = nullptr;
+
+			if (Kind == TEXT("call_function"))
+			{
+				const FString ClassPath = GetString(OpParams, TEXT("class"), TEXT("self"));
+				UClass* TargetClass = nullptr;
+				if (ClassPath == TEXT("self"))
+				{
+					TargetClass = Blueprint->SkeletonGeneratedClass ? Blueprint->SkeletonGeneratedClass.Get() : Blueprint->ParentClass.Get();
+				}
+				else
+				{
+					TargetClass = StaticLoadClass(UObject::StaticClass(), nullptr, *ClassPath);
+				}
+				if (!TargetClass)
+				{
+					return FUplinkToolResult::Error(TEXT("class not found for call_function"));
+				}
+				UFunction* Function = TargetClass->FindFunctionByName(FName(*GetString(OpParams, TEXT("function"))));
+				if (!Function)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("function '%s' not found on %s"), *GetString(OpParams, TEXT("function")), *TargetClass->GetName()));
+				}
+				UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph);
+				Node->SetFromFunction(Function);
+				NewNode = Node;
+			}
+			else if (Kind == TEXT("custom_event"))
+			{
+				UK2Node_CustomEvent* Node = NewObject<UK2Node_CustomEvent>(Graph);
+				Node->CustomFunctionName = FName(*GetString(OpParams, TEXT("name"), TEXT("CustomEvent")));
+				NewNode = Node;
+			}
+			else if (Kind == TEXT("event"))
+			{
+				// New actor blueprints carry disabled ghost placeholders for the
+				// common events; reuse (and enable) a matching one instead of
+				// stacking a duplicate on top of it.
+				const FName EventName(*GetString(OpParams, TEXT("name")));
+				UK2Node_Event* Existing = nullptr;
+				for (UEdGraphNode* GraphNode : Graph->Nodes)
+				{
+					UK2Node_Event* Event = Cast<UK2Node_Event>(GraphNode);
+					if (Event && Event->bOverrideFunction && Event->EventReference.GetMemberName() == EventName)
+					{
+						Existing = Event;
+						break;
+					}
+				}
+				if (Existing)
+				{
+					Existing->Modify();
+					Existing->SetEnabledState(ENodeEnabledState::Enabled);
+					Data->SetObjectField(TEXT("node"), NodeToJson(Existing));
+					Data->SetBoolField(TEXT("reused"), true);
+					ResultNode = Existing;
+				}
+				else
+				{
+					UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
+					Node->EventReference.SetExternalMember(EventName, Blueprint->ParentClass);
+					Node->bOverrideFunction = true;
+					NewNode = Node;
+				}
+			}
+			else if (Kind == TEXT("component_bound_event"))
+			{
+				// Bind a component's (or widget's) delegate as an event node -
+				// the graph equivalent of clicking + on OnClicked/OnSystemFinished.
+				UClass* OwnerClass = Blueprint->SkeletonGeneratedClass
+					? Blueprint->SkeletonGeneratedClass.Get()
+					: (Blueprint->GeneratedClass ? Blueprint->GeneratedClass.Get() : Blueprint->ParentClass.Get());
+				FObjectProperty* ComponentProperty =
+					FindFProperty<FObjectProperty>(OwnerClass, *GetString(OpParams, TEXT("component")));
+				if (!ComponentProperty)
+				{
+					TArray<FString> Names;
+					for (TFieldIterator<FObjectProperty> It(OwnerClass); It && Names.Num() < 40; ++It)
+					{
+						Names.Add(It->GetName());
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("component property '%s' not found (widgets must have Is Variable set). Object properties: %s"),
+						*GetString(OpParams, TEXT("component")), *FString::Join(Names, TEXT(", "))));
+				}
+				FMulticastDelegateProperty* DelegateProperty = FindFProperty<FMulticastDelegateProperty>(
+					ComponentProperty->PropertyClass, *GetString(OpParams, TEXT("event")));
+				if (!DelegateProperty)
+				{
+					TArray<FString> Names;
+					for (TFieldIterator<FMulticastDelegateProperty> It(ComponentProperty->PropertyClass); It; ++It)
+					{
+						Names.Add(It->GetName());
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("event '%s' not found on %s. Delegates: %s"),
+						*GetString(OpParams, TEXT("event")), *ComponentProperty->PropertyClass->GetName(),
+						*FString::Join(Names, TEXT(", "))));
+				}
+				UK2Node_ComponentBoundEvent* Node = NewObject<UK2Node_ComponentBoundEvent>(Graph);
+				Node->InitializeComponentBoundEventParams(ComponentProperty, DelegateProperty);
+				NewNode = Node;
+			}
+			else if (Kind == TEXT("variable_get") || Kind == TEXT("variable_set"))
+			{
+				const FName VarName(*GetString(OpParams, TEXT("name")));
+				if (Kind == TEXT("variable_get"))
+				{
+					UK2Node_VariableGet* Node = NewObject<UK2Node_VariableGet>(Graph);
+					Node->VariableReference.SetSelfMember(VarName);
+					NewNode = Node;
+				}
+				else
+				{
+					UK2Node_VariableSet* Node = NewObject<UK2Node_VariableSet>(Graph);
+					Node->VariableReference.SetSelfMember(VarName);
+					NewNode = Node;
+				}
+			}
+			else
+			{
+				return FUplinkToolResult::Error(TEXT("kind must be call_function, custom_event, event, component_bound_event, variable_get, or variable_set"));
+			}
+
+			if (NewNode)
+			{
+				FinalizeNewNode(Graph, NewNode, OpParams);
+				Data->SetObjectField(TEXT("node"), NodeToJson(NewNode));
+				ResultNode = NewNode;
+			}
+			const FString Ref = GetString(OpParams, TEXT("ref"));
+			if (!Ref.IsEmpty() && ResultNode)
+			{
+				NodeRefs.Add(Ref, ResultNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+			}
+		}
+		else if (Op == TEXT("arrange"))
+		{
+			UEdGraph* Graph = FindGraph(Blueprint, GetString(OpParams, TEXT("graph")), Error);
+			if (!Graph)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			Data->SetNumberField(TEXT("moved"), ArrangeGraph(Graph));
+		}
+		else if (Op == TEXT("connect"))
+		{
+			UEdGraph* Graph = FindGraph(Blueprint, GetString(OpParams, TEXT("graph")), Error);
+			if (!Graph)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			UEdGraphNode* FromNode = ResolveNodeHandle(Graph, GetString(OpParams, TEXT("from_node")), NodeRefs, Error);
+			UEdGraphNode* ToNode = FromNode ? ResolveNodeHandle(Graph, GetString(OpParams, TEXT("to_node")), NodeRefs, Error) : nullptr;
+			if (!FromNode || !ToNode)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			UEdGraphPin* FromPin = FindPinLoose(FromNode, GetString(OpParams, TEXT("from_pin")), Error);
+			UEdGraphPin* ToPin = FromPin ? FindPinLoose(ToNode, GetString(OpParams, TEXT("to_pin")), Error) : nullptr;
+			if (!FromPin || !ToPin)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			const UEdGraphSchema* Schema = Graph->GetSchema();
+			if (!Schema->TryCreateConnection(FromPin, ToPin))
+			{
+				const FPinConnectionResponse Response = Schema->CanCreateConnection(FromPin, ToPin);
+				return FUplinkToolResult::Error(FString::Printf(TEXT("connection rejected: %s"), *Response.Message.ToString()));
+			}
+		}
+		else if (Op == TEXT("break_links") || Op == TEXT("delete_node") || Op == TEXT("set_pin_default"))
+		{
+			UEdGraph* Graph = FindGraph(Blueprint, GetString(OpParams, TEXT("graph")), Error);
+			if (!Graph)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			UEdGraphNode* Node = ResolveNodeHandle(Graph, GetString(OpParams, TEXT("node")), NodeRefs, Error);
+			if (!Node)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+
+			if (Op == TEXT("delete_node"))
+			{
+				FBlueprintEditorUtils::RemoveNode(Blueprint, Node, /*bDontRecompile=*/true);
+			}
+			else
+			{
+				UEdGraphPin* Pin = FindPinLoose(Node, GetString(OpParams, TEXT("pin")), Error);
+				if (!Pin)
+				{
+					return FUplinkToolResult::Error(Error);
+				}
+				if (Op == TEXT("break_links"))
+				{
+					Graph->GetSchema()->BreakPinLinks(*Pin, /*bSendsNodeNotification=*/true);
+				}
+				else // set_pin_default
+				{
+					const FString Value = GetString(OpParams, TEXT("value"));
+					if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object)
+					{
+						UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *Value);
+						if (!Object)
+						{
+							return FUplinkToolResult::Error(FString::Printf(TEXT("object not found: %s"), *Value));
+						}
+						Graph->GetSchema()->TrySetDefaultObject(*Pin, Object);
+					}
+					else
+					{
+						Graph->GetSchema()->TrySetDefaultValue(*Pin, Value);
+					}
+				}
+			}
+		}
+		else
+		{
+			return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_node, arrange, connect, break_links, delete_node, set_pin_default)"));
+		}
+		return FUplinkToolResult::Ok();
+	}
 }
 
 void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
@@ -880,8 +1163,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint. op: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below; run it after building a graph | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query or the add_node response. Set compile=true to compile after the edit."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_node","arrange","connect","break_links","delete_node","set_pin_default"]},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"}},"required":["blueprint","op"]})json"),
+		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_node","arrange","connect","break_links","delete_node","set_pin_default"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -891,251 +1174,39 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 			{
 				return FUplinkToolResult::Error(Error);
 			}
-			const FString Op = GetString(Ctx.Params, TEXT("op"));
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			TMap<FString, FString> NodeRefs;
 
-			if (Op == TEXT("add_variable"))
+			const TArray<TSharedPtr<FJsonValue>>* Ops = nullptr;
+			if (Ctx.Params->TryGetArrayField(FStringView(TEXT("ops")), Ops))
 			{
-				FEdGraphPinType PinType;
-				if (!MakePinType(GetString(Ctx.Params, TEXT("type"), TEXT("float")), PinType, Error))
+				TArray<TSharedPtr<FJsonValue>> Results;
+				for (int32 Index = 0; Index < Ops->Num(); ++Index)
 				{
-					return FUplinkToolResult::Error(Error);
-				}
-				const FName VarName(*GetString(Ctx.Params, TEXT("name")));
-				if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, VarName, PinType, GetString(Ctx.Params, TEXT("default"))))
-				{
-					return FUplinkToolResult::Error(TEXT("AddMemberVariable failed (name collision?)"));
-				}
-				Data->SetStringField(TEXT("variable"), VarName.ToString());
-			}
-			else if (Op == TEXT("remove_variable"))
-			{
-				FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, FName(*GetString(Ctx.Params, TEXT("name"))));
-			}
-			else if (Op == TEXT("add_node"))
-			{
-				UEdGraph* Graph = FindGraph(Blueprint, GetString(Ctx.Params, TEXT("graph")), Error);
-				if (!Graph)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-				const FString Kind = GetString(Ctx.Params, TEXT("kind"));
-				UEdGraphNode* NewNode = nullptr;
-
-				if (Kind == TEXT("call_function"))
-				{
-					const FString ClassPath = GetString(Ctx.Params, TEXT("class"), TEXT("self"));
-					UClass* TargetClass = nullptr;
-					if (ClassPath == TEXT("self"))
+					const TSharedPtr<FJsonObject>* OpObject = nullptr;
+					if (!(*Ops)[Index].IsValid() || !(*Ops)[Index]->TryGetObject(OpObject) || !OpObject->IsValid())
 					{
-						TargetClass = Blueprint->SkeletonGeneratedClass ? Blueprint->SkeletonGeneratedClass.Get() : Blueprint->ParentClass.Get();
+						return FUplinkToolResult::Error(FString::Printf(TEXT("ops[%d] is not an object"), Index));
 					}
-					else
+					TSharedRef<FJsonObject> OpData = MakeShared<FJsonObject>();
+					const FUplinkToolResult OpResult = ApplyGraphOp(Blueprint, *OpObject, NodeRefs, OpData);
+					if (OpResult.bError)
 					{
-						TargetClass = StaticLoadClass(UObject::StaticClass(), nullptr, *ClassPath);
+						// Earlier ops in the batch have already been applied.
+						return FUplinkToolResult::Error(FString::Printf(TEXT("ops[%d] (%s) failed: %s - earlier ops were applied, blueprint not compiled"),
+							Index, *GetString(*OpObject, TEXT("op")), *OpResult.Message));
 					}
-					if (!TargetClass)
-					{
-						return FUplinkToolResult::Error(TEXT("class not found for call_function"));
-					}
-					UFunction* Function = TargetClass->FindFunctionByName(FName(*GetString(Ctx.Params, TEXT("function"))));
-					if (!Function)
-					{
-						return FUplinkToolResult::Error(FString::Printf(
-							TEXT("function '%s' not found on %s"), *GetString(Ctx.Params, TEXT("function")), *TargetClass->GetName()));
-					}
-					UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph);
-					Node->SetFromFunction(Function);
-					NewNode = Node;
+					Results.Add(MakeShared<FJsonValueObject>(OpData));
 				}
-				else if (Kind == TEXT("custom_event"))
-				{
-					UK2Node_CustomEvent* Node = NewObject<UK2Node_CustomEvent>(Graph);
-					Node->CustomFunctionName = FName(*GetString(Ctx.Params, TEXT("name"), TEXT("CustomEvent")));
-					NewNode = Node;
-				}
-				else if (Kind == TEXT("event"))
-				{
-					// New actor blueprints carry disabled ghost placeholders for the
-					// common events; reuse (and enable) a matching one instead of
-					// stacking a duplicate on top of it.
-					const FName EventName(*GetString(Ctx.Params, TEXT("name")));
-					UK2Node_Event* Existing = nullptr;
-					for (UEdGraphNode* GraphNode : Graph->Nodes)
-					{
-						UK2Node_Event* Event = Cast<UK2Node_Event>(GraphNode);
-						if (Event && Event->bOverrideFunction && Event->EventReference.GetMemberName() == EventName)
-						{
-							Existing = Event;
-							break;
-						}
-					}
-					if (Existing)
-					{
-						Existing->Modify();
-						Existing->SetEnabledState(ENodeEnabledState::Enabled);
-						Data->SetObjectField(TEXT("node"), NodeToJson(Existing));
-						Data->SetBoolField(TEXT("reused"), true);
-						NewNode = nullptr;
-					}
-					else
-					{
-						UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
-						Node->EventReference.SetExternalMember(EventName, Blueprint->ParentClass);
-						Node->bOverrideFunction = true;
-						NewNode = Node;
-					}
-				}
-				else if (Kind == TEXT("component_bound_event"))
-				{
-					// Bind a component's (or widget's) delegate as an event node -
-					// the graph equivalent of clicking + on OnClicked/OnSystemFinished.
-					UClass* OwnerClass = Blueprint->SkeletonGeneratedClass
-						? Blueprint->SkeletonGeneratedClass.Get()
-						: (Blueprint->GeneratedClass ? Blueprint->GeneratedClass.Get() : Blueprint->ParentClass.Get());
-					FObjectProperty* ComponentProperty =
-						FindFProperty<FObjectProperty>(OwnerClass, *GetString(Ctx.Params, TEXT("component")));
-					if (!ComponentProperty)
-					{
-						TArray<FString> Names;
-						for (TFieldIterator<FObjectProperty> It(OwnerClass); It && Names.Num() < 40; ++It)
-						{
-							Names.Add(It->GetName());
-						}
-						return FUplinkToolResult::Error(FString::Printf(
-							TEXT("component property '%s' not found (widgets must have Is Variable set). Object properties: %s"),
-							*GetString(Ctx.Params, TEXT("component")), *FString::Join(Names, TEXT(", "))));
-					}
-					FMulticastDelegateProperty* DelegateProperty = FindFProperty<FMulticastDelegateProperty>(
-						ComponentProperty->PropertyClass, *GetString(Ctx.Params, TEXT("event")));
-					if (!DelegateProperty)
-					{
-						TArray<FString> Names;
-						for (TFieldIterator<FMulticastDelegateProperty> It(ComponentProperty->PropertyClass); It; ++It)
-						{
-							Names.Add(It->GetName());
-						}
-						return FUplinkToolResult::Error(FString::Printf(
-							TEXT("event '%s' not found on %s. Delegates: %s"),
-							*GetString(Ctx.Params, TEXT("event")), *ComponentProperty->PropertyClass->GetName(),
-							*FString::Join(Names, TEXT(", "))));
-					}
-					UK2Node_ComponentBoundEvent* Node = NewObject<UK2Node_ComponentBoundEvent>(Graph);
-					Node->InitializeComponentBoundEventParams(ComponentProperty, DelegateProperty);
-					NewNode = Node;
-				}
-				else if (Kind == TEXT("variable_get") || Kind == TEXT("variable_set"))
-				{
-					const FName VarName(*GetString(Ctx.Params, TEXT("name")));
-					if (Kind == TEXT("variable_get"))
-					{
-						UK2Node_VariableGet* Node = NewObject<UK2Node_VariableGet>(Graph);
-						Node->VariableReference.SetSelfMember(VarName);
-						NewNode = Node;
-					}
-					else
-					{
-						UK2Node_VariableSet* Node = NewObject<UK2Node_VariableSet>(Graph);
-						Node->VariableReference.SetSelfMember(VarName);
-						NewNode = Node;
-					}
-				}
-				else
-				{
-					return FUplinkToolResult::Error(TEXT("kind must be call_function, custom_event, event, variable_get, or variable_set"));
-				}
-
-				if (NewNode)
-				{
-					FinalizeNewNode(Graph, NewNode, Ctx);
-					Data->SetObjectField(TEXT("node"), NodeToJson(NewNode));
-				}
-			}
-			else if (Op == TEXT("arrange"))
-			{
-				UEdGraph* Graph = FindGraph(Blueprint, GetString(Ctx.Params, TEXT("graph")), Error);
-				if (!Graph)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-				Data->SetNumberField(TEXT("moved"), ArrangeGraph(Graph));
-			}
-			else if (Op == TEXT("connect"))
-			{
-				UEdGraph* Graph = FindGraph(Blueprint, GetString(Ctx.Params, TEXT("graph")), Error);
-				if (!Graph)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-				UEdGraphNode* FromNode = FindNodeByGuid(Graph, GetString(Ctx.Params, TEXT("from_node")), Error);
-				UEdGraphNode* ToNode = FromNode ? FindNodeByGuid(Graph, GetString(Ctx.Params, TEXT("to_node")), Error) : nullptr;
-				if (!FromNode || !ToNode)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-				UEdGraphPin* FromPin = FindPinLoose(FromNode, GetString(Ctx.Params, TEXT("from_pin")), Error);
-				UEdGraphPin* ToPin = FromPin ? FindPinLoose(ToNode, GetString(Ctx.Params, TEXT("to_pin")), Error) : nullptr;
-				if (!FromPin || !ToPin)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-				const UEdGraphSchema* Schema = Graph->GetSchema();
-				if (!Schema->TryCreateConnection(FromPin, ToPin))
-				{
-					const FPinConnectionResponse Response = Schema->CanCreateConnection(FromPin, ToPin);
-					return FUplinkToolResult::Error(FString::Printf(TEXT("connection rejected: %s"), *Response.Message.ToString()));
-				}
-			}
-			else if (Op == TEXT("break_links") || Op == TEXT("delete_node") || Op == TEXT("set_pin_default"))
-			{
-				UEdGraph* Graph = FindGraph(Blueprint, GetString(Ctx.Params, TEXT("graph")), Error);
-				if (!Graph)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-				UEdGraphNode* Node = FindNodeByGuid(Graph, GetString(Ctx.Params, TEXT("node")), Error);
-				if (!Node)
-				{
-					return FUplinkToolResult::Error(Error);
-				}
-
-				if (Op == TEXT("delete_node"))
-				{
-					FBlueprintEditorUtils::RemoveNode(Blueprint, Node, /*bDontRecompile=*/true);
-				}
-				else
-				{
-					UEdGraphPin* Pin = FindPinLoose(Node, GetString(Ctx.Params, TEXT("pin")), Error);
-					if (!Pin)
-					{
-						return FUplinkToolResult::Error(Error);
-					}
-					if (Op == TEXT("break_links"))
-					{
-						Graph->GetSchema()->BreakPinLinks(*Pin, /*bSendsNodeNotification=*/true);
-					}
-					else // set_pin_default
-					{
-						const FString Value = GetString(Ctx.Params, TEXT("value"));
-						if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object)
-						{
-							UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *Value);
-							if (!Object)
-							{
-								return FUplinkToolResult::Error(FString::Printf(TEXT("object not found: %s"), *Value));
-							}
-							Graph->GetSchema()->TrySetDefaultObject(*Pin, Object);
-						}
-						else
-						{
-							Graph->GetSchema()->TrySetDefaultValue(*Pin, Value);
-						}
-					}
-				}
+				Data->SetArrayField(TEXT("results"), Results);
 			}
 			else
 			{
-				return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_node, arrange, connect, break_links, delete_node, set_pin_default)"));
+				const FUplinkToolResult OpResult = ApplyGraphOp(Blueprint, Ctx.Params, NodeRefs, Data);
+				if (OpResult.bError)
+				{
+					return OpResult;
+				}
 			}
 
 			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);

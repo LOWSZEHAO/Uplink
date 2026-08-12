@@ -27,4 +27,5 @@ namespace UplinkTools
 	void RegisterAnim(FUplinkToolRegistry& Registry);
 	void RegisterNiagara(FUplinkToolRegistry& Registry);
 	void RegisterSlate(FUplinkToolRegistry& Registry);
+	void RegisterDev(FUplinkToolRegistry& Registry);
 }

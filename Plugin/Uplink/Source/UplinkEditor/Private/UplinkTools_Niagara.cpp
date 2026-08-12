@@ -294,8 +294,33 @@ void UplinkTools::RegisterNiagara(FUplinkToolRegistry& Registry)
 			{
 				return ContextErrors(Context, TEXT("GetModuleInputValues"));
 			}
+
+			// Values are FInstancedStruct - the generic converter emits {} for
+			// those, so serialize each payload through its actual script struct.
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
-			Data->SetObjectField(TEXT("inputs"), StructToJson(Values));
+			Data->SetStringField(TEXT("module"), Values.ModuleName.ToString());
+			TArray<TSharedPtr<FJsonValue>> InputRows;
+			for (const FNiagaraExt_StackInputValueEntry& Entry : Values.Inputs)
+			{
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("name"), Entry.Name.ToString());
+				const UScriptStruct* ValueStruct = Entry.Value.GetScriptStruct();
+				if (ValueStruct && Entry.Value.GetMemory())
+				{
+					Row->SetStringField(TEXT("type"), ValueStruct->GetName());
+					TSharedRef<FJsonObject> ValueJson = MakeShared<FJsonObject>();
+					if (FJsonObjectConverter::UStructToJsonObject(ValueStruct, Entry.Value.GetMemory(), ValueJson, 0, 0))
+					{
+						Row->SetObjectField(TEXT("value"), ValueJson);
+					}
+				}
+				else
+				{
+					Row->SetStringField(TEXT("type"), TEXT("unset"));
+				}
+				InputRows.Add(MakeShared<FJsonValueObject>(Row));
+			}
+			Data->SetArrayField(TEXT("inputs"), InputRows);
 			return FUplinkToolResult::Ok(Data);
 #else
 			return FUplinkToolResult::Error(NotSupportedMessage);
@@ -395,9 +420,43 @@ void UplinkTools::RegisterNiagara(FUplinkToolRegistry& Registry)
 				{
 					Merged = MakeShared<FJsonObject>();
 				}
+				// Asset references come back from reads as plain object-path
+				// strings, but clients naturally write {"refPath": "..."} - the
+				// renderer parser silently ignores that shape, so normalize it.
+				TFunction<TSharedPtr<FJsonValue>(const TSharedPtr<FJsonValue>&)> NormalizeRefs;
+				NormalizeRefs = [&NormalizeRefs](const TSharedPtr<FJsonValue>& Value) -> TSharedPtr<FJsonValue>
+				{
+					const TSharedPtr<FJsonObject>* AsObject = nullptr;
+					if (Value.IsValid() && Value->TryGetObject(AsObject) && AsObject->IsValid())
+					{
+						FString RefPath;
+						if ((*AsObject)->Values.Num() == 1 && (*AsObject)->TryGetStringField(FStringView(TEXT("refPath")), RefPath))
+						{
+							return MakeShared<FJsonValueString>(RefPath);
+						}
+						TSharedRef<FJsonObject> Copy = MakeShared<FJsonObject>();
+						for (const auto& Inner : (*AsObject)->Values)
+						{
+							Copy->SetField(UplinkCompat::JsonKeyToString(Inner.Key), NormalizeRefs(Inner.Value));
+						}
+						return MakeShared<FJsonValueObject>(Copy);
+					}
+					const TArray<TSharedPtr<FJsonValue>>* AsArray = nullptr;
+					if (Value.IsValid() && Value->TryGetArray(AsArray))
+					{
+						TArray<TSharedPtr<FJsonValue>> Copy;
+						for (const TSharedPtr<FJsonValue>& Element : *AsArray)
+						{
+							Copy.Add(NormalizeRefs(Element));
+						}
+						return MakeShared<FJsonValueArray>(Copy);
+					}
+					return Value;
+				};
+
 				for (const auto& Pair : (*Changes)->Values)
 				{
-					Merged->SetField(UplinkCompat::JsonKeyToString(Pair.Key), Pair.Value);
+					Merged->SetField(UplinkCompat::JsonKeyToString(Pair.Key), NormalizeRefs(Pair.Value));
 				}
 
 				FNiagaraExt_RendererData NewData;
