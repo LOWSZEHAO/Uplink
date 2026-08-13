@@ -8,10 +8,12 @@
 #include "Editor.h"
 #include "LevelEditorViewport.h"
 #include "Components/StaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInterface.h"
 #include "GameFramework/Actor.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 
 using namespace UplinkToolUtil;
 
@@ -392,5 +394,199 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			RotJson->SetNumberField(TEXT("roll"), ViewRotation.Roll);
 			Data->SetObjectField(TEXT("rotation"), RotJson);
 			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("trace"),
+		TEXT("Ask the physics scene what is there. Casts a ray (or a swept sphere/box/capsule with 'radius'/'half_height') and reports what it hit: actor, component, impact point, normal, distance, physical material. 'to' or 'direction'+'distance' set the end point. 'profile' traces by collision profile (e.g. 'Azr_Collision'), otherwise 'channel' names a trace channel ('Visibility', 'Camera', or a project channel). 'multi' returns every hit along the ray instead of the first. Use this instead of guessing geometry - a downward trace is how you find ground height under a point."),
+		TEXT(R"json({"type":"object","properties":{"from":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"to":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"direction":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"distance":{"type":"number","default":10000},"shape":{"type":"string","enum":["line","sphere","box","capsule"],"default":"line"},"radius":{"type":"number","default":50},"half_height":{"type":"number","default":100},"channel":{"type":"string","default":"Visibility"},"profile":{"type":"string"},"multi":{"type":"boolean","default":false},"complex":{"type":"boolean","default":false},"ignore_actors":{"type":"array","items":{"type":"string"}},"draw_seconds":{"type":"number","default":0,"description":"Draw the trace in the world for this many seconds"},"world":{"type":"string","enum":["editor","pie"]}},"required":["from"]})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			FString Error;
+			UWorld* World = Ctx.ResolveWorld(Error);
+			if (!World)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+
+			FVector Start;
+			if (!TryGetVector(Ctx.Params, TEXT("from"), Start))
+			{
+				return FUplinkToolResult::Error(TEXT("'from' is required, as {x,y,z}"));
+			}
+
+			FVector End;
+			if (!TryGetVector(Ctx.Params, TEXT("to"), End))
+			{
+				FVector Direction(0, 0, -1); // straight down: the common "what is below" case
+				TryGetVector(Ctx.Params, TEXT("direction"), Direction);
+				if (Direction.IsNearlyZero())
+				{
+					return FUplinkToolResult::Error(TEXT("'direction' cannot be zero; pass 'to' instead"));
+				}
+				End = Start + Direction.GetSafeNormal() * GetNumber(Ctx.Params, TEXT("distance"), 10000.0);
+			}
+
+			FCollisionQueryParams Query(TEXT("UplinkTrace"), /*bTraceComplex=*/false);
+			bool bComplex = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("complex")), bComplex);
+			Query.bTraceComplex = bComplex;
+			Query.bReturnPhysicalMaterial = true;
+
+			const TArray<TSharedPtr<FJsonValue>>* IgnoreList = nullptr;
+			if (Ctx.Params->TryGetArrayField(FStringView(TEXT("ignore_actors")), IgnoreList))
+			{
+				for (const TSharedPtr<FJsonValue>& Entry : *IgnoreList)
+				{
+					FString ActorName;
+					if (Entry.IsValid() && Entry->TryGetString(ActorName))
+					{
+						if (AActor* Found = FindActor(World, ActorName))
+						{
+							Query.AddIgnoredActor(Found);
+						}
+					}
+				}
+			}
+
+			// Shape: a swept shape answers "does this fit / would a character
+			// stand here", which a bare line cannot.
+			const FString Shape = GetString(Ctx.Params, TEXT("shape"), TEXT("line"));
+			FCollisionShape SweepShape;
+			const bool bSweep = Shape != TEXT("line");
+			if (Shape == TEXT("sphere"))
+			{
+				SweepShape = FCollisionShape::MakeSphere(GetNumber(Ctx.Params, TEXT("radius"), 50.0));
+			}
+			else if (Shape == TEXT("capsule"))
+			{
+				SweepShape = FCollisionShape::MakeCapsule(
+					GetNumber(Ctx.Params, TEXT("radius"), 50.0), GetNumber(Ctx.Params, TEXT("half_height"), 100.0));
+			}
+			else if (Shape == TEXT("box"))
+			{
+				const double R = GetNumber(Ctx.Params, TEXT("radius"), 50.0);
+				SweepShape = FCollisionShape::MakeBox(FVector3f(
+					static_cast<float>(R), static_cast<float>(R),
+					static_cast<float>(GetNumber(Ctx.Params, TEXT("half_height"), R))));
+			}
+			else if (bSweep)
+			{
+				return FUplinkToolResult::Error(TEXT("unknown shape (line, sphere, box, capsule)"));
+			}
+
+			bool bMulti = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("multi")), bMulti);
+
+			const FString Profile = GetString(Ctx.Params, TEXT("profile"));
+			const FString ChannelName = GetString(Ctx.Params, TEXT("channel"), TEXT("Visibility"));
+			ECollisionChannel Channel = ECC_Visibility;
+			if (Profile.IsEmpty())
+			{
+				// Accept both the friendly names and the raw ECC_ enum names.
+				const UEnum* ChannelEnum = StaticEnum<ECollisionChannel>();
+				int64 Value = ChannelEnum ? ChannelEnum->GetValueByNameString(FString::Printf(TEXT("ECC_%s"), *ChannelName)) : INDEX_NONE;
+				if (Value == INDEX_NONE && ChannelEnum)
+				{
+					Value = ChannelEnum->GetValueByNameString(ChannelName);
+				}
+				if (Value == INDEX_NONE)
+				{
+					Value = UEngineTypes::ConvertToCollisionChannel(
+						ChannelName == TEXT("Camera") ? ETraceTypeQuery::TraceTypeQuery2 : ETraceTypeQuery::TraceTypeQuery1);
+				}
+				Channel = static_cast<ECollisionChannel>(Value);
+			}
+
+			TArray<FHitResult> Hits;
+			bool bAnyHit = false;
+			if (!Profile.IsEmpty())
+			{
+				bAnyHit = bMulti
+					? (bSweep
+						? World->SweepMultiByProfile(Hits, Start, End, FQuat::Identity, FName(*Profile), SweepShape, Query)
+						: World->LineTraceMultiByProfile(Hits, Start, End, FName(*Profile), Query))
+					: [&]
+					{
+						FHitResult One;
+						const bool bOk = bSweep
+							? World->SweepSingleByProfile(One, Start, End, FQuat::Identity, FName(*Profile), SweepShape, Query)
+							: World->LineTraceSingleByProfile(One, Start, End, FName(*Profile), Query);
+						if (bOk) { Hits.Add(One); }
+						return bOk;
+					}();
+			}
+			else
+			{
+				bAnyHit = bMulti
+					? (bSweep
+						? World->SweepMultiByChannel(Hits, Start, End, FQuat::Identity, Channel, SweepShape, Query)
+						: World->LineTraceMultiByChannel(Hits, Start, End, Channel, Query))
+					: [&]
+					{
+						FHitResult One;
+						const bool bOk = bSweep
+							? World->SweepSingleByChannel(One, Start, End, FQuat::Identity, Channel, SweepShape, Query)
+							: World->LineTraceSingleByChannel(One, Start, End, Channel, Query);
+						if (bOk) { Hits.Add(One); }
+						return bOk;
+					}();
+			}
+
+			auto VectorJson = [](const FVector& V)
+			{
+				TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+				J->SetNumberField(TEXT("x"), V.X);
+				J->SetNumberField(TEXT("y"), V.Y);
+				J->SetNumberField(TEXT("z"), V.Z);
+				return J;
+			};
+
+			TArray<TSharedPtr<FJsonValue>> HitJson;
+			for (const FHitResult& Hit : Hits)
+			{
+				TSharedRef<FJsonObject> H = MakeShared<FJsonObject>();
+				const AActor* HitActor = Hit.GetActor();
+				H->SetStringField(TEXT("actor"), HitActor ? HitActor->GetName() : FString());
+				if (HitActor)
+				{
+					H->SetStringField(TEXT("actorLabel"), HitActor->GetActorLabel());
+					H->SetStringField(TEXT("actorClass"), HitActor->GetClass()->GetName());
+				}
+				H->SetStringField(TEXT("component"), Hit.GetComponent() ? Hit.GetComponent()->GetName() : FString());
+				H->SetObjectField(TEXT("location"), VectorJson(Hit.ImpactPoint));
+				H->SetObjectField(TEXT("normal"), VectorJson(Hit.ImpactNormal));
+				H->SetNumberField(TEXT("distance"), Hit.Distance);
+				H->SetBoolField(TEXT("startPenetrating"), Hit.bStartPenetrating);
+				if (Hit.PhysMaterial.IsValid())
+				{
+					H->SetStringField(TEXT("physicalMaterial"), Hit.PhysMaterial->GetName());
+				}
+				if (!Hit.BoneName.IsNone())
+				{
+					H->SetStringField(TEXT("bone"), Hit.BoneName.ToString());
+				}
+				HitJson.Add(MakeShared<FJsonValueObject>(H));
+			}
+
+			if (const double DrawSeconds = GetNumber(Ctx.Params, TEXT("draw_seconds"), 0.0); DrawSeconds > 0.0)
+			{
+				DrawDebugLine(World, Start, End, bAnyHit ? FColor::Green : FColor::Red,
+					/*bPersistentLines=*/false, static_cast<float>(DrawSeconds), 0, 2.0f);
+				for (const FHitResult& Hit : Hits)
+				{
+					DrawDebugPoint(World, Hit.ImpactPoint, 12.0f, FColor::Yellow, false, static_cast<float>(DrawSeconds));
+				}
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetBoolField(TEXT("hit"), bAnyHit);
+			Data->SetArrayField(TEXT("hits"), HitJson);
+			Data->SetObjectField(TEXT("start"), VectorJson(Start));
+			Data->SetObjectField(TEXT("end"), VectorJson(End));
+			return FUplinkToolResult::Ok(Data, bAnyHit
+				? FString::Printf(TEXT("%d hit(s)"), HitJson.Num())
+				: TEXT("no hit"));
 		});
 }
