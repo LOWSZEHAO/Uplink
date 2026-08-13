@@ -55,6 +55,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterPCG(*Registry);
 	UplinkTools::RegisterGASP(*Registry);
 	UplinkTools::RegisterMaterial(*Registry);
+	UplinkTools::RegisterAI(*Registry);
 
 	// Tools contributed by other plugins: already-loaded providers now, and
 	// late-loading ones as they register their modular feature.
