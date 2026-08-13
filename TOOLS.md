@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 86 tools, grouped by layer. Conventions used throughout:
+All 89 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -91,6 +91,16 @@ All 86 tools, grouped by layer. Conventions used throughout:
 | `socket_modify` | Add / update / remove skeleton sockets — attachment points for weapons and props. `{asset, op, name, bone?, location?, rotation?, scale?}` |
 | `animbp_query` | Anim Blueprint structure: target skeleton, state machines (states + transitions), and every anim graph node with its title (which names the assets it plays). `{blueprint}` — pair with `bp_query` for the event graph. |
 | `sequence_query` | Level Sequence timing truth: playback range and frame rate, bindings (possessable/spawnable) with tracks, and section start/end in seconds. Playback needs no tool: `call_function` `LevelSequencePlayer.CreateLevelSequencePlayer` + `Play`. `{asset}` |
+
+## Motion matching (GASP)
+
+Requires the **PoseSearch** and **Chooser** plugins (both off by default; the Game Animation Sample enables them). Reflection-only, so UplinkEditor still loads without them — the tools just report which plugin to enable. Note that `animbp_query` shows very little for motion-matching graphs: motion matching is precisely what *replaces* state machines, so use these instead.
+
+| Tool | What it does |
+|---|---|
+| `posesearch_query` | A Pose Search database: its schema (skeleton, sample rate, feature channels) and every animation it can select from. `{database, max_animations?}` |
+| `chooser_query` | A Chooser table — the data-driven logic picking which database/asset applies to the current game state. Dumps rows, columns and result structs, including nested choosers. `{chooser, max_rows?}` |
+| `motionmatch_debug` | Live motion-matching state off a character during PIE: each motion-matching anim node with its blend/reselect settings, plus the anim blueprint's exposed values (in GASP: MovementMode, RotationMode, MovementState, Gait — the inputs the chooser keys on). `{actor?, world?, max_values?}`, defaults to the player pawn. |
 
 ## PCG (procedural generation)
 

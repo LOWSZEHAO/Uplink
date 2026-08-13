@@ -35,4 +35,5 @@ namespace UplinkTools
 	void RegisterTests(FUplinkToolRegistry& Registry);
 	void RegisterSequencer(FUplinkToolRegistry& Registry);
 	void RegisterPCG(FUplinkToolRegistry& Registry);
+	void RegisterGASP(FUplinkToolRegistry& Registry);
 }
