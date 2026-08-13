@@ -858,6 +858,15 @@ namespace
 						return FUplinkToolResult::Error(FString::Printf(
 							TEXT("input '%s': %s"), *PinName, *Error));
 					}
+					// Prototype-matched signatures (anim node bindings) declare their
+					// params const-ref; IsSignatureCompatibleWith rejects a by-value
+					// pin against them, so these must be settable per input.
+					bool bByRef = false;
+					(*Obj)->TryGetBoolField(FStringView(TEXT("by_ref")), bByRef);
+					bool bConst = false;
+					(*Obj)->TryGetBoolField(FStringView(TEXT("const")), bConst);
+					PinType.bIsReference = bByRef;
+					PinType.bIsConst = bConst;
 					Entry->CreateUserDefinedPin(FName(*PinName), PinType, EGPD_Output);
 					AddedInputs.Add(PinName);
 				}
