@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Environment tools: lighting_setup (one-call scene lighting stack),
 // landscape_create (heightmap file -> Landscape actor), foliage_scatter
 // (instanced meshes scattered onto the ground).

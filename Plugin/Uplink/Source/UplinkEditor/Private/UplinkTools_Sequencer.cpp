@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // sequence_query - read a Level Sequence: playback range, bindings, tracks
 // and section timings in seconds, so gameplay can be aligned to cinematics.
 

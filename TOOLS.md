@@ -33,7 +33,7 @@ All 89 tools, grouped by layer. Conventions used throughout:
 
 | Tool | What it does |
 |---|---|
-| `get_property` | Read any UPROPERTY as JSON. Target via `object_path`, or `actor` + optional `component`. `{..., property, world?}` |
+| `get_property` | Read any UPROPERTY as JSON. Target via `object_path`, or `actor` + optional `component`. `property` accepts a **dotted path** (`MyStruct.Inner.Value`) to read struct members — necessary for the few engine structs that will not serialise as a whole. `{..., property, world?}` |
 | `set_property` | Write any UPROPERTY from JSON; in the editor world also runs `PostEditChangeProperty`. `{..., property, value, world?}` |
 | `call_function` | Call any UFUNCTION by reflection: `args` maps parameter names to JSON values; the response carries the return value and out-params. Unknown arg names are rejected with the expected parameter list. `{..., function, args?, world?}` |
 
@@ -150,6 +150,18 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 | `bp_query` | Parent class, compile status, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. `{blueprint, graph?, max_nodes?}` |
 | `bp_modify` | One edit — or a whole batch: `{blueprint, ops: [{op:..., ...}, ...], compile?}` builds an entire event graph in a single call. Give `add_node` ops a `ref` name and later ops address that node as `@ref` in `from_node`/`to_node`/`node`. A failed op stops the batch (earlier ops stay applied). Single-op form: `{blueprint, op, ..., compile?}`. Ops: `add_variable` `{name, type, default?}` (types: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`) · `remove_variable` `{name}` · `add_node` `{kind: call_function{class,function} \| custom_event{name} \| event{name e.g. ReceiveBeginPlay — reuses a matching ghost/existing event node instead of stacking a duplicate} \| component_bound_event{component, event} — bind a component's or widget's delegate as a graph event (button OnClicked, NiagaraComponent OnSystemFinished, …) \| variable_get/variable_set{name}, graph?, x?, y?}` · `arrange` `{graph?}` — auto-layout the graph (see style rules below) · `connect` `{from_node, from_pin, to_node, to_pin}` (exec pins are `execute`/`then`) · `break_links` `{node, pin}` · `delete_node` `{node}` · `set_pin_default` `{node, pin, value}` (object pins load the value as an object path). |
 | `bp_add_component` | Add a component to an actor Blueprint's construction script, like the editor's Add Component button. `class` is a short engine name (`StaticMeshComponent`, `BoxComponent`, `SceneComponent`) or a full path; `parent` attaches under an existing component (default: the scene root). Template conveniences: `location`/`rotation`/`scale`, `static_mesh` (asset path), `collision_profile` (`OverlapOnlyPawn`, `BlockAll`, …), and `properties` as a generic name→JSON map. The component becomes a Blueprint variable — after a compile its delegates bind with `bp_modify component_bound_event`. `{blueprint, class, name, parent?, …, compile?}` |
+
+`bp_modify` operations (single, or batched through `ops` with `@ref` handles):
+
+| Op | What it does |
+|---|---|
+| `add_variable` / `remove_variable` | Member variables by friendly type string, including `struct:/Script/Module.StructName`. |
+| `add_function` | Create a real **function graph** — not just nodes in the event graph. `{name, thread_safe?, pure?, category?, inputs:[{name,type}]}`. `thread_safe` is required for anim-graph node functions, which cannot run on the game thread. |
+| `add_node` | `call_function` (with `class`, default `self`) · `custom_event` · `event` · `component_bound_event` · `variable_get` / `variable_set` (variable named via `name`). |
+| `connect` / `break_links` / `delete_node` | Wiring, with schema rejection reasons on failure. |
+| `set_pin_default` | Literal pin values, object-aware. |
+| `set_node_property` | Set any property on a **graph node** addressed by guid, with dotted paths into structs — e.g. an anim graph node's `Node.OnMotionMatchingStateUpdated.FunctionName`. `{graph, node, property, value, reconstruct?}` |
+| `arrange` | Lay the graph out: dependency columns, straight exec lanes, reroute knots at turns. |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
 
 **Graph style rules** (always on for Uplink-authored graphs): nodes never overlap — new nodes are nudged into free space, or auto-placed on a fresh row when `x`/`y` are omitted; `arrange` lays a whole graph out as left-to-right dependency columns with each exec chain on one horizontal lane (level pins = straight wires) and pure data nodes tucked below the lane they feed. Wires that must change height get a **reroute knot** at the turn — the wire leaves its pin dead level, hits the dot just before the target, and the engine's own spline makes the drop — the same way a person tidies a graph by hand (`arrange` re-places its knots on every run). Wire rendering itself is stock Unreal. For material graphs, run `MaterialEditingLibrary.LayoutMaterialExpressions` after authoring.

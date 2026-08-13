@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // PIE control tools: input_action, input_key, possess, player_teleport, player_info.
 
 #include "UplinkTools.h"

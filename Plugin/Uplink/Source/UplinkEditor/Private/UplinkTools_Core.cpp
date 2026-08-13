@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Core tools: console_command, output_log, task_status / task_result / task_cancel / task_list, status.
 
 #include "UplinkTools.h"

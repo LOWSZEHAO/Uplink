@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Reflection tools: get_property, set_property, call_function.
 
 #include "UplinkTools.h"
@@ -24,13 +24,58 @@ namespace
 		}
 		return Property;
 	}
+
+	/**
+	 * Resolve a dotted property path such as "MyStruct.Inner.Value", returning the
+	 * leaf property and the address of its value. Needed because some engine
+	 * structs refuse to serialise as a whole (FPoseSearchBlueprintResult exports
+	 * as an empty object), but their individual members read back fine.
+	 */
+	FProperty* ResolvePropertyPath(UObject* Object, const FString& Path, void*& OutContainer, FString& OutError)
+	{
+		TArray<FString> Segments;
+		Path.ParseIntoArray(Segments, TEXT("."), true);
+		if (Segments.Num() == 0)
+		{
+			OutError = TEXT("'property' is required");
+			return nullptr;
+		}
+
+		void* Container = Object;
+		UStruct* Owner = Object->GetClass();
+		for (int32 i = 0; i < Segments.Num(); ++i)
+		{
+			FProperty* Found = Owner->FindPropertyByName(FName(*Segments[i]));
+			if (!Found)
+			{
+				OutError = FString::Printf(TEXT("property '%s' not found on %s (path '%s')"),
+					*Segments[i], *Owner->GetName(), *Path);
+				return nullptr;
+			}
+			if (i == Segments.Num() - 1)
+			{
+				OutContainer = Found->ContainerPtrToValuePtr<void>(Container);
+				return Found;
+			}
+			FStructProperty* AsStruct = CastField<FStructProperty>(Found);
+			if (!AsStruct)
+			{
+				OutError = FString::Printf(TEXT("'%s' is not a struct, so '%s' cannot be reached"),
+					*Segments[i], *Path);
+				return nullptr;
+			}
+			Container = AsStruct->ContainerPtrToValuePtr<void>(Container);
+			Owner = AsStruct->Struct;
+		}
+		return nullptr;
+	}
 }
 
 void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("get_property"),
-		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path' (also accepts 'subsystem:<Class>' for live subsystem instances), or 'actor' (name/label) plus optional 'component'."),
+		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path' (also accepts 'subsystem:<Class>' for live subsystem instances), or 'actor' (name/label) plus optional 'component'. 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value' - useful because a few engine structs will not serialise as a whole but their members read fine."),
 		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"world":{"type":"string","enum":["editor","pie"]}},"required":["property"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -43,14 +88,14 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(Error);
 			}
 
-			FProperty* Property = FindPropertyChecked(Object, GetString(Ctx.Params, TEXT("property")), Error);
+			void* ValueAddr = nullptr;
+			FProperty* Property = ResolvePropertyPath(Object, GetString(Ctx.Params, TEXT("property")), ValueAddr, Error);
 			if (!Property)
 			{
 				return FUplinkToolResult::Error(Error);
 			}
 
-			const TSharedPtr<FJsonValue> Value = FJsonObjectConverter::UPropertyToJsonValue(
-				Property, Property->ContainerPtrToValuePtr<void>(Object));
+			const TSharedPtr<FJsonValue> Value = FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr);
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("object"), Object->GetPathName());

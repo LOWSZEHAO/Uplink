@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Niagara authoring tools, built on UNiagaraExternalEditUtilities (new in
 // UE 5.8, exported but marked experimental by Epic - expect churn in 5.9).
 // On UE 5.7 the stack-editing tools report unsupported; user-parameter

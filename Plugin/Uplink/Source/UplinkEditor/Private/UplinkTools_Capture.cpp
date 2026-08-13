@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // viewport_screenshot — synchronous pixel readback of the active viewport
 // (PIE game viewport during play, else the active editor viewport).
 // Direct ReadPixels is used instead of FScreenshotRequest because the

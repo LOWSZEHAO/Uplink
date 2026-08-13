@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Discovery tools: class_info, find_functions. These make the engine's whole
 // reflected surface findable, so call_function / get_property / watch_events
 // can reach systems that have no dedicated tool (materials, animation,

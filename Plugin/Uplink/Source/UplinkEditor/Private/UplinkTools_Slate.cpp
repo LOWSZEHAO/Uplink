@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Editor UI tools: ui_tree (query the live Slate hierarchy) and
 // capture_widget (screenshot any editor window or panel, not just viewports).
 // Together they let a client see every part of the editor UI - asset editor

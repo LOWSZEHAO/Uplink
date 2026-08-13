@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // PCG tools: author Procedural Content Generation graphs and run them on actors.
 //
 // Everything here goes through reflection on purpose. PCG ships disabled by

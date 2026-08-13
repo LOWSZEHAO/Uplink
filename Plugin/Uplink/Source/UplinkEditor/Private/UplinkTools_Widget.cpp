@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Widget tools: widget_tree (query a Widget Blueprint's hierarchy) and
 // widget_add (construct a widget into the tree). Event hookup for widgets is
 // bp_modify's component_bound_event node kind.

@@ -2,7 +2,7 @@
 // Uplink MCP bridge — stdio MCP server that forwards to the Uplink UE plugin's
 // localhost REST API. Stays alive when the editor is closed (tools degrade to a
 // "not connected" status instead of the MCP server dying).
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

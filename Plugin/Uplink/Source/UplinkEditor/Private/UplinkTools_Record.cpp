@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // input_record / input_replay - capture a real play session's input and play
 // it back through the engine's simulated-input path as a regression test.
 

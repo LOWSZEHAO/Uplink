@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Animation tools: anim_query (read timing data - the frame truth needed to
 // place gameplay events correctly instead of guessing with Delay nodes) and
 // anim_modify (add/remove notifies at exact times).

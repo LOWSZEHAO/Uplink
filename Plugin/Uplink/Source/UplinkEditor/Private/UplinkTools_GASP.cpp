@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Motion-matching tools: Pose Search databases, Chooser tables, and the runtime
 // state of a motion-matching anim node (the "why did it pick that animation?"
 // question that motion matching actually generates).

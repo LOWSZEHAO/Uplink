@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // run_scenario - execute a list of tool steps as one task and return a
 // structured pass/fail report: a whole scripted playtest in a single call.
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Blueprint tools: bp_create, bp_query, bp_modify, bp_compile.
 
 #include "UplinkTools.h"
@@ -21,6 +21,7 @@
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_Event.h"
+#include "K2Node_FunctionEntry.h"
 #include "K2Node_Knot.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
@@ -777,6 +778,198 @@ namespace
 		else if (Op == TEXT("remove_variable"))
 		{
 			FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, FName(*GetString(OpParams, TEXT("name"))));
+		}
+		else if (Op == TEXT("add_function"))
+		{
+			// Creates a real function graph, not just nodes in the event graph.
+			// Needed for anything that must run off the game thread - anim graph
+			// node functions in particular, which have to be marked thread-safe.
+			const FName FuncName(*GetString(OpParams, TEXT("name")));
+			if (FuncName.IsNone())
+			{
+				return FUplinkToolResult::Error(TEXT("'name' is required for add_function"));
+			}
+			for (UEdGraph* Existing : Blueprint->FunctionGraphs)
+			{
+				if (Existing && Existing->GetFName() == FuncName)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("a function named '%s' already exists"), *FuncName.ToString()));
+				}
+			}
+
+			UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+				Blueprint, FuncName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+			if (!NewGraph)
+			{
+				return FUplinkToolResult::Error(TEXT("CreateNewGraph failed"));
+			}
+			FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, NewGraph, /*bIsUserCreated=*/true, nullptr);
+
+			// Find the entry node so we can flag thread-safety and add parameters.
+			UK2Node_FunctionEntry* Entry = nullptr;
+			for (UEdGraphNode* Node : NewGraph->Nodes)
+			{
+				if (UK2Node_FunctionEntry* AsEntry = Cast<UK2Node_FunctionEntry>(Node))
+				{
+					Entry = AsEntry;
+					break;
+				}
+			}
+			if (!Entry)
+			{
+				return FUplinkToolResult::Error(TEXT("new function has no entry node"));
+			}
+
+			bool bThreadSafe = false;
+			OpParams->TryGetBoolField(FStringView(TEXT("thread_safe")), bThreadSafe);
+			if (bThreadSafe)
+			{
+				Entry->MetaData.bThreadSafe = true;
+			}
+			bool bPure = false;
+			OpParams->TryGetBoolField(FStringView(TEXT("pure")), bPure);
+			if (bPure)
+			{
+				Entry->SetExtraFlags(Entry->GetExtraFlags() | FUNC_BlueprintPure);
+			}
+			const FString Category = GetString(OpParams, TEXT("category"));
+			if (!Category.IsEmpty())
+			{
+				Entry->MetaData.Category = FText::FromString(Category);
+			}
+
+			// Typed inputs, e.g. the anim node reference an anim graph function receives.
+			TArray<FString> AddedInputs;
+			const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
+			if (OpParams->TryGetArrayField(FStringView(TEXT("inputs")), Inputs))
+			{
+				for (const TSharedPtr<FJsonValue>& Value : *Inputs)
+				{
+					const TSharedPtr<FJsonObject>* Obj = nullptr;
+					if (!Value->TryGetObject(Obj) || !Obj->IsValid())
+					{
+						continue;
+					}
+					const FString PinName = GetString(*Obj, TEXT("name"));
+					FEdGraphPinType PinType;
+					if (!MakePinType(GetString(*Obj, TEXT("type"), TEXT("float")), PinType, Error))
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("input '%s': %s"), *PinName, *Error));
+					}
+					Entry->CreateUserDefinedPin(FName(*PinName), PinType, EGPD_Output);
+					AddedInputs.Add(PinName);
+				}
+			}
+
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+			Data->SetStringField(TEXT("function"), FuncName.ToString());
+			Data->SetStringField(TEXT("graph"), NewGraph->GetName());
+			Data->SetBoolField(TEXT("thread_safe"), bThreadSafe);
+			if (AddedInputs.Num())
+			{
+				Data->SetStringField(TEXT("inputs"), FString::Join(AddedInputs, TEXT(", ")));
+			}
+		}
+		else if (Op == TEXT("set_node_property"))
+		{
+			// Set a property ON A GRAPH NODE (addressed by guid), not on an asset.
+			// Supports dotted paths so struct members are reachable - anim graph
+			// nodes keep their real settings inside a 'Node' struct, e.g.
+			// "Node.OnMotionMatchingStateUpdated.FunctionName".
+			UEdGraph* Graph = FindGraph(Blueprint, GetString(OpParams, TEXT("graph")), Error);
+			if (!Graph)
+			{
+				return FUplinkToolResult::Error(Error);
+			}
+			const FString NodeRef = GetString(OpParams, TEXT("node"));
+			// Compare parsed guids: bp_query emits DigitsWithHyphens while
+			// FGuid::ToString() defaults to Digits, so a string compare misses.
+			FGuid WantedGuid;
+			const bool bParsedGuid = FGuid::Parse(NodeRef, WantedGuid);
+			UEdGraphNode* Target = nullptr;
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (!Node)
+				{
+					continue;
+				}
+				if (bParsedGuid ? (Node->NodeGuid == WantedGuid)
+					: (Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens) == NodeRef))
+				{
+					Target = Node;
+					break;
+				}
+			}
+			if (!Target)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("node '%s' not found in graph '%s' (use bp_query to list node guids)"), *NodeRef, *Graph->GetName()));
+			}
+
+			const FString PropPath = GetString(OpParams, TEXT("property"));
+			TArray<FString> Segments;
+			PropPath.ParseIntoArray(Segments, TEXT("."), true);
+			if (Segments.Num() == 0)
+			{
+				return FUplinkToolResult::Error(TEXT("'property' is required"));
+			}
+
+			// Walk the path: every segment but the last must be a struct.
+			void* Container = Target;
+			UStruct* Owner = Target->GetClass();
+			FProperty* Leaf = nullptr;
+			for (int32 i = 0; i < Segments.Num(); ++i)
+			{
+				FProperty* Found = Owner->FindPropertyByName(FName(*Segments[i]));
+				if (!Found)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("property '%s' not found on %s (path '%s')"),
+						*Segments[i], *Owner->GetName(), *PropPath));
+				}
+				if (i == Segments.Num() - 1)
+				{
+					Leaf = Found;
+					Container = Found->ContainerPtrToValuePtr<void>(Container);
+					break;
+				}
+				FStructProperty* AsStruct = CastField<FStructProperty>(Found);
+				if (!AsStruct)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' is not a struct, so '%s' cannot be reached"), *Segments[i], *PropPath));
+				}
+				Container = AsStruct->ContainerPtrToValuePtr<void>(Container);
+				Owner = AsStruct->Struct;
+			}
+
+			const TSharedPtr<FJsonValue> Value = OpParams->TryGetField(FStringView(TEXT("value")));
+			if (!Value.IsValid())
+			{
+				return FUplinkToolResult::Error(TEXT("'value' is required"));
+			}
+			Target->Modify();
+			if (!FJsonObjectConverter::JsonValueToUProperty(Value, Leaf, Container))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("could not convert value for %s (%s)"), *PropPath, *Leaf->GetCPPType()));
+			}
+
+			// Let the node rebuild its pins/state from the new value.
+			bool bReconstruct = true;
+			OpParams->TryGetBoolField(FStringView(TEXT("reconstruct")), bReconstruct);
+			if (bReconstruct)
+			{
+				Target->ReconstructNode();
+			}
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+			Data->SetStringField(TEXT("node"), Target->GetClass()->GetName());
+			Data->SetStringField(TEXT("property"), PropPath);
+			Data->SetField(TEXT("value"), FJsonObjectConverter::UPropertyToJsonValue(Leaf, Container));
 		}
 		else if (Op == TEXT("add_node"))
 		{

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // PIE lifecycle tools: pie_start, pie_stop, pie_status, pie_pause, pie_resume, pie_step.
 
 #include "UplinkTools.h"

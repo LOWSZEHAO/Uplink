@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Records real player input (keys, mouse buttons, analog axes, mouse moves)
 // through a Slate input pre-processor, timestamped for later replay.
 

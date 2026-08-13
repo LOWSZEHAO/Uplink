@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Low Sze Hao. MIT License.
+// Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Developer-loop tools: live_compile - trigger a Live Coding patch of the
 // running editor so C++ iteration doesn't need an editor restart.
 
