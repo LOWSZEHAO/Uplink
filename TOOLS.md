@@ -39,6 +39,8 @@ All 89 tools, grouped by layer. Conventions used throughout:
 
 ## Assets
 
+> `save` matters more than it looks: authoring tools mark packages dirty and leave the work in memory. Anything unsaved is lost when the editor closes.
+
 | Tool | What it does |
 |---|---|
 | `asset_search` | Name-substring search. `{query?, class_contains?, path_prefix? (default /Game), max?}` — plugin content needs its mount point as `path_prefix` (e.g. `/MyPlugin`). |
@@ -124,6 +126,13 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 | `plugin_list` | Engine + project plugins with enabled state and content roots. Enabled plugins are already fully reachable (assets via `path_prefix`, classes via reflection). |
 | `plugin_enable` | Enable/disable a plugin in the .uproject (editor restart required to take effect). `{name, enable}` |
 
+## World queries
+
+| Tool | Purpose |
+|---|---|
+| `trace` | Ask the physics scene what is there. `{from, to? | direction?+distance?, shape?: line\|sphere\|box\|capsule, radius?, half_height?, channel?, profile?, multi?, complex?, ignore_actors?, draw_seconds?, world?}`. Hits report actor, label, class, component, impact point, normal, distance, physical material and bone. Trace **by profile** (e.g. `Azr_Collision`) to check the setup a project actually uses. A downward trace is how you find ground height — do not parse heightmaps for it. |
+| `ai_query` | What the AI is doing: per controller, its pawn, behaviour tree, **active node**, active task chain and full blackboard. `{actor?, blackboard?, max?, world?}`. The active node is not exposed to Blueprint, so nothing else can answer "why is it doing that". A non-behaviour-tree brain (StateTree, custom) is named rather than hidden. AI only exists in a running game. |
+| `material_query` | Read a material or material instance: `errors` first (compile errors, taken from the compiled resource — a failed material renders black and logs nothing useful), then expressions, which output inputs are connected, and parameter values. `{material, expressions?, parameters?, recompile?, max?}`. An instance also reports its `parent`; a null parent renders as default material and looks exactly like a broken graph. |
 ## Observation & assertion
 
 | Tool | What it does |
@@ -156,7 +165,8 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 | Op | What it does |
 |---|---|
 | `add_variable` / `remove_variable` | Member variables by friendly type string, including `struct:/Script/Module.StructName`. |
-| `add_function` | Create a real **function graph** — not just nodes in the event graph. `{name, thread_safe?, pure?, category?, inputs:[{name,type}]}`. `thread_safe` is required for anim-graph node functions, which cannot run on the game thread. |
+| `remove_function` | Delete a function graph by name. Refuses a name the blueprint does not have, and lists the ones it has. |
+| `add_function` | Create a real **function graph** — not just nodes in the event graph. `{name, thread_safe?, pure?, category?, inputs:[{name, type, by_ref?, const?}]}` — `by_ref`+`const` are required to match a prototype-validated signature such as an anim node binding, which declares its parameters const-reference. `thread_safe` is required for anim-graph node functions, which cannot run on the game thread. |
 | `add_node` | `call_function` (with `class`, default `self`) · `custom_event` · `event` · `component_bound_event` · `variable_get` / `variable_set` (variable named via `name`). |
 | `connect` / `break_links` / `delete_node` | Wiring, with schema rejection reasons on failure. |
 | `set_pin_default` | Literal pin values, object-aware. |
