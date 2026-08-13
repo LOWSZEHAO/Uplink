@@ -144,6 +144,15 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(FString::Printf(
 					TEXT("could not convert JSON to %s (%s)"), *Property->GetName(), *Property->GetCPPType()));
 			}
+
+			// A path that resolves to nothing would otherwise be written as
+			// null and reported as a success - this is how a material ended up
+			// with no parent and rendered black with nothing in the logs.
+			if (FString ObjectError;
+				!NamedObjectResolved(Property, Value, Property->ContainerPtrToValuePtr<void>(Object), ObjectError))
+			{
+				return FUplinkToolResult::Error(ObjectError);
+			}
 #if WITH_EDITOR
 			if (bEditorObject)
 			{
@@ -246,6 +255,37 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 			{
 				return FUplinkToolResult::Error(FString::Printf(
 					TEXT("could not map 'args' onto %s parameters: %s"), *FunctionName, *FailReason.ToString()));
+			}
+
+			// Catch object args that resolved to null before calling. Passing a
+			// silently-null asset into a function is how a wrong result gets
+			// blamed on the function instead of on the path that was typed.
+			for (TFieldIterator<FProperty> ParamIt(Function); ParamIt; ++ParamIt)
+			{
+				if (!ParamIt->HasAnyPropertyFlags(CPF_Parm) || ParamIt->HasAnyPropertyFlags(CPF_ReturnParm))
+				{
+					continue;
+				}
+				const TSharedPtr<FJsonValue>* Supplied = nullptr;
+				for (const auto& ArgPair : Args->Values)
+				{
+					if (UplinkCompat::JsonKeyToString(ArgPair.Key).Equals(ParamIt->GetName(), ESearchCase::IgnoreCase))
+					{
+						Supplied = &ArgPair.Value;
+						break;
+					}
+				}
+				if (!Supplied)
+				{
+					continue;
+				}
+				FString ObjectError;
+				if (!NamedObjectResolved(*ParamIt, *Supplied,
+					ParamIt->ContainerPtrToValuePtr<void>(ParamFrame.GetStructMemory()), ObjectError))
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("arg %s"), *ObjectError));
+				}
 			}
 
 			Object->ProcessEvent(Function, ParamFrame.GetStructMemory());

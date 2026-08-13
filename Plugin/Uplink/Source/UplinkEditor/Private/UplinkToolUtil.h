@@ -23,6 +23,55 @@
 /** Small param/lookup helpers shared by the tool implementations. */
 namespace UplinkToolUtil
 {
+	/**
+	 * The JSON converter resolves an object path it cannot find to null and
+	 * reports success, so a typo'd asset path used to sail through and only
+	 * show up much later as a wrong-looking result. This checks, after
+	 * conversion, that every hard object reference the caller actually named
+	 * came back non-null.
+	 *
+	 * Only hard object and class properties are checked. A soft reference is
+	 * allowed to point at something unloaded, which is the whole point of it.
+	 */
+	inline bool NamedObjectResolved(
+		const FProperty* Property,
+		const TSharedPtr<FJsonValue>& Supplied,
+		const void* ValueAddr,
+		FString& OutError)
+	{
+		if (!Supplied.IsValid() || !ValueAddr)
+		{
+			return true;
+		}
+		if (Property->IsA<FSoftObjectProperty>() || Property->IsA<FSoftClassProperty>())
+		{
+			return true;
+		}
+		const FObjectPropertyBase* AsObject = CastField<FObjectPropertyBase>(Property);
+		if (!AsObject)
+		{
+			return true;
+		}
+
+		FString Path;
+		if (!Supplied->TryGetString(Path) || Path.IsEmpty() || Path == TEXT("None"))
+		{
+			return true; // caller asked for null, or passed a non-path form
+		}
+		if (AsObject->GetObjectPropertyValue(ValueAddr) != nullptr)
+		{
+			return true;
+		}
+
+		const UClass* Expected = AsObject->PropertyClass;
+		OutError = FString::Printf(
+			TEXT("'%s': nothing found at '%s'%s. Check the path - an asset reference usually looks like ")
+			TEXT("/Game/Folder/Asset.Asset, and a Blueprint class needs the _C suffix."),
+			*Property->GetName(), *Path,
+			Expected ? *FString::Printf(TEXT(" (expected a %s)"), *Expected->GetName()) : TEXT(""));
+		return false;
+	}
+
 	inline FString GetString(const TSharedPtr<FJsonObject>& Params, const TCHAR* Field, const FString& Default = FString())
 	{
 		FString Value = Default;
