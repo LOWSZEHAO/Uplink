@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 81 tools, grouped by layer. Conventions used throughout:
+All 86 tools, grouped by layer. Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match).
@@ -91,6 +91,18 @@ All 81 tools, grouped by layer. Conventions used throughout:
 | `socket_modify` | Add / update / remove skeleton sockets — attachment points for weapons and props. `{asset, op, name, bone?, location?, rotation?, scale?}` |
 | `animbp_query` | Anim Blueprint structure: target skeleton, state machines (states + transitions), and every anim graph node with its title (which names the assets it plays). `{blueprint}` — pair with `bp_query` for the event graph. |
 | `sequence_query` | Level Sequence timing truth: playback range and frame rate, bindings (possessable/spawnable) with tracks, and section start/end in seconds. Playback needs no tool: `call_function` `LevelSequencePlayer.CreateLevelSequencePlayer` + `Play`. `{asset}` |
+
+## PCG (procedural generation)
+
+Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `plugin_enable {"name":"PCG"}` then restart. These tools work purely by reflection, so UplinkEditor still loads when PCG is absent; the tools just report that it is not enabled.
+
+| Tool | What it does |
+|---|---|
+| `pcg_create` | Create an empty PCG graph asset. `{path, name, save?}` |
+| `pcg_add_node` | Add a node. `settings_class` takes a friendly name (`SurfaceSampler`, `StaticMeshSpawner`, `GetLandscape`, `TransformPoints`) or a full `/Script/PCG.PCGxxxSettings` path; unknown names come back with close matches. `properties` are applied to the node settings. Returns the node name and its exact input/output pin labels. `{graph, settings_class, properties?, title?}` |
+| `pcg_connect` | Wire two nodes, or unwire with `disconnect: true`. `{graph, from_node, from_pin?, to_node, to_pin?, disconnect?}` |
+| `pcg_query` | Every node with settings class, title and pin labels — read this before wiring. `{graph}` |
+| `pcg_generate` | Add a PCG component to an actor (bounds come from the actor — note `APCGVolume` is a brush volume and cannot be spawned programmatically), assign the graph and generate. `cleanup: true` clears instead. `{actor, graph?, cleanup?, force?, world?}` |
 
 ## Environment
 
