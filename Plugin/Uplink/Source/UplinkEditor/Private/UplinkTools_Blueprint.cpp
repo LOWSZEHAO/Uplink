@@ -797,6 +797,35 @@ namespace
 			FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, VarName);
 			Data->SetStringField(TEXT("removed"), VarName.ToString());
 		}
+		else if (Op == TEXT("remove_function"))
+		{
+			// Without this, abandoned attempts pile up in the blueprint with
+			// no way to clear them except opening the editor by hand.
+			const FName FunctionName(*GetString(OpParams, TEXT("name")));
+			UEdGraph* Target = nullptr;
+			TArray<FString> Existing;
+			for (UEdGraph* FunctionGraph : Blueprint->FunctionGraphs)
+			{
+				if (!FunctionGraph)
+				{
+					continue;
+				}
+				Existing.Add(FunctionGraph->GetFName().ToString());
+				if (FunctionGraph->GetFName() == FunctionName)
+				{
+					Target = FunctionGraph;
+				}
+			}
+			if (!Target)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no function '%s' on %s. It has: %s"),
+					*FunctionName.ToString(), *Blueprint->GetName(),
+					Existing.Num() ? *FString::Join(Existing, TEXT(", ")) : TEXT("(none)")));
+			}
+			FBlueprintEditorUtils::RemoveGraph(Blueprint, Target, EGraphRemoveFlags::Recompile);
+			Data->SetStringField(TEXT("removedFunction"), FunctionName.ToString());
+		}
 		else if (Op == TEXT("add_function"))
 		{
 			// Creates a real function graph, not just nodes in the event graph.
@@ -1242,7 +1271,7 @@ namespace
 		}
 		else
 		{
-			return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_function, add_node, arrange, connect, break_links, delete_node, set_pin_default, set_node_property)"));
+			return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_function, remove_function, add_node, arrange, connect, break_links, delete_node, set_pin_default, set_node_property)"));
 		}
 		return FUplinkToolResult::Ok();
 	}
@@ -1398,7 +1427,7 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
 		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -1426,9 +1455,17 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 					const FUplinkToolResult OpResult = ApplyGraphOp(Blueprint, *OpObject, NodeRefs, OpData);
 					if (OpResult.bError)
 					{
-						// Earlier ops in the batch have already been applied.
-						return FUplinkToolResult::Error(FString::Printf(TEXT("ops[%d] (%s) failed: %s - earlier ops were applied, blueprint not compiled"),
-							Index, *GetString(*OpObject, TEXT("op")), *OpResult.Message));
+						// Earlier ops have already been applied, so hand back
+						// what succeeded - otherwise the caller cannot tell how
+						// far the batch got and has to re-derive it.
+						Data->SetArrayField(TEXT("results"), Results);
+						Data->SetNumberField(TEXT("failedAt"), Index);
+						Data->SetNumberField(TEXT("applied"), Results.Num());
+						FUplinkToolResult Out = FUplinkToolResult::Ok(Data, FString::Printf(
+							TEXT("ops[%d] (%s) failed: %s - the %d op(s) before it were applied, blueprint not compiled"),
+							Index, *GetString(*OpObject, TEXT("op")), *OpResult.Message, Results.Num()));
+						Out.bError = true;
+						return Out;
 					}
 					Results.Add(MakeShared<FJsonValueObject>(OpData));
 				}
