@@ -44,12 +44,17 @@ public:
 	FUplinkTaskManager();
 	~FUplinkTaskManager();
 
-	/** Submit and immediately run the first step (same tick). Returns task id. */
+	/**
+	 * Submit and immediately run the first step (same tick). Returns task id.
+	 * A tool that is not read-only runs inside an editor transaction, so its
+	 * edits are one undo step; see StepEntry.
+	 */
 	FGuid Submit(
 		const FString& ToolName,
 		TSharedRef<IUplinkInvocation> Invocation,
 		FUplinkToolContext Context,
-		double TimeoutSeconds);
+		double TimeoutSeconds,
+		bool bReadOnly = true);
 
 	/** Attach a waiter; fires now if the task is already finished or unknown. */
 	void Await(const FGuid& TaskId, double MaxWaitSeconds, FWaiter Waiter);
@@ -68,6 +73,10 @@ private:
 		TSharedPtr<IUplinkInvocation> Invocation;
 		FUplinkToolContext Context;
 		bool bStarted = false;
+		bool bReadOnly = true;
+
+		/** True while this task holds an open editor transaction. */
+		bool bTransactionOpen = false;
 
 		struct FPendingWaiter
 		{

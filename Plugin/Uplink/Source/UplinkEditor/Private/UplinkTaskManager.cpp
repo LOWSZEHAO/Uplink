@@ -3,6 +3,7 @@
 #include "UplinkTaskManager.h"
 #include "UplinkEditorModule.h"
 #include "Misc/App.h"
+#include "Editor.h"
 
 FUplinkTaskManager::FUplinkTaskManager()
 {
@@ -22,7 +23,8 @@ FGuid FUplinkTaskManager::Submit(
 	const FString& ToolName,
 	TSharedRef<IUplinkInvocation> Invocation,
 	FUplinkToolContext Context,
-	double TimeoutSeconds)
+	double TimeoutSeconds,
+	bool bReadOnly)
 {
 	check(IsInGameThread());
 
@@ -33,6 +35,7 @@ FGuid FUplinkTaskManager::Submit(
 	Entry.Task.TimeoutSeconds = TimeoutSeconds;
 	Entry.Invocation = Invocation;
 	Entry.Context = MoveTemp(Context);
+	Entry.bReadOnly = bReadOnly;
 
 	const FGuid Id = Entry.Task.Id;
 	FEntry& Stored = Entries.Add(Id, MoveTemp(Entry));
@@ -159,6 +162,20 @@ void FUplinkTaskManager::StepEntry(FEntry& Entry)
 	if (!Entry.bStarted)
 	{
 		Entry.bStarted = true;
+
+		// Group everything a mutating tool touches into one undo step, so the
+		// user can ctrl+Z an agent's edit the same way they undo their own.
+		// The transaction spans the whole invocation (latent tools included)
+		// and is always closed in FinishEntry, which every terminal path runs
+		// through. PIE edits are not transacted - the engine discards
+		// transactions that only touch PIE objects anyway.
+		if (!Entry.bReadOnly && GEditor && !Entry.Context.IsPieWorld())
+		{
+			GEditor->BeginTransaction(FText::FromString(
+				FString::Printf(TEXT("Uplink: %s"), *Entry.Task.ToolName)));
+			Entry.bTransactionOpen = true;
+		}
+
 		Step = Entry.Invocation->Start(Entry.Context, Out);
 	}
 	else
@@ -175,6 +192,18 @@ void FUplinkTaskManager::StepEntry(FEntry& Entry)
 
 void FUplinkTaskManager::FinishEntry(FEntry& Entry, EUplinkTaskStatus Status)
 {
+	// Close the undo group before anyone is told the task ended. An empty
+	// transaction (a tool that turned out to change nothing) is dropped by
+	// the engine, so this does not litter the undo stack.
+	if (Entry.bTransactionOpen)
+	{
+		Entry.bTransactionOpen = false;
+		if (GEditor)
+		{
+			GEditor->EndTransaction();
+		}
+	}
+
 	Entry.Task.Status = Status;
 	Entry.Task.FinishedAt = FPlatformTime::Seconds();
 	Entry.Invocation.Reset();

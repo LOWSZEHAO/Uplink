@@ -238,7 +238,8 @@ bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttp
 	Params->TryGetNumberField(FStringView(TEXT("wait_ms")), WaitMs);
 	const double MaxWait = FMath::Clamp(WaitMs / 1000.0, 0.0, 55.0);
 
-	const FGuid TaskId = Tasks.Submit(ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds);
+	const FGuid TaskId = Tasks.Submit(
+		ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly);
 	Tasks.Await(TaskId, MaxWait,
 		[OnComplete](const FUplinkTask& Task, bool bStillRunning)
 		{

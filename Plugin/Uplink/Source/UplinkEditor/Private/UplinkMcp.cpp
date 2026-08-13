@@ -222,7 +222,8 @@ bool UplinkMcp::Handle(
 		}
 		Context.Params->TryGetStringField(FStringView(TEXT("world")), Context.WorldSpec);
 
-		const FGuid TaskId = Tasks.Submit(ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds);
+		const FGuid TaskId = Tasks.Submit(
+			ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly);
 
 		// Hold the HTTP response until the task finishes or ~25s pass; never
 		// blocks the game thread (the waiter fires from the task ticker).

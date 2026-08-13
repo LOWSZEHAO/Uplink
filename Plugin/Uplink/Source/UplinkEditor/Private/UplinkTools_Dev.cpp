@@ -9,6 +9,8 @@
 #include "Interfaces/IPluginManager.h"
 #include "Interfaces/IProjectManager.h"
 #include "Modules/ModuleManager.h"
+#include "Editor.h"
+#include "Editor/TransBuffer.h"
 
 using namespace UplinkToolUtil;
 
@@ -180,6 +182,84 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 			Data->SetArrayField(TEXT("plugins"), Rows);
 			Data->SetNumberField(TEXT("total_matching"), Total);
 			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("edit_history"),
+		TEXT("Inspect and walk the editor's undo stack. Every mutating Uplink tool runs inside its own transaction named 'Uplink: <tool>', so an agent's edit can be undone exactly like a hand edit. 'action': 'list' (default) shows what undo/redo would do, 'undo' or 'redo' walk 'steps' entries. Does not apply to PIE-world edits, which the engine does not transact."),
+		TEXT(R"json({"type":"object","properties":{"action":{"type":"string","enum":["list","undo","redo"],"default":"list"},"steps":{"type":"number","default":1,"description":"how many transactions to walk (undo/redo)"}}})json"),
+		/*bReadOnly=*/true, // its own edits must not be wrapped in a transaction
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			if (!GEditor || !GEditor->Trans)
+			{
+				return FUplinkToolResult::Error(TEXT("no editor transaction buffer available"));
+			}
+			UTransactor* Trans = GEditor->Trans;
+
+			const FString Action = GetString(Ctx.Params, TEXT("action"), TEXT("list"));
+			int32 Steps = 1;
+			if (double AsNumber = 0.0; Ctx.Params->TryGetNumberField(FStringView(TEXT("steps")), AsNumber))
+			{
+				Steps = FMath::Max(1, static_cast<int32>(AsNumber));
+			}
+
+			auto Describe = [Trans](TSharedRef<FJsonObject> Data)
+			{
+				FText UndoText;
+				FText RedoText;
+				const bool bCanUndo = Trans->CanUndo(&UndoText);
+				const bool bCanRedo = Trans->CanRedo(&RedoText);
+				Data->SetBoolField(TEXT("canUndo"), bCanUndo);
+				Data->SetBoolField(TEXT("canRedo"), bCanRedo);
+				Data->SetStringField(TEXT("nextUndo"),
+					bCanUndo ? Trans->GetUndoContext().Title.ToString() : FString());
+				Data->SetStringField(TEXT("nextRedo"),
+					bCanRedo ? Trans->GetRedoContext().Title.ToString() : FString());
+				Data->SetNumberField(TEXT("queueLength"), Trans->GetQueueLength());
+				Data->SetNumberField(TEXT("undoCount"), Trans->GetUndoCount());
+			};
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+
+			if (Action == TEXT("list"))
+			{
+				Describe(Data);
+				return FUplinkToolResult::Ok(Data);
+			}
+
+			const bool bUndo = Action == TEXT("undo");
+			if (!bUndo && Action != TEXT("redo"))
+			{
+				return FUplinkToolResult::Error(TEXT("unknown action (list, undo, redo)"));
+			}
+
+			// Record what each step actually was, so the caller learns which
+			// edits were rolled back rather than just a count.
+			TArray<TSharedPtr<FJsonValue>> Walked;
+			for (int32 i = 0; i < Steps; ++i)
+			{
+				FText Title;
+				if (bUndo ? !Trans->CanUndo(&Title) : !Trans->CanRedo(&Title))
+				{
+					break;
+				}
+				const FString Name = bUndo
+					? Trans->GetUndoContext().Title.ToString()
+					: Trans->GetRedoContext().Title.ToString();
+				const bool bOk = bUndo ? GEditor->UndoTransaction() : GEditor->RedoTransaction();
+				if (!bOk)
+				{
+					break;
+				}
+				Walked.Add(MakeShared<FJsonValueString>(Name));
+			}
+
+			Data->SetArrayField(bUndo ? TEXT("undone") : TEXT("redone"), Walked);
+			Describe(Data);
+			return FUplinkToolResult::Ok(Data, Walked.Num() == 0
+				? FString::Printf(TEXT("nothing to %s"), *Action)
+				: FString::Printf(TEXT("%s %d transaction(s)"), bUndo ? TEXT("undid") : TEXT("redid"), Walked.Num()));
 		});
 
 	Registry.RegisterQuick(
