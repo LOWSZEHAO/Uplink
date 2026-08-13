@@ -38,6 +38,8 @@ public class UplinkEditor : ModuleRules
 			"LevelSequence",
 			"MovieScene",
 			"AnimGraph",
+			"MaterialEditor",
+			"RHI",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
