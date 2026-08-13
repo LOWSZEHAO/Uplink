@@ -206,8 +206,12 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 			Object->ProcessEvent(Function, ParamFrame.GetStructMemory());
 
 			// Export the same frame: out-params + the literal 'ReturnValue'.
+			// CheckFlags must be 0, not CPF_Parm: the frame only ever contains
+			// parameters, but the filter also recurses into struct parameters and
+			// strips their members (which are not themselves parameters), so a
+			// struct out-param would come back as an empty object.
 			TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
-			FJsonObjectConverter::UStructToJsonObject(Function, ParamFrame.GetStructMemory(), Out, CPF_Parm, 0);
+			FJsonObjectConverter::UStructToJsonObject(Function, ParamFrame.GetStructMemory(), Out, 0, 0);
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("object"), Object->GetPathName());
