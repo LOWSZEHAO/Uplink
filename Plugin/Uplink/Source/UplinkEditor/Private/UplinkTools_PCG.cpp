@@ -109,6 +109,24 @@ namespace
 		return StaticFindObject(UObject::StaticClass(), nullptr, *Path);
 	}
 
+	/**
+	 * Resolve a graph asset by path. StaticFindObject alone only sees objects
+	 * that are already in memory, so every graph tool failed against a freshly
+	 * started editor until the load fallback was added.
+	 */
+	UObject* ResolveGraph(const FString& Path)
+	{
+		if (Path.IsEmpty())
+		{
+			return nullptr;
+		}
+		if (UObject* Found = StaticFindObject(UObject::StaticClass(), nullptr, *Path))
+		{
+			return Found;
+		}
+		return StaticLoadObject(UObject::StaticClass(), nullptr, *Path);
+	}
+
 	/** Collect the graph's nodes without relying on a UPROPERTY name. */
 	void GatherNodes(UObject* Graph, UClass* NodeClass, TArray<UObject*>& OutNodes)
 	{
@@ -307,7 +325,7 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FString Error;
-			UObject* Graph = StaticFindObject(UObject::StaticClass(), nullptr, *GetString(Ctx.Params, TEXT("graph")));
+			UObject* Graph = ResolveGraph(GetString(Ctx.Params, TEXT("graph")));
 			if (!Graph)
 			{
 				return FUplinkToolResult::Error(FString::Printf(TEXT("graph not found: %s (pass the full object path, e.g. /Game/PCG/G.G)"),
@@ -411,7 +429,7 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 			{
 				return FUplinkToolResult::Error(Error);
 			}
-			UObject* Graph = StaticFindObject(UObject::StaticClass(), nullptr, *GetString(Ctx.Params, TEXT("graph")));
+			UObject* Graph = ResolveGraph(GetString(Ctx.Params, TEXT("graph")));
 			if (!Graph)
 			{
 				return FUplinkToolResult::Error(TEXT("graph not found"));
@@ -486,7 +504,7 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 			{
 				return FUplinkToolResult::Error(Error);
 			}
-			UObject* Graph = StaticFindObject(UObject::StaticClass(), nullptr, *GetString(Ctx.Params, TEXT("graph")));
+			UObject* Graph = ResolveGraph(GetString(Ctx.Params, TEXT("graph")));
 			if (!Graph)
 			{
 				return FUplinkToolResult::Error(TEXT("graph not found"));
@@ -581,11 +599,7 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 			const FString GraphPath = GetString(Ctx.Params, TEXT("graph"));
 			if (!GraphPath.IsEmpty())
 			{
-				UObject* Graph = StaticFindObject(UObject::StaticClass(), nullptr, *GraphPath);
-				if (!Graph)
-				{
-					Graph = StaticLoadObject(UObject::StaticClass(), nullptr, *GraphPath);
-				}
+				UObject* Graph = ResolveGraph(GraphPath);
 				if (!Graph)
 				{
 					return FUplinkToolResult::Error(FString::Printf(TEXT("graph not found: %s"), *GraphPath));
