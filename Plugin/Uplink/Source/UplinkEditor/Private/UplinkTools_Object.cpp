@@ -14,17 +14,6 @@ using namespace UplinkToolUtil;
 
 namespace
 {
-	FProperty* FindPropertyChecked(UObject* Object, const FString& PropertyName, FString& OutError)
-	{
-		FProperty* Property = FindFProperty<FProperty>(Object->GetClass(), *PropertyName);
-		if (!Property)
-		{
-			OutError = FString::Printf(TEXT("property '%s' not found on %s"),
-				*PropertyName, *Object->GetClass()->GetName());
-		}
-		return Property;
-	}
-
 	/**
 	 * Resolve a dotted property path such as "MyStruct.Inner.Value", returning the
 	 * leaf property and the address of its value. Needed because some engine
@@ -57,15 +46,33 @@ namespace
 				OutContainer = Found->ContainerPtrToValuePtr<void>(Container);
 				return Found;
 			}
-			FStructProperty* AsStruct = CastField<FStructProperty>(Found);
-			if (!AsStruct)
+			if (FStructProperty* AsStruct = CastField<FStructProperty>(Found))
 			{
-				OutError = FString::Printf(TEXT("'%s' is not a struct, so '%s' cannot be reached"),
-					*Segments[i], *Path);
-				return nullptr;
+				Container = AsStruct->ContainerPtrToValuePtr<void>(Container);
+				Owner = AsStruct->Struct;
+				continue;
 			}
-			Container = AsStruct->ContainerPtrToValuePtr<void>(Container);
-			Owner = AsStruct->Struct;
+			// Step through an object reference too, so a path can cross from
+			// an actor into a component and on into that component's structs -
+			// RootComponent.RelativeLocation.X and the like.
+			if (const FObjectPropertyBase* AsObject = CastField<FObjectPropertyBase>(Found))
+			{
+				UObject* Next = AsObject->GetObjectPropertyValue(
+					AsObject->ContainerPtrToValuePtr<void>(Container));
+				if (!Next)
+				{
+					OutError = FString::Printf(
+						TEXT("'%s' is null, so '%s' cannot be reached"), *Segments[i], *Path);
+					return nullptr;
+				}
+				Container = Next;
+				Owner = Next->GetClass();
+				continue;
+			}
+			OutError = FString::Printf(
+				TEXT("'%s' is a %s - only structs and object references can be stepped through, so '%s' cannot be reached"),
+				*Segments[i], *Found->GetClass()->GetName(), *Path);
+			return nullptr;
 		}
 		return nullptr;
 	}
@@ -106,7 +113,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("set_property"),
-		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit."),
+		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value', matching get_property. In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit. A named object reference that resolves to nothing is refused rather than written as null."),
 		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"world":{"type":"string","enum":["editor","pie"]}},"required":["property","value"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -119,7 +126,10 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(Error);
 			}
 
-			FProperty* Property = FindPropertyChecked(Object, GetString(Ctx.Params, TEXT("property")), Error);
+			// Same dotted-path walk get_property uses, so a value that can be
+			// read can also be written rather than only half the pair working.
+			void* ValueAddr = nullptr;
+			FProperty* Property = ResolvePropertyPath(Object, GetString(Ctx.Params, TEXT("property")), ValueAddr, Error);
 			if (!Property)
 			{
 				return FUplinkToolResult::Error(Error);
@@ -138,8 +148,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				Object->Modify();
 			}
 #endif
-			if (!FJsonObjectConverter::JsonValueToUProperty(
-				Value, Property, Property->ContainerPtrToValuePtr<void>(Object)))
+			if (!FJsonObjectConverter::JsonValueToUProperty(Value, Property, ValueAddr))
 			{
 				return FUplinkToolResult::Error(FString::Printf(
 					TEXT("could not convert JSON to %s (%s)"), *Property->GetName(), *Property->GetCPPType()));
@@ -148,8 +157,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 			// A path that resolves to nothing would otherwise be written as
 			// null and reported as a success - this is how a material ended up
 			// with no parent and rendered black with nothing in the logs.
-			if (FString ObjectError;
-				!NamedObjectResolved(Property, Value, Property->ContainerPtrToValuePtr<void>(Object), ObjectError))
+			if (FString ObjectError; !NamedObjectResolved(Property, Value, ValueAddr, ObjectError))
 			{
 				return FUplinkToolResult::Error(ObjectError);
 			}
@@ -163,8 +171,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 #endif
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("object"), Object->GetPathName());
-			Data->SetField(TEXT("value"), FJsonObjectConverter::UPropertyToJsonValue(
-				Property, Property->ContainerPtrToValuePtr<void>(Object)));
+			Data->SetField(TEXT("value"), FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr));
 			return FUplinkToolResult::Ok(Data);
 		});
 
