@@ -11,6 +11,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
+#include "FileHelpers.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/SCS_Node.h"
@@ -1366,7 +1367,7 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
 		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"}},"required":["blueprint"]})json"),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -1413,6 +1414,25 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
+			// Graph edits live only in memory until the package is written, so
+			// an editor restart silently discards them. 'save' makes a run of
+			// edits durable without a second round trip.
+			bool bSave = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSave);
+			auto SaveIfAsked = [Blueprint, bSave, &Data]()
+			{
+				if (!bSave)
+				{
+					return;
+				}
+				UPackage* Package = Blueprint->GetOutermost();
+				TArray<UPackage*> ToSave{ Package };
+				TArray<UPackage*> Failed;
+				FEditorFileUtils::PromptForCheckoutAndSave(
+					ToSave, /*bCheckDirty=*/false, /*bPromptToSave=*/false, &Failed);
+				Data->SetBoolField(TEXT("saved"), Failed.Num() == 0);
+			};
+
 			bool bCompile = false;
 			Ctx.Params->TryGetBoolField(FStringView(TEXT("compile")), bCompile);
 			if (bCompile)
@@ -1422,10 +1442,17 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 				{
 					Data->SetObjectField(TEXT("compile"), CompileResult.Data);
 				}
+				// Only persist a blueprint that compiled - saving a broken one
+				// makes the breakage survive the restart too.
+				if (!CompileResult.bError)
+				{
+					SaveIfAsked();
+				}
 				FUplinkToolResult Out = FUplinkToolResult::Ok(Data, CompileResult.Message);
 				Out.bError = CompileResult.bError;
 				return Out;
 			}
+			SaveIfAsked();
 			return FUplinkToolResult::Ok(Data, TEXT("modified (not compiled)"));
 		});
 

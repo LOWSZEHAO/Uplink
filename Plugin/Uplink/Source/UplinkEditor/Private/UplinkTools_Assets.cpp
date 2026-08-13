@@ -8,8 +8,10 @@
 #include "AssetImportTask.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "FileHelpers.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "UObject/Package.h"
 
 using namespace UplinkToolUtil;
 
@@ -162,5 +164,91 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			Data->SetArrayField(TEXT("imported"), Imported);
 			Data->SetBoolField(TEXT("saved"), bSave);
 			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
+		TEXT("save"),
+		TEXT("Write edited assets to disk. Authoring tools leave their work in memory and merely mark it dirty, so anything not saved is lost when the editor closes - blueprint graphs especially. With no arguments this saves everything dirty, including the level; pass 'asset' to save one package by path. 'list_only' reports what is unsaved without writing."),
+		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string","description":"Package or object path; omit to save everything dirty"},"list_only":{"type":"boolean","default":false},"include_level":{"type":"boolean","default":true}}})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString AssetPath = GetString(Ctx.Params, TEXT("asset"));
+			bool bListOnly = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("list_only")), bListOnly);
+			bool bIncludeLevel = true;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("include_level")), bIncludeLevel);
+
+			TArray<UPackage*> Packages;
+			if (!AssetPath.IsEmpty())
+			{
+				// Accept either a package path or a full object path.
+				FString PackageName = AssetPath;
+				int32 Dot;
+				if (PackageName.FindChar(TEXT('.'), Dot))
+				{
+					PackageName.LeftInline(Dot);
+				}
+				UPackage* Package = FindPackage(nullptr, *PackageName);
+				if (!Package)
+				{
+					Package = LoadPackage(nullptr, *PackageName, LOAD_None);
+				}
+				if (!Package)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no package '%s' is loaded. Pass the path the asset was created at, e.g. /Game/Folder/Asset."),
+						*PackageName));
+				}
+				Packages.Add(Package);
+			}
+			else
+			{
+				if (bIncludeLevel)
+				{
+					FEditorFileUtils::GetDirtyWorldPackages(Packages);
+				}
+				FEditorFileUtils::GetDirtyContentPackages(Packages);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Names;
+			for (const UPackage* Package : Packages)
+			{
+				Names.Add(MakeShared<FJsonValueString>(Package->GetName()));
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetArrayField(bListOnly ? TEXT("unsaved") : TEXT("saved"), Names);
+			Data->SetNumberField(TEXT("count"), Packages.Num());
+
+			if (bListOnly || Packages.Num() == 0)
+			{
+				return FUplinkToolResult::Ok(Data, Packages.Num() == 0
+					? TEXT("nothing to save") : FString());
+			}
+
+			// bPromptToSave=false: this runs unattended, a dialog would hang the
+			// editor waiting for a click nobody is there to give.
+			TArray<UPackage*> Failed;
+			const FEditorFileUtils::EPromptReturnCode Result = FEditorFileUtils::PromptForCheckoutAndSave(
+				Packages, /*bCheckDirty=*/AssetPath.IsEmpty(), /*bPromptToSave=*/false, &Failed);
+
+			if (Failed.Num() > 0)
+			{
+				TArray<TSharedPtr<FJsonValue>> FailedNames;
+				for (const UPackage* Package : Failed)
+				{
+					FailedNames.Add(MakeShared<FJsonValueString>(Package->GetName()));
+				}
+				Data->SetArrayField(TEXT("failed"), FailedNames);
+			}
+
+			if (Result != FEditorFileUtils::PR_Success)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("save did not complete (%d of %d package(s) failed) - a read-only file or source control checkout is the usual cause"),
+					Failed.Num(), Packages.Num()));
+			}
+			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("saved %d package(s)"), Packages.Num()));
 		});
 }
