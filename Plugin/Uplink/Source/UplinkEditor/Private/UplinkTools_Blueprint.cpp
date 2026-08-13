@@ -778,7 +778,24 @@ namespace
 		}
 		else if (Op == TEXT("remove_variable"))
 		{
-			FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, FName(*GetString(OpParams, TEXT("name"))));
+			// Removing a name that was never there is not success - it usually
+			// means the name was typed wrong, and reporting OK sends the caller
+			// looking for the problem somewhere else.
+			const FName VarName(*GetString(OpParams, TEXT("name")));
+			if (FBlueprintEditorUtils::FindMemberVariableGuidByName(Blueprint, VarName) == FGuid())
+			{
+				TArray<FString> Existing;
+				for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+				{
+					Existing.Add(Variable.VarName.ToString());
+				}
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no variable '%s' on %s. It has: %s"),
+					*VarName.ToString(), *Blueprint->GetName(),
+					Existing.Num() ? *FString::Join(Existing, TEXT(", ")) : TEXT("(none)")));
+			}
+			FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, VarName);
+			Data->SetStringField(TEXT("removed"), VarName.ToString());
 		}
 		else if (Op == TEXT("add_function"))
 		{
@@ -1205,6 +1222,20 @@ namespace
 					else
 					{
 						Graph->GetSchema()->TrySetDefaultValue(*Pin, Value);
+					}
+					// The schema silently declines a value the pin's type will
+					// not take, so confirm it landed rather than reporting a
+					// success the graph does not agree with.
+					const FString& Landed = Pin->LinkedTo.Num() > 0 ? Pin->DefaultValue : Pin->DefaultValue;
+					const bool bTookIt = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+						? Pin->DefaultObject != nullptr
+						: (Landed == Value || (Value.IsEmpty() && Landed.IsEmpty()));
+					if (!bTookIt)
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("pin '%s' would not take '%s' (it is a %s pin; it still reads '%s')"),
+							*Pin->PinName.ToString(), *Value,
+							*Pin->PinType.PinCategory.ToString(), *Landed));
 					}
 				}
 			}

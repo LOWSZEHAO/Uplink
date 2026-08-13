@@ -6,6 +6,7 @@
 #include "UplinkToolUtil.h"
 
 #include "Editor.h"
+#include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/Pawn.h"
@@ -30,6 +31,39 @@ namespace
 		APlayerController* PC = nullptr;
 		UEnhancedInputLocalPlayerSubsystem* Input = nullptr;
 	};
+
+	/**
+	 * How many places actually listen for this action. Injection always
+	 * "succeeds" even when nothing is bound, which looks identical to a game
+	 * that ignored the input - so report the count and let the caller tell the
+	 * difference.
+	 */
+	int32 CountActionBindings(APlayerController* PC, const UInputAction* Action)
+	{
+		int32 Count = 0;
+		auto Scan = [&Count, Action](UInputComponent* Component)
+		{
+			if (const UEnhancedInputComponent* Enhanced = Cast<UEnhancedInputComponent>(Component))
+			{
+				for (const TUniquePtr<FEnhancedInputActionEventBinding>& Binding : Enhanced->GetActionEventBindings())
+				{
+					if (Binding.IsValid() && Binding->GetAction() == Action)
+					{
+						++Count;
+					}
+				}
+			}
+		};
+		if (PC)
+		{
+			Scan(PC->InputComponent);
+			if (const APawn* Pawn = PC->GetPawn())
+			{
+				Scan(Pawn->InputComponent);
+			}
+		}
+		return Count;
+	}
 
 	FPiePlayer GetPiePlayer(FString& OutError, bool bNeedEnhancedInput)
 	{
@@ -377,15 +411,24 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 						return EUplinkToolStep::Done;
 					}
 
+					const int32 BoundCount = CountActionBindings(Player.PC, Action);
+					TSharedRef<FJsonObject> InjectData = MakeShared<FJsonObject>();
+					InjectData->SetNumberField(TEXT("boundHandlers"), BoundCount);
+					const FString Unbound = BoundCount == 0
+						? TEXT(" - but nothing is bound to this action right now, so it will have no effect (is the owning mapping context added, and does the possessed pawn bind it?)")
+						: FString();
+
 					if (Mode == TEXT("pulse"))
 					{
 						Player.Input->InjectInputForAction(Action, Value, {}, {});
-						Out = FUplinkToolResult::Ok(nullptr, TEXT("pulsed for one input tick"));
+						Out = FUplinkToolResult::Ok(InjectData,
+							FString::Printf(TEXT("pulsed for one input tick%s"), *Unbound));
 					}
 					else if (Mode == TEXT("hold"))
 					{
 						Player.Input->StartContinuousInputInjectionForAction(Action, Value, {}, {});
-						Out = FUplinkToolResult::Ok(nullptr, TEXT("holding until mode 'release'"));
+						Out = FUplinkToolResult::Ok(InjectData,
+							FString::Printf(TEXT("holding until mode 'release'%s"), *Unbound));
 					}
 					else if (Mode == TEXT("update"))
 					{
@@ -677,12 +720,12 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			const FPointerEvent MouseDown(
 				0, ClickPos, ClickPos, TSet<FKey>{ EKeys::LeftMouseButton },
 				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
-			FSlateApplication::Get().ProcessMouseButtonDownEvent(nullptr, MouseDown);
+			const bool bDownHandled = FSlateApplication::Get().ProcessMouseButtonDownEvent(nullptr, MouseDown);
 
 			const FPointerEvent MouseUp(
 				0, ClickPos, ClickPos, TSet<FKey>(),
 				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
-			FSlateApplication::Get().ProcessMouseButtonUpEvent(MouseUp);
+			const bool bUpHandled = FSlateApplication::Get().ProcessMouseButtonUpEvent(MouseUp);
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			if (!ClickedName.IsEmpty())
@@ -693,7 +736,15 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			PosJson->SetNumberField(TEXT("x"), ClickPos.X);
 			PosJson->SetNumberField(TEXT("y"), ClickPos.Y);
 			Data->SetObjectField(TEXT("position"), PosJson);
-			return FUplinkToolResult::Ok(Data, TEXT("clicked"));
+
+			// Synthesizing the event always "works"; whether anything accepted
+			// it is the part worth knowing. An unhandled click usually means
+			// something invisible is over the target, or it does not take input.
+			const bool bHandled = bDownHandled || bUpHandled;
+			Data->SetBoolField(TEXT("handled"), bHandled);
+			return FUplinkToolResult::Ok(Data, bHandled
+				? TEXT("clicked")
+				: TEXT("click was sent but nothing handled it - the widget may be covered, hit-test invisible, or not accept input"));
 		});
 
 	{
