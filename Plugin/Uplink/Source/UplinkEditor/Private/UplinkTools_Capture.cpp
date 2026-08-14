@@ -75,8 +75,8 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("viewport_screenshot"),
-		TEXT("Capture the active viewport as a PNG image. During PIE this captures the game viewport (what the player sees); otherwise the active editor viewport."),
-		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"),
+		TEXT("Capture the active viewport as a PNG image. During PIE this captures the game viewport (what the player sees); otherwise the active editor viewport, which is redrawn first so a window that is not in front does not hand back a stale frame."),
+		TEXT(R"json({"type":"object","properties":{"refresh":{"type":"boolean","default":true,"description":"Redraw the editor viewport before reading it. Leave on unless you specifically want whatever is already in the buffer."}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -103,6 +103,17 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 			if (Size.X <= 0 || Size.Y <= 0)
 			{
 				return FUplinkToolResult::Error(TEXT("viewport has zero size"));
+			}
+
+			// An editor window that is not in front stops repainting, so the
+			// pixels still in the buffer are from whenever it last had focus -
+			// the capture looks successful and shows the wrong thing. Draw it
+			// first. PIE keeps rendering regardless, so it needs no help.
+			bool bRefresh = true;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("refresh")), bRefresh);
+			if (bRefresh && Source == TEXT("editor_viewport"))
+			{
+				Viewport->Draw(/*bShouldPresent=*/true);
 			}
 
 			TArray<FColor> Pixels;
