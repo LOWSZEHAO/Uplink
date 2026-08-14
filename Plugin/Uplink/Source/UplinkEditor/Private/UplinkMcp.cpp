@@ -222,6 +222,12 @@ bool UplinkMcp::Handle(
 		}
 		Context.Params->TryGetStringField(FStringView(TEXT("world")), Context.WorldSpec);
 
+		if (FString ParamError; !FUplinkToolRegistry::ValidateParams(Def->Info, Context.Params, ParamError))
+		{
+			RpcError(OnComplete, Id, -32602, ParamError);
+			return true;
+		}
+
 		const FGuid TaskId = Tasks.Submit(
 			ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly);
 

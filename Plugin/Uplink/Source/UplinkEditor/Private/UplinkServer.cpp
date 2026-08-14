@@ -234,6 +234,15 @@ bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttp
 	Context.Params = Params;
 	Params->TryGetStringField(FStringView(TEXT("world")), Context.WorldSpec);
 
+	if (FString ParamError; !FUplinkToolRegistry::ValidateParams(Def->Info, Params, ParamError))
+	{
+		const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+		Json->SetBoolField(TEXT("success"), false);
+		Json->SetStringField(TEXT("message"), ParamError);
+		OnComplete(JsonResponse(Json));
+		return true;
+	}
+
 	double WaitMs = 25000.0;
 	Params->TryGetNumberField(FStringView(TEXT("wait_ms")), WaitMs);
 	const double MaxWait = FMath::Clamp(WaitMs / 1000.0, 0.0, 55.0);

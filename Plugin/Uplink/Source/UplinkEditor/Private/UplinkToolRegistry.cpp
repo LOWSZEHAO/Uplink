@@ -1,6 +1,7 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 #include "UplinkToolRegistry.h"
+#include "UplinkCompat.h"
 #include "UplinkEditorModule.h"
 #include "Editor.h"
 #include "Serialization/JsonSerializer.h"
@@ -133,9 +134,88 @@ TSharedPtr<FJsonObject> FUplinkToolRegistry::ParseSchema(const FString& SchemaJs
 	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SchemaJson);
 	if (!FJsonSerializer::Deserialize(Reader, Schema) || !Schema.IsValid())
 	{
-		UE_LOG(LogUplink, Error, TEXT("Invalid tool schema JSON: %s"), *SchemaJson);
+		// A tool whose schema will not parse is served with no parameters at
+		// all, so every option it has becomes undiscoverable. That went
+		// unnoticed for two tools, so make it impossible to miss.
+		UE_LOG(LogUplink, Error,
+			TEXT("Invalid tool schema JSON - this tool will be served WITHOUT PARAMETERS. Check the braces: %s"),
+			*SchemaJson);
+		ensureMsgf(false, TEXT("Uplink: a tool's input schema is not valid JSON; see the log for which."));
 		Schema = MakeShared<FJsonObject>();
 		Schema->SetStringField(TEXT("type"), TEXT("object"));
 	}
 	return Schema;
+}
+
+bool FUplinkToolRegistry::ValidateParams(
+	const FUplinkToolInfo& Info, const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	if (!Params.IsValid() || !Info.InputSchema.IsValid())
+	{
+		return true;
+	}
+	const TSharedPtr<FJsonObject>* Properties = nullptr;
+	if (!Info.InputSchema->TryGetObjectField(FStringView(TEXT("properties")), Properties)
+		|| !Properties->IsValid())
+	{
+		return true; // nothing declared, nothing to check against
+	}
+
+	// Read by the transport rather than the tool, so they are always allowed.
+	static const TSet<FString> TransportParams = { TEXT("world"), TEXT("wait_ms") };
+
+	TArray<FString> Unknown;
+	for (const auto& Pair : Params->Values)
+	{
+		const FString Key = UplinkCompat::JsonKeyToString(Pair.Key);
+		if (TransportParams.Contains(Key) || (*Properties)->HasField(Key))
+		{
+			continue;
+		}
+		Unknown.Add(Key);
+	}
+	if (Unknown.Num() == 0)
+	{
+		return true;
+	}
+
+	// Name the accepted parameters, and point at the nearest one - a rejected
+	// call should tell the caller what to type instead of what not to.
+	TArray<FString> Accepted;
+	for (const auto& Pair : (*Properties)->Values)
+	{
+		Accepted.Add(UplinkCompat::JsonKeyToString(Pair.Key));
+	}
+	Accepted.Sort();
+
+	FString Suggestions;
+	for (const FString& Bad : Unknown)
+	{
+		const FString* Closest = nullptr;
+		int32 BestDistance = MAX_int32;
+		for (const FString& Candidate : Accepted)
+		{
+			// Cheap nearness: a shared prefix or one containing the other is
+			// what a typo or a wrong-but-related name usually looks like.
+			const bool bRelated = Candidate.Contains(Bad, ESearchCase::IgnoreCase)
+				|| Bad.Contains(Candidate, ESearchCase::IgnoreCase);
+			const int32 Distance = bRelated ? FMath::Abs(Candidate.Len() - Bad.Len()) : MAX_int32;
+			if (Distance < BestDistance)
+			{
+				BestDistance = Distance;
+				Closest = &Candidate;
+			}
+		}
+		if (Closest)
+		{
+			Suggestions += FString::Printf(TEXT(" Did you mean '%s' instead of '%s'?"), **Closest, *Bad);
+		}
+	}
+
+	OutError = FString::Printf(
+		TEXT("unknown parameter%s for %s: %s.%s This tool accepts: %s"),
+		Unknown.Num() > 1 ? TEXT("s") : TEXT(""),
+		*Info.Name, *FString::Join(Unknown, TEXT(", ")), *Suggestions,
+		*FString::Join(Accepted, TEXT(", ")));
+	return false;
 }

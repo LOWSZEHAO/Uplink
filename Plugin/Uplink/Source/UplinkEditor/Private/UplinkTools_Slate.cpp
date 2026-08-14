@@ -270,7 +270,7 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("ui_tree"),
 		TEXT("Query the editor's live Slate widget hierarchy. Default: structure of the main (largest) window to 'max_depth'. 'window' targets a window by title substring; 'find' searches the whole depth (all windows when no 'window' is given) for widgets whose type or text contains the string - e.g. find:'NiagaraSystemViewport' or find:'Content Browser'. Paths returned here ('w0/1/0/3') are the handles capture_widget uses. 'rect' is [x,y,w,h] in desktop pixels."),
-		TEXT(R"json({"type":"object","properties":{"window":{"type":"string","description":"Window title substring (default: largest window; with 'find': all windows)"},"find":{"type":"string","description":"Case-insensitive substring of widget type or text"},"path":{"type":"string","description":"Start the walk at this widget path instead of the window root"},"max_depth":{"type":"number","default":10},"max_nodes":{"type":"number","default":500}})json"),
+		TEXT(R"json({"type":"object","properties":{"window":{"type":"string","description":"Window title substring (default: largest window; with 'find': all windows)"},"find":{"type":"string","description":"Case-insensitive substring of widget type or text"},"path":{"type":"string","description":"Start the walk at this widget path instead of the window root"},"max_depth":{"type":"number","default":10},"max_nodes":{"type":"number","default":500}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -334,7 +334,7 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("capture_widget"),
 		TEXT("Screenshot any editor window or widget as a PNG - asset editor previews, graph panels, detail panels - even when the window is behind others. Target: 'window' (title substring; default largest window) plus either 'path' (from ui_tree) or 'type' (first descendant whose type name contains this, e.g. 'SNiagaraSystemViewport', 'SGraphEditor'). With neither, captures the whole window."),
-		TEXT(R"json({"type":"object","properties":{"window":{"type":"string"},"path":{"type":"string","description":"Widget path from ui_tree, e.g. 'w0/1/0/3' or '1/0/3'"},"type":{"type":"string","description":"Type-name substring to find, e.g. 'SGraphEditor'"}})json"),
+		TEXT(R"json({"type":"object","properties":{"window":{"type":"string"},"path":{"type":"string","description":"Widget path from ui_tree, e.g. 'w0/1/0/3' or '1/0/3'"},"type":{"type":"string","description":"Type-name substring to find, e.g. 'SGraphEditor'"}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

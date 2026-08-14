@@ -36,6 +36,15 @@ public:
 
 	static TSharedPtr<FJsonObject> ParseSchema(const FString& SchemaJson);
 
+	/**
+	 * Reject parameters the tool does not declare. A misspelt or wrong-named
+	 * parameter is otherwise ignored in silence and the tool runs with its
+	 * defaults, which reads as success while doing something else entirely.
+	 * Returns false and fills OutError when anything is unrecognised.
+	 */
+	static bool ValidateParams(
+		const FUplinkToolInfo& Info, const TSharedPtr<FJsonObject>& Params, FString& OutError);
+
 private:
 	TMap<FString, FUplinkToolDef> Tools;
 };
