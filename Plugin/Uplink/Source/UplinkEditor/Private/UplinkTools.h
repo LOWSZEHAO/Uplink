@@ -38,4 +38,5 @@ namespace UplinkTools
 	void RegisterGASP(FUplinkToolRegistry& Registry);
 	void RegisterMaterial(FUplinkToolRegistry& Registry);
 	void RegisterAI(FUplinkToolRegistry& Registry);
+	void RegisterXR(FUplinkToolRegistry& Registry);
 }

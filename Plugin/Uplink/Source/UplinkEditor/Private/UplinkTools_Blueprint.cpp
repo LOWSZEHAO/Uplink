@@ -1281,7 +1281,7 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("bp_create"),
-		TEXT("Create a new Blueprint asset (in memory, marked dirty; save from the editor or with console_command 'SaveDirtyPackages'). parent_class e.g. /Script/Engine.Actor."),
+		TEXT("Create a new Blueprint asset. It exists in memory and is marked dirty - call 'save' to write it to disk, or an editor restart discards it. 'parent_class' is a full class path, e.g. /Script/Engine.Actor or /Script/Engine.Pawn, and defaults to Actor."),
 		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Asset path, e.g. /Game/Tests/BP_Probe"},"parent_class":{"type":"string","default":"/Script/Engine.Actor"}},"required":["path"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult

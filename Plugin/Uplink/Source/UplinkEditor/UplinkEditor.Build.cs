@@ -40,6 +40,10 @@ public class UplinkEditor : ModuleRules
 			"AnimGraph",
 			"MaterialEditor",
 			"RHI",
+			// Motion controller components live here. This is an engine
+			// runtime module, always present - no XR device or plugin needed
+			// to reference the component type.
+			"HeadMountedDisplay",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
