@@ -126,6 +126,16 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 | `plugin_list` | Engine + project plugins with enabled state and content roots. Enabled plugins are already fully reachable (assets via `path_prefix`, classes via reflection). |
 | `plugin_enable` | Enable/disable a plugin in the .uproject (editor restart required to take effect). `{name, enable}` |
 
+## Virtual reality
+
+| Tool | Purpose |
+|---|---|
+| `xr_simulate` | Drive a VR pawn with no headset. `{action: status|pose|reach|reset, device?: hmd|left|right, location?, rotation?, space?: local|world, target?, offset?, look_at?, pawn?, world?}`. `status` finds the rig by component type and motion source — start there. `pose` places a device; `reach` puts a hand at an actor (with `offset`) and points it there; `reset` returns hands to a neutral chest pose. |
+
+> Why this works: `UMotionControllerComponent` only overwrites its transform **while tracked** — the engine deliberately keeps the last pose rather than popping the hand to the origin — and `UCameraComponent` only applies an HMD pose when head tracking is allowed. With no headset neither holds, so a written pose persists across ticks. Verified: a posed hand reads the same position three seconds later.
+
+> Buttons and triggers are **not** here: a real grip/trigger arrives as an Enhanced Input action, so inject those with `input_action`. Pose the hand, then pulse the grip — that is a grab.
+
 ## World queries
 
 | Tool | Purpose |
