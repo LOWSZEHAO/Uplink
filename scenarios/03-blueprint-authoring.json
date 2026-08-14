@@ -1,0 +1,58 @@
+{
+  "_name": "Blueprint authoring",
+  "_purpose": "Author a Blueprint from nothing and prove the engine agrees: create it, add a variable and a function graph, compile clean, then read the structure back. Cleans up after itself.",
+  "steps": [
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_ScenarioProbe",
+        "parent_class": "/Script/Engine.Actor"
+      }
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioProbe.BP_ScenarioProbe",
+        "op": "add_variable",
+        "name": "ScenarioValue",
+        "type": "float",
+        "compile": true
+      }
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioProbe.BP_ScenarioProbe",
+        "op": "add_function",
+        "name": "ScenarioFunction",
+        "category": "Uplink",
+        "compile": true
+      }
+    },
+    {
+      "tool": "bp_query",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioProbe.BP_ScenarioProbe",
+        "variables": true
+      },
+      "expect": { "status": "up_to_date" }
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioProbe.BP_ScenarioProbe",
+        "op": "remove_function",
+        "name": "ScenarioFunction",
+        "compile": true
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "/Script/EditorScriptingUtilities.Default__EditorAssetLibrary",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_ScenarioProbe" }
+      }
+    }
+  ]
+}

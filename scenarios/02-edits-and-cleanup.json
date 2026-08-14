@@ -1,0 +1,44 @@
+{
+  "_name": "Edits and cleanup",
+  "_purpose": "A mutating tool really changes the level, the change is visible to a later step, and the scenario puts the world back as it found it.",
+  "_note": "Undo is deliberately not asserted here. run_scenario is itself a mutating tool, so the whole scenario runs inside ONE transaction - which means canUndo reads false while it is still executing, and afterwards the entire run collapses to a single 'Uplink: run_scenario' entry. That is the useful behaviour (a playtest undoes as one unit), but it makes undo untestable from the inside. Check it by hand with edit_history after a run.",
+  "steps": [
+    {
+      "_why": "Clear any probe a previous aborted run left behind, so the count assertions below mean what they say. Deleting nothing is not an error.",
+      "tool": "delete_actors",
+      "params": { "names": ["UplinkScenarioProbe"], "world": "editor" }
+    },
+    {
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.StaticMeshActor",
+        "location": { "x": 0, "y": 0, "z": 12345 },
+        "label": "UplinkScenarioProbe",
+        "world": "editor"
+      }
+    },
+    {
+      "tool": "level_actors",
+      "params": { "name_contains": "UplinkScenarioProbe", "world": "editor" },
+      "expect": { "total_matching": 1 }
+    },
+    {
+      "tool": "move_actor",
+      "params": {
+        "actor": "UplinkScenarioProbe",
+        "location": { "x": 500, "y": 0, "z": 12345 },
+        "world": "editor"
+      }
+    },
+    {
+      "tool": "delete_actors",
+      "params": { "names": ["UplinkScenarioProbe"], "world": "editor" },
+      "expect": { "destroyed": 1 }
+    },
+    {
+      "tool": "level_actors",
+      "params": { "name_contains": "UplinkScenarioProbe", "world": "editor" },
+      "expect": { "total_matching": 0 }
+    }
+  ]
+}

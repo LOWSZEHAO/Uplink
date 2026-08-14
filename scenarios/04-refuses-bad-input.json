@@ -1,0 +1,26 @@
+{
+  "_name": "Refuses bad input",
+  "_purpose": "The failure behaviour, which matters more than the happy path: a mistyped parameter and an asset path that resolves to nothing are both refused rather than quietly ignored. Every step here is EXPECTED TO FAIL - that is the pass condition, so this scenario runs with stop_on_failure off and is read by eye.",
+  "_reading": "A correct run reports all three steps FAILED. A step that passes is the bug.",
+  "stop_on_failure": false,
+  "steps": [
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/ShouldNotExist",
+        "parent": "/Script/Engine.Pawn"
+      }
+    },
+    {
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Game/DoesNotExist.DoesNotExist_C",
+        "world": "editor"
+      }
+    },
+    {
+      "tool": "xr_simulate",
+      "params": { "action": "status", "mode": "holodeck" }
+    }
+  ]
+}

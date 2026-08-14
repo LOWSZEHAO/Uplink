@@ -1,0 +1,42 @@
+{
+  "_name": "Playtest",
+  "_purpose": "The claim this project exists to make: start the game, move the player, verify where they ended up, look at what they see, and shut down - one request, structured pass/fail.",
+  "_requires": "A project whose default map has a playable pawn (any template will do).",
+  "steps": [
+    {
+      "tool": "pie_start",
+      "params": { "mode": "viewport" },
+      "timeout": 90
+    },
+    {
+      "tool": "player_info"
+    },
+    {
+      "tool": "player_teleport",
+      "params": { "location": { "x": 0, "y": 0, "z": 300 } }
+    },
+    {
+      "tool": "wait_until",
+      "params": {
+        "condition": { "type": "elapsed", "seconds": 1.0 },
+        "timeout": 5
+      }
+    },
+    {
+      "tool": "trace",
+      "params": {
+        "from": { "x": 0, "y": 0, "z": 300 },
+        "direction": { "x": 0, "y": 0, "z": -1 },
+        "distance": 10000,
+        "world": "pie"
+      }
+    },
+    {
+      "tool": "viewport_screenshot"
+    },
+    {
+      "tool": "pie_stop",
+      "timeout": 60
+    }
+  ]
+}

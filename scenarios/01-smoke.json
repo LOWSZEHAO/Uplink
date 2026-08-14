@@ -1,0 +1,21 @@
+{
+  "_name": "Smoke test",
+  "_purpose": "The editor is reachable and the basics answer. Runs against any project, in the editor world, and changes nothing.",
+  "steps": [
+    {
+      "tool": "status"
+    },
+    {
+      "tool": "level_actors",
+      "params": { "max": 5, "world": "editor" }
+    },
+    {
+      "tool": "asset_search",
+      "params": { "query": "", "path_prefix": "/Engine", "max": 3 }
+    },
+    {
+      "tool": "edit_history",
+      "params": { "action": "list" }
+    }
+  ]
+}

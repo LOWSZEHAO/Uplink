@@ -16,6 +16,12 @@ All of the following happened over plain MCP calls, with no human at the keyboar
 - **Authored a working Blueprint from nothing** — created an Actor Blueprint, added a variable, placed and wired `ReceiveBeginPlay` → `PrintString`, compiled with zero errors, then spawned it in a running game: the variable read back correctly and its print appeared in the log.
 - **Rebuilt the Grand Canyon from real data** — decoded public-domain elevation tiles into a 16 km landscape with the canyon's true 1.8 km relief, imported CC0 PBR sets, authored a slope-blended landscape material node-by-node through `call_function`, lit it with `lighting_setup`, and verified the result by screenshotting from a rim the elevation data itself said was there.
 
+You do not have to take any of that on trust: [`scenarios/`](scenarios) holds a suite of executable `run_scenario` files, and one command runs them against your own editor.
+
+```powershell
+.\scripts\run_scenarios.ps1
+```
+
 A whole playtest is one request:
 
 ```json
@@ -161,7 +167,8 @@ Other plugins can contribute project-specific tools without forking Uplink: impl
 ```
 Plugin/Uplink/     the UE editor plugin (C++)
 bridge/            Node stdio MCP server (optional)
-scripts/           build + project-linking helpers (PowerShell)
+scripts/           build, project-linking and scenario-running helpers (PowerShell)
+scenarios/         runnable proof - a regression suite in the tool's own format
 TOOLS.md           full tool reference (parameters, conventions, security model)
 ```
 
