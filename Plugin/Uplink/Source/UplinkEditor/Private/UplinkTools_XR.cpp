@@ -15,6 +15,8 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "IHeadMountedDisplay.h"
+#include "IXRTrackingSystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "MotionControllerComponent.h"
 
@@ -22,6 +24,44 @@ using namespace UplinkToolUtil;
 
 namespace
 {
+	/**
+	 * What the engine itself reports about XR. Read through GEngine's
+	 * interfaces rather than the XR function library, which lives in an
+	 * optional plugin - this has to work in projects with XR disabled.
+	 */
+	struct FHeadsetState
+	{
+		bool bTrackingSystem = false;
+		bool bHeadTracking = false;
+		bool bStereo = false;
+		bool bConnected = false;
+		FString SystemName;
+	};
+
+	FHeadsetState ReadHeadset(UWorld* World)
+	{
+		FHeadsetState State;
+		if (!GEngine)
+		{
+			return State;
+		}
+		if (GEngine->XRSystem.IsValid())
+		{
+			State.bTrackingSystem = true;
+			State.SystemName = GEngine->XRSystem->GetSystemName().ToString();
+			State.bHeadTracking = World
+				? GEngine->XRSystem->IsHeadTrackingAllowedForWorld(*World)
+				: GEngine->XRSystem->IsHeadTrackingAllowed();
+			if (IHeadMountedDisplay* Display = GEngine->XRSystem->GetHMDDevice())
+			{
+				State.bConnected = Display->IsHMDConnected();
+			}
+		}
+		State.bStereo = GEngine->StereoRenderingDevice.IsValid()
+			&& GEngine->StereoRenderingDevice->IsStereoEnabled();
+		return State;
+	}
+
 	/** The head, the hands, and the rig they hang off. */
 	struct FXRRig
 	{
@@ -98,6 +138,74 @@ namespace
 		return Rig;
 	}
 
+	/**
+	 * Whether a pawn's hands look like they are actually in use.
+	 *
+	 * Many VR pawns ship a desktop fallback and, with no headset, take that
+	 * branch instead - leaving the motion controllers switched off, hidden, or
+	 * carrying nothing. Posing those moves nothing anybody reads, and the call
+	 * would still report success. This judges the rig on universal component
+	 * state only: no knowledge of any particular framework's conventions.
+	 */
+	struct FRigVerdict
+	{
+		bool bUsable = false;
+		TArray<FString> Reasons;
+	};
+
+	FRigVerdict JudgeHands(const TArray<UMotionControllerComponent*>& Controllers)
+	{
+		FRigVerdict Verdict;
+		if (Controllers.Num() == 0)
+		{
+			Verdict.Reasons.Add(TEXT("the pawn has no motion controller components"));
+			return Verdict;
+		}
+
+		int32 Active = 0;
+		int32 Visible = 0;
+		int32 WithChildren = 0;
+		for (const UMotionControllerComponent* Controller : Controllers)
+		{
+			if (!Controller)
+			{
+				continue;
+			}
+			if (Controller->IsActive())
+			{
+				++Active;
+			}
+			if (Controller->IsVisible())
+			{
+				++Visible;
+			}
+			if (Controller->GetNumChildrenComponents() > 0)
+			{
+				++WithChildren;
+			}
+		}
+
+		if (Active == 0)
+		{
+			Verdict.Reasons.Add(TEXT("every motion controller is deactivated"));
+		}
+		if (WithChildren == 0)
+		{
+			// Hands that carry nothing - no mesh, no collision, no scanner -
+			// can be posed, but nothing downstream would notice.
+			Verdict.Reasons.Add(TEXT("no motion controller has any child component, so moving one affects nothing"));
+		}
+		if (Visible == 0 && WithChildren > 0)
+		{
+			// Worth saying, not disqualifying: collision can still overlap
+			// while hidden, so this alone does not make the rig unusable.
+			Verdict.Reasons.Add(TEXT("no motion controller is visible (harmless if the interaction is collision-based)"));
+		}
+
+		Verdict.bUsable = Active > 0 && WithChildren > 0;
+		return Verdict;
+	}
+
 	TSharedRef<FJsonObject> TransformJson(const USceneComponent* Component)
 	{
 		TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
@@ -159,8 +267,8 @@ void UplinkTools::RegisterXR(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("xr_simulate"),
-		TEXT("Drive a VR pawn's head and hands with NO headset attached, so VR interactions can be play-tested from a desk. Motion controllers keep whatever pose you give them while untracked, so a written pose sticks. Actions: 'status' finds the rig and reports where head and hands are (start here); 'pose' places a device by location/rotation, in world space or relative to the pawn; 'reach' puts a hand at an actor (with optional offset) and points it there, which is how you drive a grab without doing the maths; 'reset' returns hands to a neutral pose in front of the chest. Buttons and triggers are separate - inject those with input_action, which is what a real controller's grip and trigger map to."),
-		TEXT(R"json({"type":"object","properties":{"action":{"type":"string","enum":["status","pose","reach","reset"],"default":"status"},"device":{"type":"string","enum":["hmd","left","right"],"description":"pose/reach: which device"},"location":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"space":{"type":"string","enum":["world","local"],"default":"local","description":"pose: 'local' is relative to the pawn, 'world' is absolute"},"target":{"type":"string","description":"reach: actor to put the hand at"},"offset":{"type":"object","description":"reach: offset from the target, in world axes"},"look_at":{"type":"boolean","default":true,"description":"reach: also point the hand at the target"},"pawn":{"type":"string","description":"Which pawn; defaults to the player pawn"},"world":{"type":"string","enum":["editor","pie"]}},"required":["action"]})json"),
+		TEXT("Drive a VR pawn's head and hands with NO headset attached, so VR interactions can be play-tested from a desk. Motion controllers keep whatever pose you give them while untracked, so a written pose sticks. Actions: 'status' reports the headset state, the rig, and whether the hands look usable (start here); 'pose' places a device by location/rotation, in world space or relative to the pawn; 'reach' puts a hand at an actor (with optional offset) and points it there, which is how you drive a grab without doing the maths; 'reset' returns hands to a neutral pose in front of the chest. 'mode' picks what you are testing: 'vr' refuses to pose hands that are switched off or carry nothing, so a pawn that fell back to desktop cannot silently pass; 'desktop' aims the camera instead and leaves the hands alone; 'auto' (default) uses the hands when they look usable. Buttons and triggers are separate - inject those with input_action, which is what a real controller's grip and trigger map to."),
+		TEXT(R"json({"type":"object","properties":{"action":{"type":"string","enum":["status","pose","reach","reset"],"default":"status"},"mode":{"type":"string","enum":["auto","vr","desktop"],"default":"auto","description":"'vr' requires a usable hand rig and fails loudly otherwise; 'desktop' drives the camera and never touches the hands"},"device":{"type":"string","enum":["hmd","left","right"],"description":"pose/reach: which device"},"location":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"space":{"type":"string","enum":["world","local"],"default":"local","description":"pose: 'local' is relative to the pawn, 'world' is absolute"},"target":{"type":"string","description":"reach: actor to put the hand at (in desktop mode, the camera looks at it instead)"},"offset":{"type":"object","description":"reach: offset from the target, in world axes"},"look_at":{"type":"boolean","default":true,"description":"reach: also point the hand at the target"},"pawn":{"type":"string","description":"Which pawn; defaults to the player pawn"},"world":{"type":"string","enum":["editor","pie"]}},"required":["action"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -178,10 +286,58 @@ void UplinkTools::RegisterXR(FUplinkToolRegistry& Registry)
 			}
 
 			const FString Action = GetString(Ctx.Params, TEXT("action"), TEXT("status"));
+			const FString Mode = GetString(Ctx.Params, TEXT("mode"), TEXT("auto"));
+			if (Mode != TEXT("auto") && Mode != TEXT("vr") && Mode != TEXT("desktop"))
+			{
+				return FUplinkToolResult::Error(TEXT("unknown mode (auto, vr, desktop)"));
+			}
+
+			const FHeadsetState Headset = ReadHeadset(World);
+			const FRigVerdict Hands = JudgeHands(Rig.All);
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("pawn"), Rig.Pawn->GetName());
 			Data->SetStringField(TEXT("pawnClass"), Rig.Pawn->GetClass()->GetName());
+
+			TSharedRef<FJsonObject> HeadsetJson = MakeShared<FJsonObject>();
+			HeadsetJson->SetBoolField(TEXT("trackingSystem"), Headset.bTrackingSystem);
+			HeadsetJson->SetBoolField(TEXT("connected"), Headset.bConnected);
+			HeadsetJson->SetBoolField(TEXT("headTracking"), Headset.bHeadTracking);
+			HeadsetJson->SetBoolField(TEXT("stereo"), Headset.bStereo);
+			HeadsetJson->SetStringField(TEXT("systemName"), Headset.SystemName);
+			Data->SetObjectField(TEXT("headset"), HeadsetJson);
+
+			TSharedRef<FJsonObject> HandsJson = MakeShared<FJsonObject>();
+			HandsJson->SetBoolField(TEXT("usable"), Hands.bUsable);
+			TArray<TSharedPtr<FJsonValue>> Reasons;
+			for (const FString& Reason : Hands.Reasons)
+			{
+				Reasons.Add(MakeShared<FJsonValueString>(Reason));
+			}
+			HandsJson->SetArrayField(TEXT("notes"), Reasons);
+			Data->SetObjectField(TEXT("hands"), HandsJson);
+
+			// The mode actually in force, once 'auto' has looked at the rig.
+			const FString EffectiveMode = Mode == TEXT("auto")
+				? (Hands.bUsable ? TEXT("vr") : TEXT("desktop"))
+				: Mode;
+			Data->SetStringField(TEXT("mode"), EffectiveMode);
+
+			// Refusing here is the point: a pawn that fell back to desktop
+			// would otherwise accept every hand pose and pass a test that
+			// exercised nothing.
+			const bool bTouchesHands = (Action == TEXT("reset"))
+				|| ((Action == TEXT("pose") || Action == TEXT("reach"))
+					&& GetString(Ctx.Params, TEXT("device")) != TEXT("hmd"));
+			if (Mode == TEXT("vr") && bTouchesHands && !Hands.bUsable)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("mode 'vr' asked for, but this pawn's hands are not in a usable state: %s. ")
+					TEXT("A pawn with a desktop fallback often takes that branch when no headset is present, ")
+					TEXT("in which case posing its controllers changes nothing. Put the pawn into its VR path first, ")
+					TEXT("or use mode 'desktop' to drive the camera instead."),
+					*FString::Join(Hands.Reasons, TEXT("; "))));
+			}
 
 			auto ReportRig = [&Rig, &Data]()
 			{
@@ -207,10 +363,26 @@ void UplinkTools::RegisterXR(FUplinkToolRegistry& Registry)
 				if (!Rig.Camera) { Missing.Add(TEXT("camera")); }
 				if (!Rig.Left) { Missing.Add(TEXT("left controller")); }
 				if (!Rig.Right) { Missing.Add(TEXT("right controller")); }
-				return FUplinkToolResult::Ok(Data, Missing.Num() == 0
-					? TEXT("full rig: camera, left and right controllers")
-					: FString::Printf(TEXT("this pawn has no %s - it may not be a VR pawn"),
-						*FString::Join(Missing, TEXT(", "))));
+
+				FString Summary;
+				if (Missing.Num() > 0)
+				{
+					Summary = FString::Printf(TEXT("this pawn has no %s - it may not be a VR pawn"),
+						*FString::Join(Missing, TEXT(", ")));
+				}
+				else if (Hands.bUsable)
+				{
+					Summary = FString::Printf(
+						TEXT("full rig, hands look usable - testable as VR%s"),
+						Headset.bConnected ? TEXT(" (a headset is connected, so the game also drives them)") : TEXT(" with no headset"));
+				}
+				else
+				{
+					Summary = FString::Printf(
+						TEXT("full rig, but the hands are not in a usable state (%s) - this pawn is behaving as desktop; test it with mode 'desktop'"),
+						*FString::Join(Hands.Reasons, TEXT("; ")));
+				}
+				return FUplinkToolResult::Ok(Data, Summary);
 			}
 
 			if (Action == TEXT("reset"))
@@ -231,7 +403,23 @@ void UplinkTools::RegisterXR(FUplinkToolRegistry& Registry)
 					: TEXT("nothing to reset - this pawn has no motion controllers"));
 			}
 
-			const FString Device = GetString(Ctx.Params, TEXT("device"));
+			// In desktop mode there are no hands to speak of, so a device that
+			// was not asked for explicitly means the camera - looking at a
+			// thing is what a desktop player does before interacting with it.
+			FString Device = GetString(Ctx.Params, TEXT("device"));
+			if (EffectiveMode == TEXT("desktop") && (Device.IsEmpty() || Device != TEXT("hmd")))
+			{
+				if (Mode == TEXT("desktop") || Device.IsEmpty())
+				{
+					Device = TEXT("hmd");
+					Data->SetBoolField(TEXT("redirectedToCamera"), true);
+				}
+			}
+			if (Device.IsEmpty())
+			{
+				return FUplinkToolResult::Error(TEXT("'device' is required (hmd, left, right)"));
+			}
+
 			USceneComponent* Component = DeviceComponent(Rig, Device, Error);
 			if (!Component)
 			{
@@ -253,19 +441,37 @@ void UplinkTools::RegisterXR(FUplinkToolRegistry& Registry)
 				{
 					Goal += Offset;
 				}
-				Component->SetWorldLocation(Goal);
 
-				bool bLookAt = true;
-				Ctx.Params->TryGetBoolField(FStringView(TEXT("look_at")), bLookAt);
-				if (bLookAt)
+				const bool bCamera = Device == TEXT("hmd");
+				if (bCamera)
 				{
-					// Point the hand from where it now is toward the target's
-					// centre; a hand that reaches but faces away still fails
-					// the direction checks an interaction system may do.
-					const FVector Direction = Target->GetActorLocation() - Component->GetComponentLocation();
-					if (!Direction.IsNearlyZero())
+					// The camera stays where it is and turns to face the
+					// target; teleporting a player's viewpoint onto an object
+					// is not what "look at it" means.
+					const FVector Direction = Goal - Component->GetComponentLocation();
+					if (Direction.IsNearlyZero())
 					{
-						Component->SetWorldRotation(Direction.Rotation());
+						return FUplinkToolResult::Error(TEXT("the camera is already at that location, so there is no direction to look"));
+					}
+					Component->SetWorldRotation(Direction.Rotation());
+				}
+				else
+				{
+					Component->SetWorldLocation(Goal);
+
+					bool bLookAt = true;
+					Ctx.Params->TryGetBoolField(FStringView(TEXT("look_at")), bLookAt);
+					if (bLookAt)
+					{
+						// Point the hand from where it now is toward the
+						// target's centre; a hand that reaches but faces away
+						// still fails the direction checks an interaction
+						// system may do.
+						const FVector Direction = Target->GetActorLocation() - Component->GetComponentLocation();
+						if (!Direction.IsNearlyZero())
+						{
+							Component->SetWorldRotation(Direction.Rotation());
+						}
 					}
 				}
 
@@ -274,8 +480,9 @@ void UplinkTools::RegisterXR(FUplinkToolRegistry& Registry)
 				Data->SetNumberField(TEXT("distanceToTarget"),
 					FVector::Dist(Component->GetComponentLocation(), Target->GetActorLocation()));
 				ReportRig();
-				return FUplinkToolResult::Ok(Data, FString::Printf(
-					TEXT("%s hand moved to %s"), *Device, *Target->GetName()));
+				return FUplinkToolResult::Ok(Data, bCamera
+					? FString::Printf(TEXT("camera turned to look at %s"), *Target->GetName())
+					: FString::Printf(TEXT("%s hand moved to %s"), *Device, *Target->GetName()));
 			}
 
 			if (Action != TEXT("pose"))
