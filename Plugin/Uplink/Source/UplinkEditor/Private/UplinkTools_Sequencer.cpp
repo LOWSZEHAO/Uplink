@@ -54,7 +54,7 @@ void UplinkTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("sequence_query"),
 		TEXT("Read a Level Sequence: playback range and frame rate, every binding (possessable/spawnable) with its tracks, and each track's section timings in SECONDS - the timing truth for aligning gameplay events to cinematics. Playback at runtime needs no dedicated tool: call_function LevelSequencePlayer.CreateLevelSequencePlayer, then Play on the returned player."),
-		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string"}},"required":["asset"]})json"),
+		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string"},"max":{"type":"number","default":100,"description":"Maximum bindings returned; the reply carries total_bindings and truncated"}},"required":["asset"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -85,9 +85,18 @@ void UplinkTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 				Data->SetNumberField(TEXT("end"), FrameToSeconds(Playback.GetUpperBoundValue(), TickResolution));
 			}
 
+			// A cinematic can carry hundreds of bindings, each with its own
+			// tracks and sections, so the reply grows faster than the sequence.
+			const int32 Max = FMath::Clamp(
+				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 100.0)), 1, 1000);
+
 			TArray<TSharedPtr<FJsonValue>> Bindings;
 			for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
 			{
+				if (Bindings.Num() >= Max)
+				{
+					break;
+				}
 				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
 				Row->SetStringField(TEXT("name"), Binding.GetName());
 				Row->SetStringField(TEXT("guid"), Binding.GetObjectGuid().ToString(EGuidFormats::DigitsWithHyphens));
@@ -111,6 +120,8 @@ void UplinkTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 				Bindings.Add(MakeShared<FJsonValueObject>(Row));
 			}
 			Data->SetArrayField(TEXT("bindings"), Bindings);
+			Data->SetNumberField(TEXT("total_bindings"), MovieScene->GetBindings().Num());
+			Data->SetBoolField(TEXT("truncated"), MovieScene->GetBindings().Num() > Bindings.Num());
 
 			TArray<TSharedPtr<FJsonValue>> RootTracks;
 			for (const UMovieSceneTrack* Track : MovieScene->GetTracks())

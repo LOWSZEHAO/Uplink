@@ -17,6 +17,30 @@
 
 using namespace UplinkToolUtil;
 
+namespace
+{
+	/**
+	 * "actor not found" leaves the caller nowhere to go. Name what is
+	 * actually in the level - the usual causes are a label/name mismatch or
+	 * looking in the wrong world, and both are obvious from the list.
+	 */
+	FString DescribeActorsNearby(UWorld* World, const FString& Wanted)
+	{
+		TArray<FString> Names;
+		for (TActorIterator<AActor> It(World); It && Names.Num() < 30; ++It)
+		{
+			if (It->IsA<AWorldSettings>())
+			{
+				continue;
+			}
+			Names.Add(It->GetActorLabel());
+		}
+		return FString::Printf(
+			TEXT("no actor named '%s' in this world. Actors here: %s"),
+			*Wanted, Names.Num() ? *FString::Join(Names, TEXT(", ")) : TEXT("(none)"));
+	}
+}
+
 void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
@@ -197,10 +221,11 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(WorldError);
 			}
 
-			AActor* Actor = FindActor(World, GetString(Ctx.Params, TEXT("actor")));
+			const FString WantedActor = GetString(Ctx.Params, TEXT("actor"));
+			AActor* Actor = FindActor(World, WantedActor);
 			if (!Actor)
 			{
-				return FUplinkToolResult::Error(TEXT("actor not found"));
+				return FUplinkToolResult::Error(DescribeActorsNearby(World, WantedActor));
 			}
 
 			FVector Location;
@@ -351,7 +376,9 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				AActor* Actor = World ? FindActor(World, FocusName) : nullptr;
 				if (!Actor)
 				{
-					return FUplinkToolResult::Error(FString::Printf(TEXT("actor not found: %s"), *FocusName));
+					return FUplinkToolResult::Error(World
+						? DescribeActorsNearby(World, FocusName)
+						: TEXT("no editor world available"));
 				}
 				GEditor->MoveViewportCamerasToActor(*Actor, /*bActiveViewportOnly=*/false);
 			}

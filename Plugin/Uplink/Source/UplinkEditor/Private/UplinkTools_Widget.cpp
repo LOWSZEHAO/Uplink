@@ -33,8 +33,8 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("widget_tree"),
-		TEXT("List a Widget Blueprint's widget hierarchy: name, class, parent, and whether each widget is a variable (only variables can have events bound via bp_modify component_bound_event)."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string","description":"Widget Blueprint asset path"}},"required":["blueprint"]})json"),
+		TEXT("List a Widget Blueprint's widget hierarchy: name, class, parent, and whether each widget is a variable (only variables can have events bound via bp_modify component_bound_event). The reply carries 'total' and 'truncated' so a capped list is never mistaken for the whole tree."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string","description":"Widget Blueprint asset path"},"max":{"type":"number","default":200}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -45,13 +45,24 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(Error);
 			}
 
+			// A real HUD or menu runs to hundreds of widgets, so cap the list
+			// and report the true count rather than returning all of it.
+			const int32 Max = FMath::Clamp(
+				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 200.0)), 1, 2000);
+			int32 Total = 0;
+
 			TArray<TSharedPtr<FJsonValue>> Rows;
 			if (WidgetBlueprint->WidgetTree)
 			{
 				const UWidget* Root = WidgetBlueprint->WidgetTree->RootWidget;
-				WidgetBlueprint->WidgetTree->ForEachWidget([&Rows, Root](UWidget* Widget)
+				WidgetBlueprint->WidgetTree->ForEachWidget([&Rows, &Total, Max, Root](UWidget* Widget)
 				{
 					if (!Widget)
+					{
+						return;
+					}
+					++Total;
+					if (Rows.Num() >= Max)
 					{
 						return;
 					}
@@ -74,6 +85,8 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("blueprint"), WidgetBlueprint->GetPathName());
 			Data->SetArrayField(TEXT("widgets"), Rows);
+			Data->SetNumberField(TEXT("total"), Total);
+			Data->SetBoolField(TEXT("truncated"), Total > Rows.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 

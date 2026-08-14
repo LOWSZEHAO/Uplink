@@ -407,8 +407,8 @@ void UplinkTools::RegisterAnim(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("animbp_query"),
-		TEXT("Read an Animation Blueprint's anim-specific structure: target skeleton, state machines with their states and transitions, and every anim graph node (class + title, which names the assets it plays). Pair with bp_query for the event graph."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"}},"required":["blueprint"]})json"),
+		TEXT("Read an Animation Blueprint's anim-specific structure: target skeleton, state machines with their states and transitions, and every anim graph node (class + title, which names the assets it plays). Pair with bp_query for the event graph. State machines are always returned in full; the flat node list is capped, and the reply carries 'total_anim_nodes' and 'truncated'."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"max":{"type":"number","default":150,"description":"Maximum anim graph nodes returned"}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -425,6 +425,12 @@ void UplinkTools::RegisterAnim(FUplinkToolRegistry& Registry)
 
 			TArray<UEdGraph*> AllGraphs;
 			AnimBlueprint->GetAllGraphs(AllGraphs);
+
+			// A production anim blueprint runs to hundreds of nodes; the state
+			// machines are the useful summary, so cap the flat node list first.
+			const int32 MaxNodes = FMath::Clamp(
+				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 150.0)), 1, 2000);
+			int32 TotalAnimNodes = 0;
 
 			TArray<TSharedPtr<FJsonValue>> StateMachines;
 			TArray<TSharedPtr<FJsonValue>> AnimNodes;
@@ -467,6 +473,11 @@ void UplinkTools::RegisterAnim(FUplinkToolRegistry& Registry)
 					}
 					else if (Node && Node->GetClass()->GetName().StartsWith(TEXT("AnimGraphNode_")))
 					{
+						++TotalAnimNodes;
+						if (AnimNodes.Num() >= MaxNodes)
+						{
+							continue;
+						}
 						TSharedRef<FJsonObject> NodeRow = MakeShared<FJsonObject>();
 						NodeRow->SetStringField(TEXT("class"), Node->GetClass()->GetName());
 						NodeRow->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
@@ -477,6 +488,8 @@ void UplinkTools::RegisterAnim(FUplinkToolRegistry& Registry)
 			}
 			Data->SetArrayField(TEXT("state_machines"), StateMachines);
 			Data->SetArrayField(TEXT("anim_nodes"), AnimNodes);
+			Data->SetNumberField(TEXT("total_anim_nodes"), TotalAnimNodes);
+			Data->SetBoolField(TEXT("truncated"), TotalAnimNodes > AnimNodes.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 }

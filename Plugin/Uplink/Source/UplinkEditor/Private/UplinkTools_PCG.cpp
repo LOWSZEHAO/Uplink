@@ -493,8 +493,8 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("pcg_query"),
-		TEXT("Inspect a PCG graph: every node with its settings class, title and pin labels - use it to find the exact pin names before pcg_connect."),
-		TEXT(R"json({"type":"object","properties":{"graph":{"type":"string"}},"required":["graph"]})json"),
+		TEXT("Inspect a PCG graph: every node with its settings class, title and pin labels - use it to find the exact pin names before pcg_connect. The reply carries 'total' and 'truncated' so a capped list is never mistaken for the whole graph."),
+		TEXT(R"json({"type":"object","properties":{"graph":{"type":"string"},"max":{"type":"number","default":100}},"required":["graph"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -513,9 +513,18 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 			TArray<UObject*> Nodes;
 			GatherNodes(Graph, NodeClass, Nodes);
 
+			// Every node costs a GetSettings call and two pin walks, so a cap
+			// here bounds the work as well as the reply.
+			const int32 Max = FMath::Clamp(
+				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 100.0)), 1, 1000);
+
 			TArray<TSharedPtr<FJsonValue>> Rows;
 			for (UObject* Node : Nodes)
 			{
+				if (Rows.Num() >= Max)
+				{
+					break;
+				}
 				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
 				Row->SetStringField(TEXT("node"), Node->GetName());
 				if (FNameProperty* TitleProp = CastField<FNameProperty>(Node->GetClass()->FindPropertyByName(TEXT("NodeTitle"))))
@@ -548,6 +557,8 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 			Data->SetStringField(TEXT("graph"), Graph->GetPathName());
 			Data->SetArrayField(TEXT("nodes"), Rows);
 			Data->SetNumberField(TEXT("count"), Rows.Num());
+			Data->SetNumberField(TEXT("total"), Nodes.Num());
+			Data->SetBoolField(TEXT("truncated"), Nodes.Num() > Rows.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 
