@@ -24,7 +24,8 @@ FGuid FUplinkTaskManager::Submit(
 	TSharedRef<IUplinkInvocation> Invocation,
 	FUplinkToolContext Context,
 	double TimeoutSeconds,
-	bool bReadOnly)
+	bool bReadOnly,
+	bool bTransactional)
 {
 	check(IsInGameThread());
 
@@ -36,6 +37,7 @@ FGuid FUplinkTaskManager::Submit(
 	Entry.Invocation = Invocation;
 	Entry.Context = MoveTemp(Context);
 	Entry.bReadOnly = bReadOnly;
+	Entry.bTransactional = bTransactional;
 
 	const FGuid Id = Entry.Task.Id;
 	FEntry& Stored = Entries.Add(Id, MoveTemp(Entry));
@@ -167,9 +169,17 @@ void FUplinkTaskManager::StepEntry(FEntry& Entry)
 		// user can ctrl+Z an agent's edit the same way they undo their own.
 		// The transaction spans the whole invocation (latent tools included)
 		// and is always closed in FinishEntry, which every terminal path runs
-		// through. PIE edits are not transacted - the engine discards
-		// transactions that only touch PIE objects anyway.
-		if (!Entry.bReadOnly && GEditor && !Entry.Context.IsPieWorld())
+		// through.
+		//
+		// Nothing transacts while a session is live: changes to a running game
+		// are not undoable editor edits, the engine discards transactions that
+		// only touch PIE objects, and holding one open across play is asking
+		// for trouble. Tools that START a session opt out explicitly with
+		// bTransactional - the engine cancels any open transaction to begin
+		// PIE, so wrapping those means fighting it.
+		const bool bSessionLive = GEditor && GEditor->PlayWorld;
+		if (!Entry.bReadOnly && Entry.bTransactional && GEditor
+			&& !bSessionLive && !Entry.Context.IsPieWorld())
 		{
 			GEditor->BeginTransaction(FText::FromString(
 				FString::Printf(TEXT("Uplink: %s"), *Entry.Task.ToolName)));

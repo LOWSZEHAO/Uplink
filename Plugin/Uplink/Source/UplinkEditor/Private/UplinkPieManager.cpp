@@ -26,12 +26,30 @@ FUplinkPieManager::~FUplinkPieManager()
 
 EUplinkPieState FUplinkPieManager::GetState() const
 {
-	// Delegate-tracked state, with the live PlayWorld as a safety net in case
-	// this object was created while a session already existed.
-	if (State == EUplinkPieState::None && GEditor && GEditor->PlayWorld)
+	// The delegates are the primary source, but they can be missed, so
+	// reconcile against the live PlayWorld in BOTH directions.
+	//
+	// Missing the downward case used to strand the manager: a start that fails
+	// while the game thread is blocked (a modal error dialog is enough) fires
+	// EndPIE without a matching ShutdownPIE, leaving the state at Stopping
+	// forever - pie_status reported "stopping" while the engine had no session
+	// at all, and pie_stop waited for an end that had already happened.
+	const bool bHasPlayWorld = GEditor && GEditor->PlayWorld;
+
+	if (bHasPlayWorld)
 	{
-		return EUplinkPieState::Running;
+		if (State == EUplinkPieState::None)
+		{
+			State = EUplinkPieState::Running;
+		}
 	}
+	// Starting legitimately has no PlayWorld yet, so it is left alone; the
+	// start request times out on its own if it never arrives.
+	else if (State == EUplinkPieState::Running || State == EUplinkPieState::Stopping)
+	{
+		State = EUplinkPieState::None;
+	}
+
 	return State;
 }
 

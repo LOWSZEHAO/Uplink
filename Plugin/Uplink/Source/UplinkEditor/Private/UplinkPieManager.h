@@ -42,7 +42,8 @@ private:
 
 	FUplinkLogCapture* LogCapture = nullptr;
 
-	EUplinkPieState State = EUplinkPieState::None;
+	/** Mutable so GetState can heal a stale value rather than merely mask it. */
+	mutable EUplinkPieState State = EUplinkPieState::None;
 	uint64 SessionSerial = 0;
 	double SessionStartTime = 0.0;
 	int64 LogIndexAtStart = 0;

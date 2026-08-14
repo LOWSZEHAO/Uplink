@@ -261,6 +261,7 @@ void UplinkTools::RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& 
 		Info.Description = TEXT("Start a Play-In-Editor session and wait until gameplay has actually begun (BeginPlay executed). Optional: play in the level viewport or a new window, override the player start location/rotation, the game mode, or the map.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"mode":{"type":"string","enum":["viewport","window"],"default":"viewport"},"location":{"type":"object","description":"Optional spawn override","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"game_mode":{"type":"string","description":"Optional GameMode class path override"},"map":{"type":"string","description":"Optional map override, e.g. /Game/Maps/Arena"}}})json"));
 		Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 180.0;
 		Registry.Register(MoveTemp(Info), [&Pie]() -> TSharedRef<IUplinkInvocation>
 		{
@@ -274,6 +275,7 @@ void UplinkTools::RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& 
 		Info.Description = TEXT("End the current Play-In-Editor session and wait for it to fully shut down.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"));
 		Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 60.0;
 		Registry.Register(MoveTemp(Info), [&Pie]() -> TSharedRef<IUplinkInvocation>
 		{
@@ -287,6 +289,7 @@ void UplinkTools::RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& 
 		Info.Description = TEXT("Advance a paused PIE session by exactly N frames, then re-pause. Pause with pie_pause first.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"frames":{"type":"number","default":1,"description":"1-600"}}})json"));
 		Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 120.0;
 		Registry.Register(MoveTemp(Info), [&Pie]() -> TSharedRef<IUplinkInvocation>
 		{

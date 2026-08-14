@@ -248,7 +248,7 @@ bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttp
 	const double MaxWait = FMath::Clamp(WaitMs / 1000.0, 0.0, 55.0);
 
 	const FGuid TaskId = Tasks.Submit(
-		ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly);
+		ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly, Def->Info.bTransactional);
 	Tasks.Await(TaskId, MaxWait,
 		[OnComplete](const FUplinkTask& Task, bool bStillRunning)
 		{

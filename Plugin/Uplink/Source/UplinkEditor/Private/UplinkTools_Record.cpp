@@ -242,6 +242,7 @@ void UplinkTools::RegisterRecord(FUplinkToolRegistry& Registry, FUplinkInputReco
 	Info.Description = TEXT("Replay recorded input into the running game through the engine's simulated-input path - a regression test from a real play session. Uses the last input_record take, or pass 'events' from an earlier stop. 'speed' scales playback rate.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"events":{"type":"array","items":{"type":"object"},"description":"Events from input_record stop (omit to use the last take)"},"speed":{"type":"number","default":1.0}}})json"));
 	Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 	Info.TimeoutSeconds = 600.0;
 	Registry.Register(MoveTemp(Info), [&Recorder]() -> TSharedRef<IUplinkInvocation>
 	{

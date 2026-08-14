@@ -85,6 +85,18 @@ struct FUplinkToolInfo
 	FString Description;
 	TSharedPtr<FJsonObject> InputSchema;
 	bool bReadOnly = false;
+
+	/**
+	 * Whether this tool's work belongs in an editor transaction.
+	 *
+	 * Defaults to true for anything that writes, which is right for asset and
+	 * actor edits. It must be false for tools that drive the session rather
+	 * than edit it: starting PIE makes the engine cancel whatever transaction
+	 * is open ("Cancelling Open Transaction 'Uplink: pie_start'"), so wrapping
+	 * those means fighting it for no benefit - none of it is undoable anyway.
+	 */
+	bool bTransactional = true;
+
 	double TimeoutSeconds = 30.0;
 };
 

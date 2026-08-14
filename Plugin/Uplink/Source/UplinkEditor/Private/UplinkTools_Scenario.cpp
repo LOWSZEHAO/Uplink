@@ -381,6 +381,7 @@ void UplinkTools::RegisterScenario(FUplinkToolRegistry& Registry)
 	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"timeout":{"type":"number","default":60}},"required":["tool"]}},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
 	Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 	Info.TimeoutSeconds = 600.0;
 
 	Registry.Register(MoveTemp(Info), [&Registry]() -> TSharedRef<IUplinkInvocation>

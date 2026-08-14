@@ -229,7 +229,7 @@ bool UplinkMcp::Handle(
 		}
 
 		const FGuid TaskId = Tasks.Submit(
-			ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly);
+			ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly, Def->Info.bTransactional);
 
 		// Hold the HTTP response until the task finishes or ~25s pass; never
 		// blocks the game thread (the waiter fires from the task ticker).

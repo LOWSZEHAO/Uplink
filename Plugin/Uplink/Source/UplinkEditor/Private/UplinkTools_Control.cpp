@@ -367,6 +367,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 		Info.Description = TEXT("Inject Enhanced Input into the running game at the action level (bypasses keyboard/device mapping - works with no physical input at all). mode 'pulse' fires the action for one input tick; 'hold' starts sustained injection (auto-released after 'duration' seconds if given, else until mode 'release'); 'update' changes the held value; 'release' stops it. 'action' is the UInputAction asset path.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"action":{"type":"string","description":"UInputAction asset path, e.g. /Game/Input/IA_Jump.IA_Jump"},"value":{"description":"bool, number, or {x,y,z} matching the action's value type"},"mode":{"type":"string","enum":["pulse","hold","update","release"],"default":"pulse"},"duration":{"type":"number","description":"hold mode only: seconds until auto-release (0.05-60)"}},"required":["action"]})json"));
 		Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 90.0;
 		Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
 		{
@@ -461,6 +462,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 		Info.Description = TEXT("Simulate a raw key on the running game's player controller (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX).");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"key":{"type":"string","description":"UE key name: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, Gamepad_LeftX, ..."},"event":{"type":"string","enum":["tap","pressed","released","axis"],"default":"tap"},"amount":{"type":"number","default":1.0},"duration":{"type":"number","description":"tap only: seconds between press and release (default 0.12)"}},"required":["key"]})json"));
 		Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 30.0;
 		Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
 		{
@@ -774,6 +776,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 		Info.Description = TEXT("Walk the player pawn to a location or actor using the game's navmesh - like a click-to-move player, no manual input math. Resolves when within 'accept_radius' of the goal; reports a stall instead of hanging if there is no path (most often: the level has no NavMeshBoundsVolume - spawn one and run console 'RebuildNavigation'). PIE only.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"location":{"type":"object"},"actor":{"type":"string"},"accept_radius":{"type":"number","default":100}}})json"));
 		Info.bReadOnly = false;
+		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 120.0;
 		Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
 		{

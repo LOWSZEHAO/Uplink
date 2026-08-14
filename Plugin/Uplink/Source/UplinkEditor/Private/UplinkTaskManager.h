@@ -54,7 +54,8 @@ public:
 		TSharedRef<IUplinkInvocation> Invocation,
 		FUplinkToolContext Context,
 		double TimeoutSeconds,
-		bool bReadOnly = true);
+		bool bReadOnly = true,
+		bool bTransactional = true);
 
 	/** Attach a waiter; fires now if the task is already finished or unknown. */
 	void Await(const FGuid& TaskId, double MaxWaitSeconds, FWaiter Waiter);
@@ -74,6 +75,7 @@ private:
 		FUplinkToolContext Context;
 		bool bStarted = false;
 		bool bReadOnly = true;
+		bool bTransactional = true;
 
 		/** True while this task holds an open editor transaction. */
 		bool bTransactionOpen = false;
