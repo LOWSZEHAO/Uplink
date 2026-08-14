@@ -22,15 +22,29 @@ namespace
 		return FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
 	}
 
-	FUplinkToolResult PackageNameList(const TArray<FName>& Names, const TCHAR* Field)
+	int32 ReadMax(const FUplinkToolContext& Ctx)
 	{
+		return FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 200.0)), 1, 5000);
+	}
+
+	FUplinkToolResult PackageNameList(const TArray<FName>& Names, const TCHAR* Field, int32 Max)
+	{
+		// A map or a heavily-shared material can pull in thousands of packages,
+		// so cap the list and say when it was cut rather than returning a wall
+		// of text that buries the answer.
 		TArray<TSharedPtr<FJsonValue>> Json;
 		for (const FName& Name : Names)
 		{
+			if (Json.Num() >= Max)
+			{
+				break;
+			}
 			Json.Add(MakeShared<FJsonValueString>(Name.ToString()));
 		}
 		TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 		Data->SetArrayField(Field, Json);
+		Data->SetNumberField(TEXT("total"), Names.Num());
+		Data->SetBoolField(TEXT("truncated"), Names.Num() > Json.Num());
 		return FUplinkToolResult::Ok(Data);
 	}
 }
@@ -90,28 +104,28 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("asset_dependencies"),
-		TEXT("List the packages an asset depends on. 'package' is the package path, e.g. /Game/Maps/Arena."),
-		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"}},"required":["package"]})json"),
+		TEXT("List the packages an asset depends on. 'package' is the package path, e.g. /Game/Maps/Arena. The reply carries 'total' and 'truncated', so a capped list is never mistaken for the whole set."),
+		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"},"max":{"type":"number","default":200}},"required":["package"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			TArray<FName> Dependencies;
 			GetAssetRegistry().GetDependencies(FName(*GetString(Ctx.Params, TEXT("package"))), Dependencies,
 				UE::AssetRegistry::EDependencyCategory::Package);
-			return PackageNameList(Dependencies, TEXT("dependencies"));
+			return PackageNameList(Dependencies, TEXT("dependencies"), ReadMax(Ctx));
 		});
 
 	Registry.RegisterQuick(
 		TEXT("asset_referencers"),
-		TEXT("List the packages that reference an asset. 'package' is the package path, e.g. /Game/BP_Door."),
-		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"}},"required":["package"]})json"),
+		TEXT("List the packages that reference an asset. 'package' is the package path, e.g. /Game/BP_Door. The reply carries 'total' and 'truncated', so a capped list is never mistaken for the whole set."),
+		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"},"max":{"type":"number","default":200}},"required":["package"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			TArray<FName> Referencers;
 			GetAssetRegistry().GetReferencers(FName(*GetString(Ctx.Params, TEXT("package"))), Referencers,
 				UE::AssetRegistry::EDependencyCategory::Package);
-			return PackageNameList(Referencers, TEXT("referencers"));
+			return PackageNameList(Referencers, TEXT("referencers"), ReadMax(Ctx));
 		});
 
 	Registry.RegisterQuick(

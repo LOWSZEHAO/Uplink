@@ -6,6 +6,7 @@
 #include "UplinkToolUtil.h"
 
 #include "Editor.h"
+#include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
@@ -538,10 +539,30 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(Error);
 			}
 
-			APawn* Target = Cast<APawn>(FindActor(GEditor->PlayWorld, GetString(Ctx.Params, TEXT("pawn"))));
+			const FString Wanted = GetString(Ctx.Params, TEXT("pawn"));
+			AActor* Found = FindActor(GEditor->PlayWorld, Wanted);
+			APawn* Target = Cast<APawn>(Found);
 			if (!Target)
 			{
-				return FUplinkToolResult::Error(TEXT("pawn not found in the PIE world (must be an APawn)"));
+				// Name what is actually there. "not found" on its own gives the
+				// caller nowhere to go, and the usual causes - a non-pawn actor,
+				// or a runtime name that differs from the label - are both
+				// obvious the moment the candidates are listed.
+				TArray<FString> Pawns;
+				for (TActorIterator<APawn> It(GEditor->PlayWorld); It && Pawns.Num() < 25; ++It)
+				{
+					Pawns.Add(It->GetName());
+				}
+				if (Found)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' is a %s, not a pawn. Pawns in the running game: %s"),
+						*Wanted, *Found->GetClass()->GetName(),
+						Pawns.Num() ? *FString::Join(Pawns, TEXT(", ")) : TEXT("(none)")));
+				}
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no pawn named '%s' in the running game. Pawns here: %s"),
+					*Wanted, Pawns.Num() ? *FString::Join(Pawns, TEXT(", ")) : TEXT("(none)")));
 			}
 
 			const FString Previous = Player.PC->GetPawn() ? Player.PC->GetPawn()->GetName() : TEXT("");
