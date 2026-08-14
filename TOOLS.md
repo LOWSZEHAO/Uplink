@@ -130,9 +130,11 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 
 | Tool | Purpose |
 |---|---|
-| `xr_simulate` | Drive a VR pawn with no headset. `{action: status|pose|reach|reset, device?: hmd|left|right, location?, rotation?, space?: local|world, target?, offset?, look_at?, pawn?, world?}`. `status` finds the rig by component type and motion source — start there. `pose` places a device; `reach` puts a hand at an actor (with `offset`) and points it there; `reset` returns hands to a neutral chest pose. |
+| `xr_simulate` | Drive a VR pawn with no headset. `{action: status|pose|reach|reset, mode?: auto|vr|desktop, device?: hmd|left|right, location?, rotation?, space?: local|world, target?, offset?, look_at?, pawn?, world?}`. `status` reports the headset state, the rig, and whether the hands are usable — start there. `pose` places a device; `reach` puts a hand at an actor (with `offset`) and points it there; `reset` returns hands to a neutral chest pose. |
 
 > Why this works: `UMotionControllerComponent` only overwrites its transform **while tracked** — the engine deliberately keeps the last pose rather than popping the hand to the origin — and `UCameraComponent` only applies an HMD pose when head tracking is allowed. With no headset neither holds, so a written pose persists across ticks. Verified: a posed hand reads the same position three seconds later.
+
+> **VR vs desktop.** Many VR pawns ship a desktop fallback and take it when no headset is present, leaving their controllers deactivated or empty — posing those changes nothing, and the call would still succeed. `status` judges the hands on universal component state only (active? carrying any child?), never on framework conventions, and reports `mode`, `hands.usable` and `hands.notes`. Pass `mode: "vr"` to make a hand pose **fail loudly** rather than pass falsely, or `mode: "desktop"` to leave the hands alone and turn the camera at the target instead. `auto` picks per rig.
 
 > Buttons and triggers are **not** here: a real grip/trigger arrives as an Enhanced Input action, so inject those with `input_action`. Pose the hand, then pulse the grip — that is a grab.
 
