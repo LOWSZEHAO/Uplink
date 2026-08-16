@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 102 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 101 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -66,18 +66,6 @@ own Blueprint events.
 | `player_info` | Controller, pawn (name/class/location), control rotation. |
 | `navigate_to` | Walk the player pawn to a location or actor using the game's navmesh — like a click-to-move player. Resolves on arrival within `accept_radius`; reports a stall instead of hanging when there is no path (usually a missing NavMeshBoundsVolume). `{location \| actor, accept_radius?}` |
 | `click_widget` | Click a UMG widget in the running game — menus, buttons, HUD — by synthesizing a real mouse press at the widget's screen position (real hit-testing, like a player's click). `{widget: name (exact, then contains) \| position: {x,y}, world?}`. Reports `handled`: an unhandled click usually means something invisible is over the target. Failure lists the live widget names. |
-
-## Virtual reality
-
-| Tool | What it does |
-|---|---|
-| `xr_simulate` | Drive a VR pawn with no headset. `{action: status\|pose\|reach\|reset, mode?: auto\|vr\|desktop, device?: hmd\|left\|right, location?, rotation?, space?: local\|world, target?, offset?, look_at?, pawn?, world?}`. `status` reports the headset state, the rig, and whether the hands are usable — start there. `pose` places a device; `reach` puts a hand at an actor (with `offset`) and points it there; `reset` returns hands to a neutral chest pose. |
-
-> **Why this works.** `UMotionControllerComponent` only overwrites its transform **while tracked** — the engine deliberately keeps the last pose rather than popping the hand to the origin — and `UCameraComponent` only applies an HMD pose when head tracking is allowed. With no headset neither holds, so a written pose persists across ticks. Verified: a posed hand reads the same position three seconds later.
-
-> **VR vs desktop.** Many VR pawns ship a desktop fallback and take it when no headset is present, leaving their controllers deactivated or empty — posing those changes nothing, and the call would still succeed. `status` judges the hands on universal component state only (active? carrying any child?), never on framework conventions, and reports `mode`, `hands.usable` and `hands.notes`. Pass `mode: "vr"` to make a hand pose **fail loudly** rather than pass falsely, or `mode: "desktop"` to leave the hands alone and turn the camera at the target instead. `auto` picks per rig.
-
-> **Buttons are not here.** A real grip or trigger arrives as an Enhanced Input action, so inject those with `input_action`. Pose the hand, then pulse the grip — that is a grab.
 
 ## Observation & assertion
 
