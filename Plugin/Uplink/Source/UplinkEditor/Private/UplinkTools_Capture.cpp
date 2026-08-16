@@ -17,6 +17,33 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "UnrealClient.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SViewport.h"
+
+namespace
+{
+	/** Compress BGRA pixels to PNG and package them as a tool result. */
+	FUplinkToolResult EncodePng(const TArray<FColor>& Pixels, const FIntPoint& Size, const TCHAR* SourceLabel)
+	{
+		IImageWrapperModule& ImageWrapperModule =
+			FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+		const TSharedPtr<IImageWrapper> Png = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+		if (!Png.IsValid() || !Png->SetRaw(
+			Pixels.GetData(), Pixels.Num() * sizeof(FColor), Size.X, Size.Y, ERGBFormat::BGRA, 8))
+		{
+			return FUplinkToolResult::Error(TEXT("PNG encoding failed"));
+		}
+
+		FUplinkToolResult Out = FUplinkToolResult::Ok();
+		Out.Png = Png->GetCompressed(90);
+		TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetNumberField(TEXT("width"), Size.X);
+		Data->SetNumberField(TEXT("height"), Size.Y);
+		Data->SetStringField(TEXT("source"), SourceLabel);
+		Out.Data = Data;
+		return Out;
+	}
+}
 
 using namespace UplinkToolUtil;
 
@@ -75,13 +102,41 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("viewport_screenshot"),
-		TEXT("Capture the active viewport as a PNG image. During PIE this captures the game viewport (what the player sees); otherwise the active editor viewport, which is redrawn first so a window that is not in front does not hand back a stale frame."),
-		TEXT(R"json({"type":"object","properties":{"refresh":{"type":"boolean","default":true,"description":"Redraw the editor viewport before reading it. Leave on unless you specifically want whatever is already in the buffer."}}})json"),
+		TEXT("Capture what the player sees as a PNG. During play this goes through Slate, so the UMG layer is included - menus, HUD, quest text, prompts. That matters: reading the viewport's pixels directly returns the rendered scene with the entire UI missing, which makes a menu look like an empty room. Outside play it captures the active editor viewport, redrawn first so a window that is not in front does not hand back a stale frame."),
+		TEXT(R"json({"type":"object","properties":{"include_ui":{"type":"boolean","default":true,"description":"During play, composite the game's UI layer (what the player sees). false reads the raw scene pixels instead."},"refresh":{"type":"boolean","default":true,"description":"Redraw the editor viewport before reading it. Leave on unless you specifically want whatever is already in the buffer."}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FViewport* Viewport = nullptr;
 			FString Source;
+
+			// During play, capture through Slate rather than reading the
+			// viewport's pixels. A direct ReadPixels returns the rendered scene
+			// only - the whole UMG layer is missing, so a menu, a HUD, a quest
+			// marker, anything the player actually reads, is invisible. Slate
+			// composites the game layer over the scene, which is what the
+			// player sees. Verified on a real game whose entire main menu was
+			// absent from a ReadPixels capture.
+			bool bWantUi = true;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("include_ui")), bWantUi);
+
+			if (GEditor && GEditor->PlayWorld && bWantUi && FSlateApplication::IsInitialized())
+			{
+				if (const TSharedPtr<SViewport> GameViewport = FSlateApplication::Get().GetGameViewport())
+				{
+					TArray<FColor> UiPixels;
+					FIntVector UiSize = FIntVector::ZeroValue;
+					if (FSlateApplication::Get().TakeScreenshot(GameViewport.ToSharedRef(), UiPixels, UiSize)
+						&& UiSize.X > 0 && UiSize.Y > 0)
+					{
+						for (FColor& Pixel : UiPixels)
+						{
+							Pixel.A = 255;
+						}
+						return EncodePng(UiPixels, FIntPoint(UiSize.X, UiSize.Y), TEXT("pie_game_viewport_with_ui"));
+					}
+				}
+			}
 
 			if (GEditor && GEditor->PlayWorld && GEngine && GEngine->GameViewport)
 			{
@@ -128,23 +183,7 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 				Pixel.A = 255;
 			}
 
-			IImageWrapperModule& ImageWrapperModule =
-				FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-			const TSharedPtr<IImageWrapper> Png = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-			if (!Png.IsValid() || !Png->SetRaw(
-				Pixels.GetData(), Pixels.Num() * sizeof(FColor), Size.X, Size.Y, ERGBFormat::BGRA, 8))
-			{
-				return FUplinkToolResult::Error(TEXT("PNG encoding failed"));
-			}
-
-			FUplinkToolResult Out = FUplinkToolResult::Ok();
-			Out.Png = Png->GetCompressed(90);
-			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
-			Data->SetNumberField(TEXT("width"), Size.X);
-			Data->SetNumberField(TEXT("height"), Size.Y);
-			Data->SetStringField(TEXT("source"), Source);
-			Out.Data = Data;
-			return Out;
+			return EncodePng(Pixels, Size, *Source);
 		});
 
 	Registry.RegisterQuick(
