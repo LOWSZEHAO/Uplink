@@ -162,7 +162,7 @@ bool FUplinkToolRegistry::ValidateParams(
 	}
 
 	// Read by the transport rather than the tool, so they are always allowed.
-	static const TSet<FString> TransportParams = { TEXT("world"), TEXT("wait_ms") };
+	static const TSet<FString> TransportParams = { TEXT("world"), TEXT("wait_ms"), TEXT("timeout_s") };
 
 	TArray<FString> Unknown;
 	for (const auto& Pair : Params->Values)

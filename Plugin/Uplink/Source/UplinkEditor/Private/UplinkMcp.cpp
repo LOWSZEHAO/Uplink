@@ -228,8 +228,20 @@ bool UplinkMcp::Handle(
 			return true;
 		}
 
+		// A caller can extend a tool's deadline when a project legitimately needs
+		// longer - loading a heavy streaming level, for instance, where the tool
+		// failing on time looks like a broken tool rather than a slow map.
+		double ToolTimeout = Def->Info.TimeoutSeconds;
+		{
+			double Override = 0.0;
+			if (Context.Params->TryGetNumberField(FStringView(TEXT("timeout_s")), Override) && Override > 0.0)
+			{
+				ToolTimeout = FMath::Clamp(Override, 1.0, 3600.0);
+			}
+		}
+
 		const FGuid TaskId = Tasks.Submit(
-			ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly, Def->Info.bTransactional);
+			ToolName, Def->Factory(), MoveTemp(Context), ToolTimeout, Def->Info.bReadOnly, Def->Info.bTransactional);
 
 		// Hold the HTTP response until the task finishes or ~25s pass; never
 		// blocks the game thread (the waiter fires from the task ticker).

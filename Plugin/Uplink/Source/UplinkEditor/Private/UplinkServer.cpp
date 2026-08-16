@@ -247,8 +247,20 @@ bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttp
 	Params->TryGetNumberField(FStringView(TEXT("wait_ms")), WaitMs);
 	const double MaxWait = FMath::Clamp(WaitMs / 1000.0, 0.0, 55.0);
 
+		// A caller can extend a tool's deadline when a project legitimately needs
+		// longer - loading a heavy streaming level, for instance, where the tool
+		// failing on time looks like a broken tool rather than a slow map.
+		double ToolTimeout = Def->Info.TimeoutSeconds;
+		{
+			double Override = 0.0;
+			if (Params->TryGetNumberField(FStringView(TEXT("timeout_s")), Override) && Override > 0.0)
+			{
+				ToolTimeout = FMath::Clamp(Override, 1.0, 3600.0);
+			}
+		}
+
 	const FGuid TaskId = Tasks.Submit(
-		ToolName, Def->Factory(), MoveTemp(Context), Def->Info.TimeoutSeconds, Def->Info.bReadOnly, Def->Info.bTransactional);
+		ToolName, Def->Factory(), MoveTemp(Context), ToolTimeout, Def->Info.bReadOnly, Def->Info.bTransactional);
 	Tasks.Await(TaskId, MaxWait,
 		[OnComplete](const FUplinkTask& Task, bool bStillRunning)
 		{

@@ -262,7 +262,12 @@ void UplinkTools::RegisterPie(FUplinkToolRegistry& Registry, FUplinkPieManager& 
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"mode":{"type":"string","enum":["viewport","window"],"default":"viewport"},"location":{"type":"object","description":"Optional spawn override","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"game_mode":{"type":"string","description":"Optional GameMode class path override"},"map":{"type":"string","description":"Optional map override, e.g. /Game/Maps/Arena"}}})json"));
 		Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
-		Info.TimeoutSeconds = 180.0;
+		// Real projects need minutes, not seconds: a 1664-actor VR level took
+		// 304s to reach BeginPlay, and switching maps in a streaming project
+		// blew through 180s while still loading. Both looked like a failure
+		// while the engine was working perfectly. Raise it, and let a caller
+		// extend it further with the transport-level 'timeout_s'.
+		Info.TimeoutSeconds = 900.0;
 		Registry.Register(MoveTemp(Info), [&Pie]() -> TSharedRef<IUplinkInvocation>
 		{
 			return MakeShared<FPieStartInvocation>(Pie);
