@@ -66,6 +66,61 @@ namespace
 		return Count;
 	}
 
+	/**
+	 * Send a key the way a real keyboard does: as a Slate event to whatever
+	 * currently holds focus.
+	 *
+	 * The player-controller path never reaches a UMG widget that overrides
+	 * OnKeyDown, which is how menus are usually built - a real game's title
+	 * screen sat there ignoring every key while the tool reported success,
+	 * because the widget was listening to Slate and the key was going to the
+	 * pawn. Returns whether anything accepted it.
+	 */
+	bool SendSlateKey(const FKey& Key, bool bDown, bool bWithCharacter)
+	{
+		if (!FSlateApplication::IsInitialized())
+		{
+			return false;
+		}
+		FSlateApplication& Slate = FSlateApplication::Get();
+
+		// Focus the game viewport first: a key event goes to whatever has
+		// keyboard focus, and after a tool-driven session that is often the
+		// editor UI rather than the game.
+		if (Slate.GetGameViewport().IsValid())
+		{
+			Slate.SetAllUserFocusToGameViewport(EFocusCause::SetDirectly);
+		}
+
+		// Note the order: this fills KeyCode first, then CharCode.
+		const uint32* KeyCodePtr = nullptr;
+		const uint32* CharCodePtr = nullptr;
+		FInputKeyManager::Get().GetCodesFromKey(Key, KeyCodePtr, CharCodePtr);
+		const uint32 KeyCode = KeyCodePtr ? *KeyCodePtr : 0;
+		const uint32 CharCode = CharCodePtr ? *CharCodePtr : 0;
+
+		const FKeyEvent Event(Key, FModifierKeysState(), /*UserIndex=*/0,
+			/*bIsRepeat=*/false, CharCode, KeyCode);
+
+		bool bHandled = false;
+		if (bDown)
+		{
+			bHandled = Slate.ProcessKeyDownEvent(Event);
+			// A printable key also produces a character event, which is what
+			// text boxes and "press any key" prompts often listen for.
+			if (bWithCharacter && CharCode != 0)
+			{
+				const FCharacterEvent CharEvent(static_cast<TCHAR>(CharCode), FModifierKeysState(), 0, false);
+				bHandled |= Slate.ProcessKeyCharEvent(CharEvent);
+			}
+		}
+		else
+		{
+			bHandled = Slate.ProcessKeyUpEvent(Event);
+		}
+		return bHandled;
+	}
+
 	FPiePlayer GetPiePlayer(FString& OutError, bool bNeedEnhancedInput)
 	{
 		FPiePlayer Result;
@@ -214,6 +269,23 @@ namespace
 	public:
 		virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
 		{
+			Key = FKey(FName(*GetString(Ctx.Params, TEXT("key"))));
+			if (!EKeys::GetKeyDetails(Key).IsValid())
+			{
+				Out = FUplinkToolResult::Error(FString::Printf(TEXT("unknown key '%s' (use UE key names: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, ...)"), *Key.ToString()));
+				return EUplinkToolStep::Done;
+			}
+			Route = GetString(Ctx.Params, TEXT("route"), TEXT("game"));
+
+			// A tap at the UI needs no player controller - a menu often runs
+			// on a controller with no pawn.
+			if (Route == TEXT("ui"))
+			{
+				bUiHandled = SendSlateKey(Key, /*bDown=*/true, /*bWithCharacter=*/true);
+				ReleaseAt = FPlatformTime::Seconds() + FMath::Clamp(GetNumber(Ctx.Params, TEXT("duration"), 0.12), 0.03, 10.0);
+				return EUplinkToolStep::Pending;
+			}
+
 			FString Error;
 			FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/false);
 			if (!Player.PC)
@@ -222,17 +294,14 @@ namespace
 				return EUplinkToolStep::Done;
 			}
 
-			Key = FKey(FName(*GetString(Ctx.Params, TEXT("key"))));
-			if (!EKeys::GetKeyDetails(Key).IsValid())
-			{
-				Out = FUplinkToolResult::Error(FString::Printf(TEXT("unknown key '%s' (use UE key names: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, ...)"), *Key.ToString()));
-				return EUplinkToolStep::Done;
-			}
-
 			const float Amount = static_cast<float>(GetNumber(Ctx.Params, TEXT("amount"), 1.0));
 			FInputKeyEventArgs Press = FInputKeyEventArgs::CreateSimulated(Key, IE_Pressed, Amount);
 			Press.DeltaTime = FApp::GetDeltaTime();
 			Player.PC->InputKey(Press);
+			if (Route == TEXT("both"))
+			{
+				bUiHandled = SendSlateKey(Key, /*bDown=*/true, /*bWithCharacter=*/true);
+			}
 
 			ReleaseAt = FPlatformTime::Seconds() + FMath::Clamp(GetNumber(Ctx.Params, TEXT("duration"), 0.12), 0.03, 10.0);
 			return EUplinkToolStep::Pending;
@@ -250,20 +319,38 @@ namespace
 				return EUplinkToolStep::Pending;
 			}
 
-			FString Error;
-			FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/false);
-			if (Player.PC)
+			if (Route != TEXT("ui"))
 			{
-				FInputKeyEventArgs Release = FInputKeyEventArgs::CreateSimulated(Key, IE_Released, 0.0f);
-				Release.DeltaTime = FApp::GetDeltaTime();
-				Player.PC->InputKey(Release);
+				FString Error;
+				FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/false);
+				if (Player.PC)
+				{
+					FInputKeyEventArgs Release = FInputKeyEventArgs::CreateSimulated(Key, IE_Released, 0.0f);
+					Release.DeltaTime = FApp::GetDeltaTime();
+					Player.PC->InputKey(Release);
+				}
 			}
-			Out = FUplinkToolResult::Ok(nullptr, TEXT("tapped"));
+			if (Route == TEXT("ui") || Route == TEXT("both"))
+			{
+				SendSlateKey(Key, /*bDown=*/false, /*bWithCharacter=*/false);
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("route"), Route);
+			if (Route != TEXT("game"))
+			{
+				Data->SetBoolField(TEXT("uiHandled"), bUiHandled);
+			}
+			Out = FUplinkToolResult::Ok(Data, (Route != TEXT("game") && !bUiHandled)
+				? TEXT("tapped, but no widget handled it - is anything focused, and does it override OnKeyDown?")
+				: TEXT("tapped"));
 			return EUplinkToolStep::Done;
 		}
 
 	private:
 		FKey Key;
+		FString Route = TEXT("game");
+		bool bUiHandled = false;
 		double ReleaseAt = 0.0;
 	};
 
@@ -459,8 +546,8 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("input_key");
-		Info.Description = TEXT("Simulate a raw key on the running game's player controller (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX).");
-		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"key":{"type":"string","description":"UE key name: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, Gamepad_LeftX, ..."},"event":{"type":"string","enum":["tap","pressed","released","axis"],"default":"tap"},"amount":{"type":"number","default":1.0},"duration":{"type":"number","description":"tap only: seconds between press and release (default 0.12)"}},"required":["key"]})json"));
+		Info.Description = TEXT("Simulate a raw key in the running game (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX). 'route' decides WHO receives it: 'game' (default) goes to the player controller, which is what gameplay input binds to; 'ui' sends a real Slate key event to the focused widget, which is the only thing a UMG menu overriding OnKeyDown will ever see - if a title screen or menu ignores your keys, this is why; 'both' does each, like a real keypress. The reply reports whether anything handled it.");
+		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"key":{"type":"string","description":"UE key name: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, Gamepad_LeftX, ..."},"event":{"type":"string","enum":["tap","pressed","released","axis"],"default":"tap"},"route":{"type":"string","enum":["game","ui","both"],"default":"game","description":"Who receives the key: the player controller, the focused UMG widget, or both"},"amount":{"type":"number","default":1.0},"duration":{"type":"number","description":"tap only: seconds between press and release (default 0.12)"}},"required":["key"]})json"));
 		Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
 		Info.TimeoutSeconds = 30.0;
@@ -472,10 +559,42 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 				virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
 				{
 					const FString Event = GetString(Ctx.Params, TEXT("event"), TEXT("tap"));
+					const FString Route = GetString(Ctx.Params, TEXT("route"), TEXT("game"));
+					if (Route != TEXT("game") && Route != TEXT("ui") && Route != TEXT("both"))
+					{
+						Out = FUplinkToolResult::Error(TEXT("unknown route (game, ui, both)"));
+						return EUplinkToolStep::Done;
+					}
+
 					if (Event == TEXT("tap"))
 					{
 						Inner = MakeShared<FKeyTapInvocation>();
 						return Inner->Start(Ctx, Out);
+					}
+
+					const FKey Key(FName(*GetString(Ctx.Params, TEXT("key"))));
+					if (!EKeys::GetKeyDetails(Key).IsValid())
+					{
+						Out = FUplinkToolResult::Error(FString::Printf(TEXT("unknown key '%s'"), *Key.ToString()));
+						return EUplinkToolStep::Done;
+					}
+
+					// The UI route needs no player controller: menus commonly
+					// run on a controller with no pawn, and sometimes before
+					// any gameplay controller exists at all.
+					if (Route == TEXT("ui"))
+					{
+						const bool bUiHandled = SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true);
+						TSharedRef<FJsonObject> UiData = MakeShared<FJsonObject>();
+						// Same field names as the tap path, so a caller reads one
+						// shape regardless of which event it sent.
+						UiData->SetBoolField(TEXT("handled"), bUiHandled);
+						UiData->SetBoolField(TEXT("uiHandled"), bUiHandled);
+						UiData->SetStringField(TEXT("route"), TEXT("ui"));
+						Out = FUplinkToolResult::Ok(UiData, bUiHandled
+							? TEXT("sent to the focused widget")
+							: TEXT("sent, but no widget handled it - is anything focused, and does it override OnKeyDown?"));
+						return EUplinkToolStep::Done;
 					}
 
 					FString Error;
@@ -483,12 +602,6 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 					if (!Player.PC)
 					{
 						Out = FUplinkToolResult::Error(Error);
-						return EUplinkToolStep::Done;
-					}
-					const FKey Key(FName(*GetString(Ctx.Params, TEXT("key"))));
-					if (!EKeys::GetKeyDetails(Key).IsValid())
-					{
-						Out = FUplinkToolResult::Error(FString::Printf(TEXT("unknown key '%s'"), *Key.ToString()));
 						return EUplinkToolStep::Done;
 					}
 					const float Amount = static_cast<float>(GetNumber(Ctx.Params, TEXT("amount"), 1.0));
@@ -511,6 +624,13 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 
 					TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 					Data->SetBoolField(TEXT("handled"), bHandled);
+					Data->SetStringField(TEXT("route"), *Route);
+					if (Route == TEXT("both"))
+					{
+						// A real key reaches the UI as well as the game.
+						Data->SetBoolField(TEXT("uiHandled"),
+							SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true));
+					}
 					Out = FUplinkToolResult::Ok(Data);
 					return EUplinkToolStep::Done;
 				}
