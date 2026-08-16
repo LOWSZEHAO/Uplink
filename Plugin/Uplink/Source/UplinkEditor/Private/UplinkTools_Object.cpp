@@ -15,6 +15,27 @@ using namespace UplinkToolUtil;
 namespace
 {
 	/**
+	 * Read a property as JSON, but report an object reference as its path
+	 * instead of serialising the object's contents.
+	 *
+	 * The converter expands an instanced object property inline, walking into
+	 * everything it owns. A UMG widget owns its children and each child points
+	 * back at its parent, so that walk never terminates: reading one child
+	 * widget overflowed the stack and took the whole editor down. A path is
+	 * also the more useful answer, since it can be passed straight back in as
+	 * the target of another call.
+	 */
+	TSharedPtr<FJsonValue> ObjectReferenceOrJson(FProperty* Property, const void* ValueAddr)
+	{
+		if (const FObjectPropertyBase* AsObject = CastField<FObjectPropertyBase>(Property))
+		{
+			const UObject* Referenced = AsObject->GetObjectPropertyValue(ValueAddr);
+			return MakeShared<FJsonValueString>(Referenced ? Referenced->GetPathName() : FString());
+		}
+		return FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr);
+	}
+
+	/**
 	 * Resolve a dotted property path such as "MyStruct.Inner.Value", returning the
 	 * leaf property and the address of its value. Needed because some engine
 	 * structs refuse to serialise as a whole (FPoseSearchBlueprintResult exports
@@ -102,7 +123,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(Error);
 			}
 
-			const TSharedPtr<FJsonValue> Value = FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr);
+			const TSharedPtr<FJsonValue> Value = ObjectReferenceOrJson(Property, ValueAddr);
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("object"), Object->GetPathName());
@@ -171,7 +192,7 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 #endif
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("object"), Object->GetPathName());
-			Data->SetField(TEXT("value"), FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr));
+			Data->SetField(TEXT("value"), ObjectReferenceOrJson(Property, ValueAddr));
 			return FUplinkToolResult::Ok(Data);
 		});
 
