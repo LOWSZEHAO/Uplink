@@ -36,9 +36,14 @@ cost real time driving a real game.
 
 ---
 
-# Playing the game
+# Running the game
 
-The part no other Unreal MCP does. Start a session, drive the player, watch what happens, assert on it.
+Start a session, drive the player, watch what happens, and assert on it. This is
+for checking your own work — walking a level to see whether the collision holds,
+confirming an event fires, catching a regression. It will not navigate an
+arbitrary game's menus for you: a menu that handles input through its own widget
+logic may need `input_key`'s `ui` route, and some will need driving through their
+own Blueprint events.
 
 ## PIE lifecycle
 

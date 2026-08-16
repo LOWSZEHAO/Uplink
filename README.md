@@ -1,20 +1,20 @@
 # Uplink
 
-**A direct data link between an AI agent and a running Unreal Engine editor — including the running game.**
+**A direct data link between an AI agent and a running Unreal Engine editor.**
 
-Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcontextprotocol.io) bridge. It lets an AI assistant do what other Unreal MCP servers do — search assets, edit Blueprints, spawn and move actors, set properties, read logs, take screenshots — **and then actually play the game**: start a session, drive the player, inject input, watch gameplay events fire, wait for conditions, and return a structured pass/fail answer to "does this level actually work?"
+Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcontextprotocol.io) bridge. It gives an AI assistant the whole editor — assets, Blueprints, actors, materials, animation, every reflected UFUNCTION in your project — and, unusually, it can also start the game and read what happens while it runs.
 
-> Most Unreal MCP servers *edit* your project. Uplink also *plays* it.
+> The point is not how many tools it has. It is that every one of them tells you the truth: edits are undoable, a bad path is refused instead of silently written, a misspelt parameter is rejected instead of ignored, and nothing reports success for work it did not do.
 
 ## What it has actually done
 
 All of the following happened over plain MCP calls, with no human at the keyboard:
 
-- **Ran a complete playtest in one call** — one `run_scenario` request started PIE, teleported the player, walked them with injected input, verified the new position, screenshotted the player's view and shut the session down: **7/7 steps passed in 7.4 seconds**, with a structured report.
-- **Played a VR game with no headset** — `xr_simulate` found the rig on the pawn, placed its right hand on a lever at distance 0, and the hand still read the same position three seconds later. A one-second `input_action` hold walked the pawn 300 units through the project's real Enhanced Input mappings.
-- **Caught gameplay events with proof** — one `watch_events` call bound all 16 delegates on an actor; destroying it produced captured `OnEndPlay` / `OnDestroyed` events with fully decoded payloads, resolving an asynchronous `wait_until` assertion in 0.33 s.
-- **Authored a working Blueprint from nothing** — created an Actor Blueprint, added a variable, placed and wired `ReceiveBeginPlay` → `PrintString`, compiled with zero errors, then spawned it in a running game: the variable read back correctly and its print appeared in the log.
-- **Rebuilt the Grand Canyon from real data** — decoded public-domain elevation tiles into a 16 km landscape with the canyon's true 1.8 km relief, imported CC0 PBR sets, authored a slope-blended landscape material node-by-node through `call_function`, lit it with `lighting_setup`, and verified the result by screenshotting from a rim the elevation data itself said was there.
+- **Authored a working Blueprint from nothing** — created an Actor Blueprint, added a variable, placed and wired `ReceiveBeginPlay` → `PrintString`, compiled with zero errors, then spawned it in a running game: the variable read back correctly and its print appeared in the log. Whole event graphs build in one batched call, and `arrange` lays them out the way a person would.
+- **Authored a landscape material node-by-node** — decoded public-domain elevation tiles into a 16 km landscape with the Grand Canyon's true 1.8 km relief, imported CC0 PBR sets, built a slope-blended material through `call_function`, lit it with `lighting_setup`, and checked the result from a rim the elevation data said was there.
+- **Bound a function to an anim graph node** — created a thread-safe function graph with const-reference parameters to match a prototype-validated signature, then set the node's member reference so the compiler accepted it. Neither step is reachable from Blueprint.
+- **Upgraded a real UE 5.6 game to 5.8** — found the moved header, the dead include-order macro, the incompatible render plugin, and a latent `%%i` format-string bug the new compile-time validation caught.
+- **Read live state out of a running game** — started play, watched all 16 delegates on an actor, resolved an asynchronous `wait_until` in 0.33 s, and moved a real character 690 units through its own Enhanced Input mappings.
 
 You do not have to take any of that on trust: [`scenarios/`](scenarios) holds a suite of executable `run_scenario` files, and one command runs them against your own editor.
 
@@ -41,13 +41,17 @@ A whole playtest is one request:
 
 ## Why
 
-Unreal MCP servers are overwhelmingly *editor authoring* tools — including UE 5.8's official one. An AI can build a level with them, then has to ask a human to test it. Uplink closes the loop: **build → play → control → observe → assert → fix.**
+An agent editing your project is only useful if you can trust what it did. Most of this codebase is not new capability — it is making the capability honest: every mutating tool runs inside its own named editor transaction so you can undo it by hand, an object path that resolves to nothing is refused rather than written as null, unknown parameters come back with a suggestion instead of being ignored, and lists say when they were truncated.
+
+The second half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or your project, so systems without a dedicated tool are still reachable, and `get_property` / `set_property` walk dotted paths through structs and object references. That is why 102 tools cover as much as far larger tool counts elsewhere.
+
+It can also start the game and read what happens while it runs — PIE control, input injection, event watching, assertions. That is genuinely useful for checking your own work. It is not a promise that it will play a game to completion.
 
 ## Status
 
 **v0.23.0 — 102 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
 
-Recent work went into two things — testing VR without a headset (`xr_simulate`), and making every call trustworthy: mutating tools run inside named undo transactions, an asset path that resolves to nothing is refused rather than written as null, a misspelt parameter is rejected with a suggestion instead of ignored, and query tools cap their output and say when they truncated.
+Recent work has gone into trustworthiness — undo transactions, refused bad paths, rejected unknown parameters, capped output, and no tool reporting success for work it did not do — and into the tools for understanding an unfamiliar project, because that is where an agent wastes the most time.
 
 ## Quickstart
 
