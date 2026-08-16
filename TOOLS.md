@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 95 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 102 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -11,6 +11,28 @@ Conventions used throughout:
 - **Every mutating tool runs inside its own editor transaction**, named after the tool, so an agent's edits undo by hand exactly like your own — see `edit_history`.
 - **Lists are capped.** Tools that return collections take `max` and report `total` plus `truncated`, so a shortened list is never mistaken for the whole set.
 - **Long-running calls** — pass `wait_ms` (REST) to bound how long the response waits; if the work is still running you get `{task_id, status:"running"}` back — poll with `task_status`, fetch with `task_result`.
+
+---
+
+# Understanding a project nobody explained
+
+Start here on an unfamiliar project. Each of these exists because its absence
+cost real time driving a real game.
+
+| Tool | What it answers |
+|---|---|
+| `project_entry` | How do I start this game the way a player does? Default map, editor startup map, global game mode, the level's own override, and every map in the project. **Read this first.** The map the editor opens is often not the map a player starts from — on one real game the editor opened the gameplay level while the game began at a menu, and starting play on the gameplay map gave 40 actors and a black screen where entering through the menu gave 1917 and a playable game. `{max_maps?}` |
+| `ui_live` | What is on screen right now: every widget in every live UserWidget, with class, displayed text, screen rect, visibility and whether it is interactive. This is how you find a menu without reading its Blueprint — and the names are what `click_widget` takes. A zero rect means the widget exists but its screen has not been shown. `{contains?, interactive_only?, on_screen_only?, max?, world?}` PIE only. |
+| `input_map` | What can I press, and what does it do? Every Enhanced Input mapping context with its actions and bound keys, plus which contexts are actually applied to the live player. Beats searching assets for something called `IA_Move`. `{path_prefix?, applied_only?, max?}` |
+| `actor_components` | A live actor's components under the names `get_property` and `set_property` expect. Guessing fails quietly: a character's movement component is `CharMoveComp`, not `CharacterMovement`. `{actor, class_contains?, max?, world?}` |
+| `streaming_status` | Which sublevels are loaded, visible, or still coming, with the world's actor count. Without it, an unfinished stream looks identical to a broken level or an empty one. `{world?}` |
+| `frame_strip` | What changed over the last few seconds — N frames at a fixed interval returned as ONE contact sheet. Use it for transitions, fades, animations, whether a door actually opened: a single screenshot is one instant, and everything between calls is invisible. Includes the UI layer during play. `{frames?, interval_ms?, columns?, scale?}` |
+| `dialog_state` | Is a modal window blocking the editor, and what does it say? Every tool runs on the game thread, so a modal freezes all of them — calls simply hang with no diagnostic. Ask this first when Uplink starts answering again. `dismiss:true` closes it, which answers any question it was asking, so read the title first. `{dismiss?}` |
+
+> **The pattern that works on an unfamiliar game:** `project_entry` to find the real
+> entry map → `pie_start` on that map → `ui_live` to see what is on screen →
+> `input_map` for the controls → drive it → `streaming_status` to confirm the world
+> actually loaded → `frame_strip` when something is meant to be changing.
 
 ---
 
@@ -33,7 +55,7 @@ The part no other Unreal MCP does. Start a session, drive the player, watch what
 | Tool | What it does |
 |---|---|
 | `input_action` | Enhanced Input injection at the action level — works with zero physical devices. `{action: <UInputAction path>, value: bool\|number\|{x,y,z}, mode: pulse\|hold\|update\|release, duration?}`. `hold`+`duration` auto-releases. The reply carries `boundHandlers`: injection succeeds identically whether or not the game listens, so a zero there explains a "nothing happened". |
-| `input_key` | Raw key on the player controller via the engine's simulated-input path. `{key: W\|SpaceBar\|Gamepad_LeftX\|..., event: tap\|pressed\|released\|axis, amount?, duration?}` |
+| `input_key` | Raw key in the running game. `{key, event: tap\|pressed\|released\|axis, route?: game\|ui\|both, amount?, duration?}`. **`route` decides who receives it**: `game` (default) goes to the player controller, which is what gameplay input binds to; `ui` sends a real Slate key event to the focused widget, which is the **only** thing a UMG menu overriding `OnKeyDown` will ever see — if a title screen ignores every key you send, this is why; `both` does each, like a real keypress. The reply reports whether anything handled it. |
 | `possess` | Switch the player controller to another pawn. `{pawn}` — failure names the pawns that are actually in the running game. |
 | `player_teleport` | Physics-safe pawn teleport + optional facing. `{location, rotation?}` |
 | `player_info` | Controller, pawn (name/class/location), control rotation. |

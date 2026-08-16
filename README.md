@@ -45,7 +45,7 @@ Unreal MCP servers are overwhelmingly *editor authoring* tools — including UE 
 
 ## Status
 
-**v0.22.0 — 95 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
+**v0.23.0 — 102 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
 
 Recent work went into two things — testing VR without a headset (`xr_simulate`), and making every call trustworthy: mutating tools run inside named undo transactions, an asset path that resolves to nothing is refused rather than written as null, a misspelt parameter is rejected with a suggestion instead of ignored, and query tools cap their output and say when they truncated.
 
@@ -105,10 +105,11 @@ Worth understanding before you point an agent at real work.
 
 ## The toolset
 
-95 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**.
+102 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**.
 
 | Layer | Tools |
 |---|---|
+| **Understand an unknown project** | `project_entry` (default map, game mode, and every level — the difference between the map the editor opens and the map a player starts from) · `ui_live` (what is on screen right now, with text and screen rects) · `input_map` (mapping contexts, actions and their keys) · `actor_components` (a live actor's components under their real names) · `streaming_status` (which sublevels are loaded) · `frame_strip` (N frames as one contact sheet — what changed) · `dialog_state` (is a modal blocking every tool) |
 | **Play the game** | PIE lifecycle (`pie_start` waits for BeginPlay, plus stop/status/pause/resume/step) · player control (`input_action`, `input_key`, `click_widget`, `possess`, `player_teleport`, `player_info`, `navigate_to`) |
 | **Virtual reality** | `xr_simulate` — pose the HMD and hands, or `reach` for an actor, with no headset connected; tells VR and desktop rigs apart so a desktop fallback cannot pass a VR test |
 | **Observe & assert** | `watch_events` / `drain_events` / `unwatch` (any BlueprintAssignable delegate, payloads decoded) · `wait_until` (timeout is a result, not an error) · `get_world_state` · `viewport_annotate` · `perf_stats` · `profile_capture` |

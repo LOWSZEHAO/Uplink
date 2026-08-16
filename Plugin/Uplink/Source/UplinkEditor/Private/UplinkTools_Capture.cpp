@@ -186,6 +186,150 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 			return EncodePng(Pixels, Size, *Source);
 		});
 
+	{
+		// A single screenshot is one instant, so anything that happens BETWEEN
+		// calls - a fade, a menu sliding in, a door opening, a hit landing - is
+		// invisible. This samples N frames on a timer and returns them as one
+		// contact sheet, which shows change in a single round trip. Frames are
+		// the expensive part of "watching", so they are tiled and downscaled
+		// rather than sent individually.
+		FUplinkToolInfo Info;
+		Info.Name = TEXT("frame_strip");
+		Info.Description = TEXT("Watch the game over time: capture N frames at a fixed interval and return them as ONE contact-sheet image, left to right, top to bottom. Use it when the question is 'what changed' rather than 'what is on screen now' - a transition, an animation, a fade, whether a door actually opened. Includes the UI layer during play, like viewport_screenshot.");
+		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"frames":{"type":"number","default":6,"description":"How many frames to capture (2-16)"},"interval_ms":{"type":"number","default":250,"description":"Milliseconds between frames"},"columns":{"type":"number","description":"Tiles per row; defaults to a roughly square sheet"},"scale":{"type":"number","default":0.5,"description":"Downscale each frame (0.1-1.0) so the sheet stays a sane size"}}})json"));
+		Info.bReadOnly = true;
+		Info.TimeoutSeconds = 120.0;
+		Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
+		{
+			class FFrameStrip final : public IUplinkInvocation
+			{
+			public:
+				virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+				{
+					Frames = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("frames"), 6.0)), 2, 16);
+					IntervalSeconds = FMath::Clamp(GetNumber(Ctx.Params, TEXT("interval_ms"), 250.0), 30.0, 5000.0) / 1000.0;
+					Scale = FMath::Clamp(GetNumber(Ctx.Params, TEXT("scale"), 0.5), 0.1, 1.0);
+					Columns = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("columns"),
+						FMath::CeilToInt(FMath::Sqrt(static_cast<float>(Frames))))), 1, 8);
+					NextAt = 0.0; // capture the first frame immediately
+					return EUplinkToolStep::Pending;
+				}
+
+				virtual EUplinkToolStep Tick(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+				{
+					const double Now = FPlatformTime::Seconds();
+					if (Now < NextAt)
+					{
+						return EUplinkToolStep::Pending;
+					}
+					NextAt = Now + IntervalSeconds;
+
+					TArray<FColor> Pixels;
+					FIntPoint Size = FIntPoint::ZeroValue;
+					if (!CaptureOne(Pixels, Size))
+					{
+						Out = FUplinkToolResult::Error(TEXT("nothing to capture (no viewport)"));
+						return EUplinkToolStep::Done;
+					}
+
+					// Downscale by simple point sampling: this is for reading
+					// what changed, not for pixel-accurate inspection.
+					const FIntPoint Small(FMath::Max(1, FMath::RoundToInt(Size.X * Scale)),
+						FMath::Max(1, FMath::RoundToInt(Size.Y * Scale)));
+					TArray<FColor> Reduced;
+					Reduced.SetNumUninitialized(Small.X * Small.Y);
+					for (int32 Y = 0; Y < Small.Y; ++Y)
+					{
+						const int32 SourceY = FMath::Min(Size.Y - 1, FMath::FloorToInt(Y / Scale));
+						for (int32 X = 0; X < Small.X; ++X)
+						{
+							const int32 SourceX = FMath::Min(Size.X - 1, FMath::FloorToInt(X / Scale));
+							Reduced[Y * Small.X + X] = Pixels[SourceY * Size.X + SourceX];
+						}
+					}
+					Captured.Add(MoveTemp(Reduced));
+					FrameSize = Small;
+
+					if (Captured.Num() < Frames)
+					{
+						return EUplinkToolStep::Pending;
+					}
+
+					// Tile them into one sheet.
+					const int32 Rows = FMath::CeilToInt(static_cast<float>(Captured.Num()) / Columns);
+					const FIntPoint SheetSize(FrameSize.X * Columns, FrameSize.Y * Rows);
+					TArray<FColor> Sheet;
+					Sheet.Init(FColor(12, 12, 12, 255), SheetSize.X * SheetSize.Y);
+					for (int32 i = 0; i < Captured.Num(); ++i)
+					{
+						const int32 OriginX = (i % Columns) * FrameSize.X;
+						const int32 OriginY = (i / Columns) * FrameSize.Y;
+						for (int32 Y = 0; Y < FrameSize.Y; ++Y)
+						{
+							FMemory::Memcpy(
+								&Sheet[(OriginY + Y) * SheetSize.X + OriginX],
+								&Captured[i][Y * FrameSize.X],
+								FrameSize.X * sizeof(FColor));
+						}
+					}
+
+					Out = EncodePng(Sheet, SheetSize, TEXT("frame_strip"));
+					if (Out.Data.IsValid())
+					{
+						Out.Data->SetNumberField(TEXT("frames"), Captured.Num());
+						Out.Data->SetNumberField(TEXT("columns"), Columns);
+						Out.Data->SetNumberField(TEXT("intervalMs"), IntervalSeconds * 1000.0);
+						Out.Data->SetNumberField(TEXT("spanSeconds"), (Captured.Num() - 1) * IntervalSeconds);
+					}
+					return EUplinkToolStep::Done;
+				}
+
+			private:
+				bool CaptureOne(TArray<FColor>& OutPixels, FIntPoint& OutSize)
+				{
+					// Prefer the Slate path during play so the UI is included.
+					if (GEditor && GEditor->PlayWorld && FSlateApplication::IsInitialized())
+					{
+						if (const TSharedPtr<SViewport> GameViewport = FSlateApplication::Get().GetGameViewport())
+						{
+							FIntVector Size = FIntVector::ZeroValue;
+							if (FSlateApplication::Get().TakeScreenshot(GameViewport.ToSharedRef(), OutPixels, Size)
+								&& Size.X > 0 && Size.Y > 0)
+							{
+								OutSize = FIntPoint(Size.X, Size.Y);
+								for (FColor& Pixel : OutPixels) { Pixel.A = 255; }
+								return true;
+							}
+						}
+					}
+					FViewport* Viewport = (GEditor && GEditor->PlayWorld && GEngine && GEngine->GameViewport)
+						? GEngine->GameViewport->Viewport
+						: (GEditor ? GEditor->GetActiveViewport() : nullptr);
+					if (!Viewport)
+					{
+						return false;
+					}
+					OutSize = Viewport->GetSizeXY();
+					if (OutSize.X <= 0 || OutSize.Y <= 0 || !Viewport->ReadPixels(OutPixels))
+					{
+						return false;
+					}
+					for (FColor& Pixel : OutPixels) { Pixel.A = 255; }
+					return true;
+				}
+
+				TArray<TArray<FColor>> Captured;
+				FIntPoint FrameSize = FIntPoint::ZeroValue;
+				int32 Frames = 6;
+				int32 Columns = 3;
+				double IntervalSeconds = 0.25;
+				double Scale = 0.5;
+				double NextAt = 0.0;
+			};
+			return MakeShared<FFrameStrip>();
+		});
+	}
+
 	Registry.RegisterQuick(
 		TEXT("viewport_annotate"),
 		TEXT("Screenshot the running game AND report where each matching actor is on screen - name, class, screen-space rect [x,y,w,h], center, distance - so what's visible is grounded in coordinates, not pixel guessing. Off-screen matches are listed with on_screen:false. PIE only (uses the player's camera). include_image:false skips the PNG for a cheap 'what can I see' query."),

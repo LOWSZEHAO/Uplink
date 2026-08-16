@@ -44,6 +44,8 @@ public class UplinkEditor : ModuleRules
 			// runtime module, always present - no XR device or plugin needed
 			// to reference the component type.
 			"HeadMountedDisplay",
+			// UGameMapsSettings - the project's default and startup maps.
+			"EngineSettings",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
