@@ -136,7 +136,7 @@ namespace
 			{
 				OutNodes.Add(Child);
 			}
-		}, /*bIncludeNestedObjects=*/false);
+		}, UplinkCompat::DirectChildrenOnly);
 	}
 
 	/** Match a node by object name first, then by its node title. */

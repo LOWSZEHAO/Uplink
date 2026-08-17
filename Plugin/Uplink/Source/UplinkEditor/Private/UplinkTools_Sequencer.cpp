@@ -9,7 +9,9 @@
 #include "LevelSequence.h"
 #include "MovieScene.h"
 #include "MovieSceneBinding.h"
+#include "MovieScenePossessable.h"
 #include "MovieSceneSection.h"
+#include "MovieSceneSpawnable.h"
 #include "MovieSceneTrack.h"
 
 using namespace UplinkToolUtil;
@@ -90,23 +92,41 @@ void UplinkTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 			const int32 Max = FMath::Clamp(
 				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 100.0)), 1, 1000);
 
+			// GetBindings() has a const overload and a deprecated non-const one;
+			// reading through a const pointer picks the one that survives.
+			const UMovieScene* ReadOnlyScene = MovieScene;
+
 			TArray<TSharedPtr<FJsonValue>> Bindings;
-			for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+			for (const FMovieSceneBinding& Binding : ReadOnlyScene->GetBindings())
 			{
 				if (Bindings.Num() >= Max)
 				{
 					break;
 				}
-				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
-				Row->SetStringField(TEXT("name"), Binding.GetName());
-				Row->SetStringField(TEXT("guid"), Binding.GetObjectGuid().ToString(EGuidFormats::DigitsWithHyphens));
-				if (MovieScene->FindPossessable(Binding.GetObjectGuid()))
+				const FGuid ObjectGuid = Binding.GetObjectGuid();
+
+				// The binding no longer carries its own name; it belongs to
+				// whichever of the two owns this guid, and that also tells us
+				// which kind it is, so both come out of one lookup.
+				FString Name;
+				FString Kind;
+				if (const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(ObjectGuid))
 				{
-					Row->SetStringField(TEXT("kind"), TEXT("possessable"));
+					Name = Possessable->GetName();
+					Kind = TEXT("possessable");
 				}
-				else if (MovieScene->FindSpawnable(Binding.GetObjectGuid()))
+				else if (const FMovieSceneSpawnable* Spawnable = MovieScene->FindSpawnable(ObjectGuid))
 				{
-					Row->SetStringField(TEXT("kind"), TEXT("spawnable"));
+					Name = Spawnable->GetName();
+					Kind = TEXT("spawnable");
+				}
+
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("name"), Name);
+				Row->SetStringField(TEXT("guid"), ObjectGuid.ToString(EGuidFormats::DigitsWithHyphens));
+				if (!Kind.IsEmpty())
+				{
+					Row->SetStringField(TEXT("kind"), Kind);
 				}
 				TArray<TSharedPtr<FJsonValue>> Tracks;
 				for (const UMovieSceneTrack* Track : Binding.GetTracks())
@@ -120,8 +140,8 @@ void UplinkTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 				Bindings.Add(MakeShared<FJsonValueObject>(Row));
 			}
 			Data->SetArrayField(TEXT("bindings"), Bindings);
-			Data->SetNumberField(TEXT("total_bindings"), MovieScene->GetBindings().Num());
-			Data->SetBoolField(TEXT("truncated"), MovieScene->GetBindings().Num() > Bindings.Num());
+			Data->SetNumberField(TEXT("total_bindings"), ReadOnlyScene->GetBindings().Num());
+			Data->SetBoolField(TEXT("truncated"), ReadOnlyScene->GetBindings().Num() > Bindings.Num());
 
 			TArray<TSharedPtr<FJsonValue>> RootTracks;
 			for (const UMovieSceneTrack* Track : MovieScene->GetTracks())

@@ -276,6 +276,46 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				}
 			}
 
+			// A parameter frame starts zeroed, which is NOT what a C++ default
+			// argument means, and the difference is silent. Calling
+			// SetMaterialInstanceScalarParameterValue without naming its
+			// Association parameter gave it 0 - LayerParameter - where the
+			// declared default is GlobalParameter; the call then matched no
+			// parameter, returned false, and logged nothing. The engine keeps
+			// each default as CPP_Default_<Name> metadata on the function, which
+			// is the same source the Blueprint editor seeds its pins from.
+			for (TFieldIterator<FProperty> ParamIt(Function); ParamIt; ++ParamIt)
+			{
+				if (!ParamIt->HasAnyPropertyFlags(CPF_Parm)
+					|| ParamIt->HasAnyPropertyFlags(CPF_ReturnParm | CPF_OutParm))
+				{
+					continue;
+				}
+				const FString ParamName = ParamIt->GetName();
+				bool bSupplied = false;
+				for (const auto& ArgPair : Args->Values)
+				{
+					if (UplinkCompat::JsonKeyToString(ArgPair.Key).Equals(ParamName, ESearchCase::IgnoreCase))
+					{
+						bSupplied = true;
+						break;
+					}
+				}
+				if (bSupplied)
+				{
+					continue;
+				}
+				const FString DefaultText = Function->GetMetaData(FName(*(TEXT("CPP_Default_") + ParamName)));
+				if (DefaultText.IsEmpty())
+				{
+					continue;
+				}
+				ParamIt->ImportText_Direct(
+					*DefaultText,
+					ParamIt->ContainerPtrToValuePtr<void>(ParamFrame.GetStructMemory()),
+					nullptr, PPF_None);
+			}
+
 			FText FailReason;
 			if (!FJsonObjectConverter::JsonObjectToUStruct(
 				Args.ToSharedRef(), Function, ParamFrame.GetStructMemory(),

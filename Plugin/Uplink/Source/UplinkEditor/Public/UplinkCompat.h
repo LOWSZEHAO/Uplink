@@ -36,4 +36,16 @@ namespace UplinkCompat
 		FScreenshotRequest::RequestScreenshot(/*bInShowUI=*/false);
 #endif
 	}
+
+	// UE 5.8 replaced the bIncludeNestedObjects bool on the ForEachObjectWith*
+	// and GetObjectsWith* family with an EGetObjectsFlags enum, and deprecated
+	// the bool overload. The enum does not exist on 5.7, so the argument itself
+	// has to differ; these two name the intent rather than the spelling.
+#if UPLINK_UE_AT_LEAST(5, 8)
+	inline constexpr EGetObjectsFlags DirectChildrenOnly = EGetObjectsFlags::None;
+	inline constexpr EGetObjectsFlags IncludeNestedChildren = EGetObjectsFlags::IncludeNestedObjects;
+#else
+	inline constexpr bool DirectChildrenOnly = false;
+	inline constexpr bool IncludeNestedChildren = true;
+#endif
 }
