@@ -109,7 +109,7 @@ Worth understanding before you point an agent at real work.
 
 ## The toolset
 
-103 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**.
+103 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**. New to driving an editor from an agent? **[PROMPTING.md](PROMPTING.md)** covers what to say — the few facts it cannot discover on its own, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|
@@ -175,6 +175,7 @@ bridge/            Node stdio MCP server (optional)
 scripts/           build, project-linking and scenario-running helpers (PowerShell)
 scenarios/         runnable proof - a regression suite in the tool's own format
 TOOLS.md           full tool reference (parameters, conventions, security model)
+PROMPTING.md       how to prompt an agent that is driving your editor
 ```
 
 ## License
