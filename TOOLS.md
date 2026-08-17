@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 103 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 104 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -236,6 +236,7 @@ See the editor itself — every window and panel, not just viewports. `ui_tree` 
 |---|---|
 | `asset_search` | Name-substring search. `{query?, class_contains?, path_prefix? (default /Game), max?}` — plugin content needs its mount point as `path_prefix` (e.g. `/MyPlugin`). |
 | `asset_dependencies` / `asset_referencers` | Package-level dependency graph, capped. `{package, max?}` → the list plus `total` and `truncated`. |
+| `asset_create` | Create an empty asset of any class the content browser's Add button offers — Widget Blueprints, Materials, Material Instances, Data Tables, Curves — which is everything `bp_create` cannot make. The factory is chosen the way the Add menu would and reported back with any runners-up, so a surprising pick is visible rather than silent; `factory` overrides it. `parent_class` sets the base class for Blueprint-shaped factories, `properties` configures the factory itself (`{"InitialParent": "/Game/M_Glass.M_Glass"}` for a material instance). Blueprint results are compiled before returning, so `Path.Path_C` resolves. Never prompts. `{path, class, parent_class?, factory?, properties?, save?}` |
 | `asset_import` | Import a disk file into the project — FBX/OBJ, textures, audio, anything the editor imports — fully automated, no dialogs. `{file, destination, name?, save?}` |
 | `save` | Write edited assets to disk. No arguments saves everything dirty including the level; `asset` saves one package by path; `list_only` reports what is unsaved without writing. Never prompts — these tools run unattended, and a modal dialog would hang the editor. `{asset?, list_only?, include_level?}` |
 
@@ -302,9 +303,10 @@ Object and class arguments accept asset/class paths as strings. The same pattern
 
 **Subsystems**: `object_path` accepts `subsystem:<Class>` to resolve live subsystem instances, whose real object paths are unguessable. Editor and engine subsystems resolve anytime; game-instance/world/local-player subsystems resolve against the chosen world (`world:"pie"` during play). Example — open any asset's editor: `call_function {object_path:"subsystem:AssetEditorSubsystem", function:"OpenEditorForAssets", args:{Assets:["/Game/Path/Asset"]}}` — then `capture_widget` can screenshot the editor it opened. Note the CDO guard: instance methods must be called on instances like these, never through `Default__` paths, which would run without a valid instance and can take the editor down.
 
-**Worked recipe — material graph authoring** (no dedicated tools needed; every call verified):
+**Worked recipe — material graph authoring** (every call verified):
 
 ```json
+// new material:          asset_create {path, class:"Material"}   (or DuplicateAsset to start from an existing one)
 // duplicate a base:      EditorAssetLibrary.DuplicateAsset {SourceAssetPath, DestinationAssetPath}
 // add an expression:     MaterialEditingLibrary.CreateMaterialExpression {Material, ExpressionClass, NodePosX, NodePosY}
 // wire two expressions:  MaterialEditingLibrary.ConnectMaterialExpressions {FromExpression, FromOutputName, ToExpression, ToInputName}
@@ -312,7 +314,7 @@ Object and class arguments accept asset/class paths as strings. The same pattern
 // tidy + rebuild:        MaterialEditingLibrary.LayoutMaterialExpressions {Material} · RecompileMaterial {Material}
 ```
 
-Expression object paths come back from each create call; set their fields (e.g. a Constant3Vector's `Constant`) with `set_property`, and check the result with `material_query`.
+Expression object paths come back from each create call; set their fields (e.g. a Constant3Vector's `Constant`) with `set_property`, and check the result with `material_query`. Set the material's own `MaterialDomain` / `BlendMode` / `ShadingModel` with `set_property` before wiring — a post-process material rejects the SceneColor node, and a Surface one rejects `SceneTexture:PostProcessInput0`, so the domain decides which nodes are legal.
 
 ---
 

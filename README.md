@@ -43,13 +43,13 @@ A whole playtest is one request:
 
 An agent editing your project is only useful if you can trust what it did. Most of this codebase is not new capability — it is making the capability honest: every mutating tool runs inside its own named editor transaction so you can undo it by hand, an object path that resolves to nothing is refused rather than written as null, unknown parameters come back with a suggestion instead of being ignored, and lists say when they were truncated.
 
-The second half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or your project, so systems without a dedicated tool are still reachable, and `get_property` / `set_property` walk dotted paths through structs and object references. That is why 103 tools cover as much as far larger tool counts elsewhere.
+The second half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or your project, so systems without a dedicated tool are still reachable, and `get_property` / `set_property` walk dotted paths through structs and object references. That is why 104 tools cover as much as far larger tool counts elsewhere.
 
 It can also start the game and read what happens while it runs — PIE control, input injection, event watching, assertions. That is genuinely useful for checking your own work. It is not a promise that it will play a game to completion.
 
 ## Status
 
-**v0.25.0 — 103 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
+**v0.26.0 — 104 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
 
 Recent work has gone into trustworthiness — undo transactions, refused bad paths, rejected unknown parameters, capped output, and no tool reporting success for work it did not do — and into the tools for understanding an unfamiliar project, because that is where an agent wastes the most time.
 
@@ -109,7 +109,7 @@ Worth understanding before you point an agent at real work.
 
 ## The toolset
 
-103 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**. New to driving an editor from an agent? **[PROMPTING.md](PROMPTING.md)** covers what to say — the few facts it cannot discover on its own, and the habits that stop it guessing.
+104 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**. New to driving an editor from an agent? **[PROMPTING.md](PROMPTING.md)** covers what to say — the few facts it cannot discover on its own, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|
@@ -124,7 +124,7 @@ Worth understanding before you point an agent at real work.
 | **Content** | widgets · animation & cinematics · motion matching (GASP) · Niagara · PCG · landscape, lighting and foliage |
 | **Editor & world** | actors (`level_actors`, `spawn_actor`, `spawn_batch` up to 1000, `delete_actors`, `move_actor`) · screenshots and camera · `edit_history` (undo stack) · `ui_tree` / `capture_widget` (any editor panel, even occluded) · `live_compile` |
 | **Reflection** | `get_property` / `set_property` (dotted paths through structs *and* object references) · **`call_function`** (any UFUNCTION) · `class_info` · `find_functions` |
-| **Assets & data** | `asset_search` / `asset_dependencies` / `asset_referencers` / `asset_import` · `save` · DataTables · `run_tests` |
+| **Assets & data** | `asset_create` (Widget Blueprints, Materials, Material Instances — anything the Add button makes, factory picked for you and named in the reply) · `asset_search` / `asset_dependencies` / `asset_referencers` / `asset_import` · `save` · DataTables · `run_tests` |
 
 Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live PIE world during play.
 

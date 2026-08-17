@@ -1,17 +1,25 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
-// Asset tools: asset_search, asset_dependencies, asset_referencers.
+// Asset tools: asset_search, asset_dependencies, asset_referencers,
+// asset_create, asset_import, save.
 
 #include "UplinkTools.h"
+#include "UplinkCompat.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
 #include "AssetImportTask.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "Engine/Blueprint.h"
+#include "Factories/Factory.h"
 #include "FileHelpers.h"
+#include "JsonObjectConverter.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectIterator.h"
 
 using namespace UplinkToolUtil;
 
@@ -20,6 +28,127 @@ namespace
 	IAssetRegistry& GetAssetRegistry()
 	{
 		return FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	}
+
+	/** Accept "WidgetBlueprint", "UWidgetBlueprint" or "/Script/UMGEditor.WidgetBlueprint". */
+	UClass* ResolveClassSpec(const FString& Spec)
+	{
+		if (Spec.IsEmpty())
+		{
+			return nullptr;
+		}
+		if (Spec.StartsWith(TEXT("/")))
+		{
+			return StaticLoadClass(UObject::StaticClass(), nullptr, *Spec);
+		}
+		// NativeFirst: a bare name is a global search, and a Blueprint in the
+		// project can share a name with the engine class the caller meant.
+		if (UClass* Found = FindFirstObject<UClass>(*Spec, EFindFirstObjectOptions::NativeFirst))
+		{
+			return Found;
+		}
+		// Tolerate the C++ prefix, because people type UMaterial and AActor.
+		if (Spec.Len() > 1 && (Spec[0] == TEXT('U') || Spec[0] == TEXT('A')))
+		{
+			return FindFirstObject<UClass>(*Spec.RightChop(1), EFindFirstObjectOptions::NativeFirst);
+		}
+		return nullptr;
+	}
+
+	/**
+	 * The same test IAssetTools::CreateAsset runs before it commits, done here so
+	 * a mismatch is a returned error rather than an ensure, a modal dialog, or -
+	 * on 5.7's widget factory - a check() that takes the editor with it.
+	 */
+	bool FactoryCanMake(UFactory* Factory, UClass* AssetClass, FString& OutError)
+	{
+		if (!EnumHasAnyFlags(Factory->GetSupportedWorkflows(), EFactoryCreateWorkflow::Default))
+		{
+			OutError = FString::Printf(
+				TEXT("%s does not support being run directly (it is an import- or wizard-only factory)"),
+				*Factory->GetClass()->GetName());
+			return false;
+		}
+		UClass* Supported = Factory->GetSupportedClass();
+		const bool bOk = Supported ? AssetClass->IsChildOf(Supported) : Factory->DoesSupportClass(AssetClass);
+		if (!bOk)
+		{
+			OutError = FString::Printf(TEXT("%s makes %s, not %s"),
+				*Factory->GetClass()->GetName(),
+				Supported ? *Supported->GetName() : TEXT("something else"),
+				*AssetClass->GetName());
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * The factory that makes this kind of asset, chosen the way the content
+	 * browser's Add menu would. More than one factory can claim a class - UBlueprint
+	 * alone is claimed by BlueprintFactory, BlueprintFunctionLibraryFactory,
+	 * BlueprintInterfaceFactory and BlueprintMacroFactory - so the one named after
+	 * the class wins and the rest are reported, because a silently surprising pick
+	 * produces an asset that looks right and is the wrong kind of thing.
+	 */
+	UClass* PickFactoryClass(UClass* AssetClass, TArray<FString>& OutAlternatives)
+	{
+		TArray<UClass*> Exact;
+		TArray<UClass*> Derived;
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			UClass* Class = *It;
+			if (!Class->IsChildOf(UFactory::StaticClass())
+				|| Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+			{
+				continue;
+			}
+			UFactory* Cdo = Class->GetDefaultObject<UFactory>();
+			if (!Cdo || !Cdo->CanCreateNew())
+			{
+				continue;
+			}
+			UClass* Supported = Cdo->GetSupportedClass();
+			if (Supported == AssetClass)
+			{
+				Exact.Add(Class);
+			}
+			else if (Supported && AssetClass->IsChildOf(Supported))
+			{
+				Derived.Add(Class);
+			}
+		}
+
+		TArray<UClass*>& Candidates = Exact.Num() > 0 ? Exact : Derived;
+		if (Candidates.Num() == 0)
+		{
+			return nullptr;
+		}
+
+		// Sorted first so the fallback pick is the same every run.
+		Candidates.Sort([](const UClass& A, const UClass& B) { return A.GetName() < B.GetName(); });
+
+		const FString Preferred = AssetClass->GetName() + TEXT("Factory");
+		UClass* Best = nullptr;
+		for (UClass* Class : Candidates)
+		{
+			if (Class->GetName() == Preferred || Class->GetName() == Preferred + TEXT("New"))
+			{
+				Best = Class;
+				break;
+			}
+		}
+		if (!Best)
+		{
+			Best = Candidates[0];
+		}
+		for (const UClass* Class : Candidates)
+		{
+			if (Class != Best)
+			{
+				OutAlternatives.Add(Class->GetPathName());
+			}
+		}
+		return Best;
 	}
 
 	int32 ReadMax(const FUplinkToolContext& Ctx)
@@ -126,6 +255,194 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			GetAssetRegistry().GetReferencers(FName(*GetString(Ctx.Params, TEXT("package"))), Referencers,
 				UE::AssetRegistry::EDependencyCategory::Package);
 			return PackageNameList(Referencers, TEXT("referencers"), ReadMax(Ctx));
+		});
+
+	Registry.RegisterQuick(
+		TEXT("asset_create"),
+		TEXT("Create a new empty asset - the kinds bp_create cannot make: Widget Blueprints, Materials, Material Instances, Data Tables, Curves, anything the content browser's Add button offers. 'class' is the asset class, either a short name ('WidgetBlueprint', 'Material', 'MaterialInstanceConstant') or a full /Script/Module.Class path; the factory is picked the way the Add menu would and reported back, with any runners-up, so a surprising pick is visible rather than silent. 'parent_class' sets the base class for Blueprint-shaped factories. 'properties' configures the factory itself - {\"InitialParent\":\"/Game/M_Glass.M_Glass\"} for a material instance, {\"Struct\":\"/Game/Data/S_MyRow.S_MyRow\"} (a struct deriving from FTableRowBase) for a data table. The asset is created dirty in memory, so pass save:true or it is gone on the next editor restart."),
+		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Full asset path including the name, e.g. /Game/UI/WBP_Panel"},"class":{"type":"string","description":"Asset class: short name ('WidgetBlueprint', 'Material') or /Script/Module.Class"},"parent_class":{"type":"string","description":"Base class for Blueprint/WidgetBlueprint/AnimBlueprint factories, e.g. /Script/UMG.UserWidget"},"factory":{"type":"string","description":"Factory class to use, when the automatic pick is wrong"},"properties":{"type":"object","description":"Settings applied to the factory before it runs (name -> value)"},"save":{"type":"boolean","default":false}},"required":["path","class"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Path = GetString(Ctx.Params, TEXT("path"));
+			if (!FPackageName::IsValidLongPackageName(Path))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is not a valid asset path. It must be a content path including the asset name, e.g. /Game/UI/WBP_Panel."),
+					*Path));
+			}
+			if (FPackageName::DoesPackageExist(Path) || FindPackage(nullptr, *Path))
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("an asset already exists at %s"), *Path));
+			}
+
+			const FString ClassSpec = GetString(Ctx.Params, TEXT("class"));
+			UClass* AssetClass = ResolveClassSpec(ClassSpec);
+			if (!AssetClass)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("class not found: '%s'. Use a short class name like WidgetBlueprint or Material, or a full path like /Script/Engine.Material."),
+					*ClassSpec));
+			}
+
+			TArray<FString> Alternatives;
+			UClass* FactoryClass = nullptr;
+			const FString FactorySpec = GetString(Ctx.Params, TEXT("factory"));
+			if (!FactorySpec.IsEmpty())
+			{
+				FactoryClass = ResolveClassSpec(FactorySpec);
+				if (!FactoryClass || !FactoryClass->IsChildOf(UFactory::StaticClass()))
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("'%s' is not a UFactory class"), *FactorySpec));
+				}
+			}
+			else
+			{
+				FactoryClass = PickFactoryClass(AssetClass, Alternatives);
+				if (!FactoryClass)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("nothing can create a %s from scratch. Import-only types - textures, meshes, audio - come in through asset_import; otherwise name a 'factory' explicitly."),
+						*AssetClass->GetName()));
+				}
+			}
+
+			UFactory* Factory = NewObject<UFactory>(GetTransientPackage(), FactoryClass);
+			if (!Factory)
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("could not instantiate %s"), *FactoryClass->GetName()));
+			}
+
+			const FString ParentSpec = GetString(Ctx.Params, TEXT("parent_class"));
+			if (!ParentSpec.IsEmpty())
+			{
+				UClass* ParentClass = ResolveClassSpec(ParentSpec);
+				if (!ParentClass)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("parent_class not found: %s"), *ParentSpec));
+				}
+				FClassProperty* ParentProperty = CastField<FClassProperty>(
+					Factory->GetClass()->FindPropertyByName(FName(TEXT("ParentClass"))));
+				if (!ParentProperty)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("%s has no ParentClass, so 'parent_class' means nothing to it"), *FactoryClass->GetName()));
+				}
+				ParentProperty->SetObjectPropertyValue(
+					ParentProperty->ContainerPtrToValuePtr<void>(Factory), ParentClass);
+			}
+
+			// Applied one at a time rather than in a single JsonObjectToUStruct
+			// call: a name the factory does not have would otherwise be a silent
+			// no-op, and an asset path that resolves to nothing would be written
+			// as null and reported as success - which is how a material instance
+			// ends up parentless and the log stays empty.
+			const TSharedPtr<FJsonObject>* FactoryProperties = nullptr;
+			if (Ctx.Params->TryGetObjectField(FStringView(TEXT("properties")), FactoryProperties)
+				&& FactoryProperties->IsValid())
+			{
+				for (const auto& Pair : (*FactoryProperties)->Values)
+				{
+					const FString Name = UplinkCompat::JsonKeyToString(Pair.Key);
+					FProperty* Property = Factory->GetClass()->FindPropertyByName(FName(*Name));
+					if (!Property)
+					{
+						TArray<FString> Settable;
+						for (TFieldIterator<FProperty> It(Factory->GetClass()); It; ++It)
+						{
+							if (It->HasAnyPropertyFlags(CPF_Edit))
+							{
+								Settable.Add(It->GetName());
+							}
+						}
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("%s has no property '%s'. It accepts: %s"),
+							*FactoryClass->GetName(), *Name,
+							Settable.Num() ? *FString::Join(Settable, TEXT(", ")) : TEXT("(nothing settable)")));
+					}
+
+					void* ValueAddr = Property->ContainerPtrToValuePtr<void>(Factory);
+					if (!FJsonObjectConverter::JsonValueToUProperty(Pair.Value, Property, ValueAddr))
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("could not set %s.%s from the value given"), *FactoryClass->GetName(), *Name));
+					}
+					FString ObjectError;
+					if (!NamedObjectResolved(Property, Pair.Value, ValueAddr, ObjectError))
+					{
+						return FUplinkToolResult::Error(ObjectError);
+					}
+				}
+			}
+
+			FString FactoryError;
+			if (!FactoryCanMake(Factory, AssetClass, FactoryError))
+			{
+				return FUplinkToolResult::Error(FactoryError);
+			}
+
+			const FString AssetName = FPackageName::GetShortName(Path);
+			const FString PackagePath = FPackageName::GetLongPackagePath(Path);
+
+			// A factory that hits a problem opens a modal dialog, and a modal
+			// dialog in an unattended tool is an editor that never answers again.
+			// This makes FMessageDialog return its default instead of blocking -
+			// the same guard the editor's own scripting layer uses.
+			TGuardValue<bool> UnattendedGuard(GIsRunningUnattendedScript, true);
+
+			FAssetToolsModule& AssetToolsModule =
+				FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+			UObject* Created = AssetToolsModule.Get().CreateAsset(AssetName, PackagePath, AssetClass, Factory);
+			if (!Created)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("%s refused to create a %s at %s. Some factories need configuring first and say nothing ")
+					TEXT("when they are not - a DataTable needs properties:{\"Struct\":\"...\"} naming a struct that ")
+					TEXT("derives from FTableRowBase, a material instance needs properties:{\"InitialParent\":\"...\"}. ")
+					TEXT("Anything else it reported is in output_log."),
+					*FactoryClass->GetName(), *AssetClass->GetName(), *Path));
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("asset"), Created->GetPathName());
+			Data->SetStringField(TEXT("class"), Created->GetClass()->GetPathName());
+			Data->SetStringField(TEXT("factory"), FactoryClass->GetName());
+			if (Alternatives.Num() > 0)
+			{
+				TArray<TSharedPtr<FJsonValue>> Others;
+				for (const FString& Name : Alternatives)
+				{
+					Others.Add(MakeShared<FJsonValueString>(Name));
+				}
+				Data->SetArrayField(TEXT("other_factories"), Others);
+			}
+
+			if (UBlueprint* AsBlueprint = Cast<UBlueprint>(Created))
+			{
+				// Always, not just when GeneratedClass is null. A Widget Blueprint
+				// comes back with a generated class that was compiled BEFORE its
+				// root widget was added, so it looks finished and is not. The
+				// content browser hides this by opening the asset editor, which
+				// recompiles; nothing here opens an editor.
+				FKismetEditorUtilities::CompileBlueprint(AsBlueprint);
+				Data->SetStringField(TEXT("generated_class"),
+					AsBlueprint->GeneratedClass ? AsBlueprint->GeneratedClass->GetPathName() : TEXT(""));
+			}
+
+			bool bSave = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSave);
+			if (bSave)
+			{
+				TArray<UPackage*> Packages;
+				Packages.Add(Created->GetOutermost());
+				TArray<UPackage*> Failed;
+				FEditorFileUtils::PromptForCheckoutAndSave(
+					Packages, /*bCheckDirty=*/false, /*bPromptToSave=*/false, &Failed);
+				bSave = Failed.Num() == 0;
+			}
+			Data->SetBoolField(TEXT("saved"), bSave);
+
+			return FUplinkToolResult::Ok(Data);
 		});
 
 	Registry.RegisterQuick(

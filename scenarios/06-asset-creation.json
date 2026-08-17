@@ -1,0 +1,76 @@
+{
+  "_name": "Asset creation",
+  "_purpose": "Make the assets bp_create cannot: a Widget Blueprint compiled far enough that its generated class resolves and accepts a root widget, and a Material Instance whose parent was set through the factory and reads back. Names the factory it expects, so a different pick is a failure rather than a surprise. Cleans up after itself.",
+  "steps": [
+    {
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/WBP_ScenarioPanel",
+        "class": "WidgetBlueprint"
+      },
+      "expect": { "factory": "WidgetBlueprintFactory", "generated_class": "/Game/UplinkScenarios/WBP_ScenarioPanel.WBP_ScenarioPanel_C" }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/WBP_ScenarioPanel",
+        "class": "/Script/UMG.CanvasPanel",
+        "name": "Root"
+      }
+    },
+    {
+      "tool": "widget_tree",
+      "params": { "blueprint": "/Game/UplinkScenarios/WBP_ScenarioPanel" },
+      "expect": { "total": 1 }
+    },
+    {
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/M_ScenarioBase",
+        "class": "Material"
+      },
+      "expect": { "factory": "MaterialFactoryNew" }
+    },
+    {
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/MI_ScenarioChild",
+        "class": "MaterialInstanceConstant",
+        "properties": { "InitialParent": "/Game/UplinkScenarios/M_ScenarioBase.M_ScenarioBase" }
+      },
+      "expect": { "factory": "MaterialInstanceConstantFactoryNew" }
+    },
+    {
+      "tool": "get_property",
+      "params": {
+        "object_path": "/Game/UplinkScenarios/MI_ScenarioChild.MI_ScenarioChild",
+        "property": "Parent"
+      },
+      "expect": { "value": "/Game/UplinkScenarios/M_ScenarioBase.M_ScenarioBase" }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/MI_ScenarioChild" }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/M_ScenarioBase" }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/WBP_ScenarioPanel" }
+      }
+    }
+  ]
+}

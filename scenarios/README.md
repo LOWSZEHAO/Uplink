@@ -27,13 +27,14 @@ step if you want one.
 | `03-blueprint-authoring` | A Blueprint can be authored from nothing — variable, function graph, clean compile — and the engine agrees when read back. |
 | `04-refuses-bad-input` | The failure behaviour: a mistyped parameter and an unresolvable asset path are refused, not quietly ignored. |
 | `05-playtest` | The headline claim: start the game, move the player, query the world, capture the view, shut down — one request. |
+| `06-asset-creation` | The assets `bp_create` cannot make: a Widget Blueprint whose generated class resolves and takes a root widget, and a Material Instance parented through its factory. Names the factory it expects. |
 
 Everything here runs against any project. `05-playtest` needs a default map with
 a playable pawn, which every template has.
 
 ## Reading the results
 
-Four of the five pass in the ordinary way: every step succeeds.
+Five of the six pass in the ordinary way: every step succeeds.
 
 **`04-refuses-bad-input` is inverted.** Every step in it is *meant* to fail —
 that is the assertion. It runs with `stop_on_failure: false`, and the runner

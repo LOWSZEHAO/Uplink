@@ -17,6 +17,7 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "UnrealClient.h"
+#include "UplinkSlateScreenshot.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SViewport.h"
 
@@ -120,21 +121,13 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 			bool bWantUi = true;
 			Ctx.Params->TryGetBoolField(FStringView(TEXT("include_ui")), bWantUi);
 
-			if (GEditor && GEditor->PlayWorld && bWantUi && FSlateApplication::IsInitialized())
+			if (GEditor && GEditor->PlayWorld && bWantUi)
 			{
-				if (const TSharedPtr<SViewport> GameViewport = FSlateApplication::Get().GetGameViewport())
+				TArray<FColor> UiPixels;
+				FIntPoint UiSize = FIntPoint::ZeroValue;
+				if (UplinkSlateScreenshot::TakeGameViewport(UiPixels, UiSize))
 				{
-					TArray<FColor> UiPixels;
-					FIntVector UiSize = FIntVector::ZeroValue;
-					if (FSlateApplication::Get().TakeScreenshot(GameViewport.ToSharedRef(), UiPixels, UiSize)
-						&& UiSize.X > 0 && UiSize.Y > 0)
-					{
-						for (FColor& Pixel : UiPixels)
-						{
-							Pixel.A = 255;
-						}
-						return EncodePng(UiPixels, FIntPoint(UiSize.X, UiSize.Y), TEXT("pie_game_viewport_with_ui"));
-					}
+					return EncodePng(UiPixels, UiSize, TEXT("pie_game_viewport_with_ui"));
 				}
 			}
 
@@ -288,19 +281,10 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 				bool CaptureOne(TArray<FColor>& OutPixels, FIntPoint& OutSize)
 				{
 					// Prefer the Slate path during play so the UI is included.
-					if (GEditor && GEditor->PlayWorld && FSlateApplication::IsInitialized())
+					if (GEditor && GEditor->PlayWorld
+						&& UplinkSlateScreenshot::TakeGameViewport(OutPixels, OutSize))
 					{
-						if (const TSharedPtr<SViewport> GameViewport = FSlateApplication::Get().GetGameViewport())
-						{
-							FIntVector Size = FIntVector::ZeroValue;
-							if (FSlateApplication::Get().TakeScreenshot(GameViewport.ToSharedRef(), OutPixels, Size)
-								&& Size.X > 0 && Size.Y > 0)
-							{
-								OutSize = FIntPoint(Size.X, Size.Y);
-								for (FColor& Pixel : OutPixels) { Pixel.A = 255; }
-								return true;
-							}
-						}
+						return true;
 					}
 					FViewport* Viewport = (GEditor && GEditor->PlayWorld && GEngine && GEngine->GameViewport)
 						? GEngine->GameViewport->Viewport

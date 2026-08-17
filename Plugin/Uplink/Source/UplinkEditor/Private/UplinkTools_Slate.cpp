@@ -5,6 +5,7 @@
 // previews, graph panels, detail panels - without desktop-level screenshots.
 
 #include "UplinkTools.h"
+#include "UplinkSlateScreenshot.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -398,16 +399,12 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 			}
 
 			TArray<FColor> Pixels;
-			FIntVector Size = FIntVector::ZeroValue;
-			if (!FSlateApplication::Get().TakeScreenshot(Target, Pixels, Size) || Size.X <= 0 || Size.Y <= 0)
+			FIntPoint Size = FIntPoint::ZeroValue;
+			if (!UplinkSlateScreenshot::Take(Target, Pixels, Size))
 			{
 				return FUplinkToolResult::Error(FString::Printf(
 					TEXT("screenshot failed for %s (widget may have zero size or be unrendered)"),
 					*Target->GetTypeAsString()));
-			}
-			for (FColor& Pixel : Pixels)
-			{
-				Pixel.A = 255;
 			}
 
 			IImageWrapperModule& ImageWrapperModule =
