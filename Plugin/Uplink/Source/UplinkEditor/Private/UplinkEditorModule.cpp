@@ -57,6 +57,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterMaterial(*Registry);
 	UplinkTools::RegisterAI(*Registry);
 	UplinkTools::RegisterAutoplay(*Registry);
+	UplinkTools::RegisterRepair(*Registry);
 
 	// Tools contributed by other plugins: already-loaded providers now, and
 	// late-loading ones as they register their modular feature.

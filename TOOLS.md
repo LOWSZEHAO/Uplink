@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 101 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 103 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -118,6 +118,8 @@ own Blueprint events.
 | `bp_modify` | One edit — or a whole batch: `{blueprint, ops: [{op:..., ...}, ...], compile?, save?}` builds an entire event graph in a single call. Give `add_node` ops a `ref` name and later ops address that node as `@ref` in `from_node`/`to_node`/`node`. A failed op stops the batch and reports `failedAt` and `applied`, since earlier ops stay applied. `save` writes the blueprint to disk, and is skipped when `compile` reported errors so a broken asset is not what gets persisted. |
 | `bp_add_component` | Add a component to an actor Blueprint's construction script, like the editor's Add Component button. `class` is a short engine name (`StaticMeshComponent`, `BoxComponent`) or a full path (needed for anything outside the common set, e.g. `/Script/HeadMountedDisplay.MotionControllerComponent`); `parent` attaches under an existing component. Template conveniences: `location`/`rotation`/`scale`, `static_mesh`, `collision_profile`, and `properties` as a generic name→JSON map. The component becomes a Blueprint variable — after a compile its delegates bind with `bp_modify component_bound_event`. `{blueprint, class, name, parent?, …, compile?}` |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
+| `bp_find_broken` | Every Blueprint that does not compile, **grouped by what broke it**. The tool for a project that stopped working after a C++ change: one renamed function can break dozens of assets and produce hundreds of error lines that all say the same thing. On a real project it found 79 broken assets and traced 60 of them to a single missing function. `{path_prefix?, max?, max_assets_per_cause?, include_warnings?}` Compiling is real work — raise `max` deliberately. |
+| `bp_repair` | Apply the editor's own repair in bulk: replace deprecated nodes, refresh every node against its current signature, recompile, report what healed. This is right-click *Refresh Node* across every affected asset, which is the real fix for a stale pin or a node whose function changed shape. It cannot invent a function that no longer exists — those come back in `stillBroken` with the reason and need a decision. `{blueprints?, path_prefix?, max?, save?, dry_run?}` Only assets that compile clean are saved. |
 
 `bp_modify` operations (single, or batched through `ops` with `@ref` handles):
 
