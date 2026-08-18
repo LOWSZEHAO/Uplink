@@ -59,6 +59,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterAutoplay(*Registry);
 	UplinkTools::RegisterRepair(*Registry);
 	UplinkTools::RegisterReferences(*Registry);
+	UplinkTools::RegisterSemantic(*Registry);
 
 	// Tools contributed by other plugins: already-loaded providers now, and
 	// late-loading ones as they register their modular feature.
@@ -76,6 +77,11 @@ void FUplinkEditorModule::StartupModule()
 				static_cast<IUplinkToolProvider*>(Feature)->RegisterUplinkTools(*Registry);
 			}
 		});
+
+	// After every provider has had its turn, so a plugin's own tools are
+	// annotated too and a trait naming a tool nobody registered is reported
+	// once, here, rather than looking like a missing tool later.
+	Registry->ApplyTraits();
 
 	Server = MakeUnique<FUplinkServer>(*Registry, *Tasks);
 	if (!Server->Start(GUplinkDefaultPort))

@@ -73,6 +73,25 @@ namespace
 void FUplinkToolRegistry::Register(FUplinkToolInfo Info, TFunction<TSharedRef<IUplinkInvocation>()> Factory)
 {
 	const FString Name = Info.Name;
+
+	// Fail closed. A tool whose schema did not parse would be served with an
+	// empty parameter list, and an interface that lies is worse than a missing
+	// one: the caller cannot see the options, so every call silently does the
+	// default thing and reads as a success. Dropping the tool costs that one
+	// tool; serving it costs wrong results nobody can attribute.
+	if (!Info.InputSchema.IsValid())
+	{
+		SkippedSchemaTools.Add(Name);
+		UE_LOG(LogUplink, Error,
+			TEXT("Tool '%s' NOT REGISTERED: its input schema is missing or is not valid JSON. ")
+			TEXT("Check the braces in its schema literal - a tool that takes no parameters still ")
+			TEXT("needs {\"type\":\"object\",\"properties\":{}}."),
+			*Name);
+		ensureMsgf(false,
+			TEXT("Uplink: tool '%s' has an unusable input schema and was not registered."), *Name);
+		return;
+	}
+
 	if (Tools.Contains(Name))
 	{
 		UE_LOG(LogUplink, Warning, TEXT("Tool '%s' registered twice; replacing"), *Name);
@@ -122,8 +141,25 @@ TArray<TSharedPtr<FJsonValue>> FUplinkToolRegistry::BuildMcpToolList() const
 		{
 			Tool->SetObjectField(TEXT("inputSchema"), Info.InputSchema);
 		}
+		// readOnlyHint and destructiveHint are the ones MCP itself defines, and a
+		// client reads them as a pair - "safe to auto-approve" is the absence of
+		// both - so both are always stated. The rest are Uplink's own names and
+		// appear only when true, to keep a hundred entries readable.
 		TSharedRef<FJsonObject> Annotations = MakeShared<FJsonObject>();
 		Annotations->SetBoolField(TEXT("readOnlyHint"), Info.bReadOnly);
+		Annotations->SetBoolField(TEXT("destructiveHint"), Info.bDestructive);
+		if (Info.bArbitraryExecution)
+		{
+			Annotations->SetBoolField(TEXT("arbitraryExecutionHint"), true);
+		}
+		if (Info.bRequiresPie)
+		{
+			Annotations->SetBoolField(TEXT("requiresPieHint"), true);
+		}
+		if (Info.bLongRunning)
+		{
+			Annotations->SetBoolField(TEXT("longRunningHint"), true);
+		}
 		Tool->SetObjectField(TEXT("annotations"), Annotations);
 		Out.Add(MakeShared<FJsonValueObject>(Tool));
 	}
@@ -136,17 +172,316 @@ TSharedPtr<FJsonObject> FUplinkToolRegistry::ParseSchema(const FString& SchemaJs
 	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SchemaJson);
 	if (!FJsonSerializer::Deserialize(Reader, Schema) || !Schema.IsValid())
 	{
-		// A tool whose schema will not parse is served with no parameters at
-		// all, so every option it has becomes undiscoverable. That went
-		// unnoticed for two tools, so make it impossible to miss.
-		UE_LOG(LogUplink, Error,
-			TEXT("Invalid tool schema JSON - this tool will be served WITHOUT PARAMETERS. Check the braces: %s"),
-			*SchemaJson);
-		ensureMsgf(false, TEXT("Uplink: a tool's input schema is not valid JSON; see the log for which."));
-		Schema = MakeShared<FJsonObject>();
-		Schema->SetStringField(TEXT("type"), TEXT("object"));
+		// The literal is only visible here, so this is where it gets printed;
+		// Register() names the tool and refuses it. Two lines about one fault,
+		// but between them they say exactly which text to fix.
+		UE_LOG(LogUplink, Error, TEXT("Tool input schema is not valid JSON: %s"), *SchemaJson);
+		return nullptr;
 	}
 	return Schema;
+}
+
+namespace
+{
+	// A pragmatic subset of JSON Schema - the keywords the tool schemas in this
+	// plugin actually use. Everything else is skipped on purpose: a check this
+	// code cannot make must not turn into a refusal, or a schema written next
+	// year starts rejecting calls that were always fine.
+
+	/** JSON has no integer type, so a client meaning 3 routinely sends 3.0. */
+	bool IsWholeNumber(double Number)
+	{
+		return FMath::IsNearlyEqual(Number, FMath::RoundToDouble(Number), 1.e-9);
+	}
+
+	/** A number the way the caller wrote it: 3 stays 3, 3.5 stays 3.5. */
+	FString NumberToText(double Number)
+	{
+		return (IsWholeNumber(Number) && FMath::Abs(Number) < 1.e15)
+			? FString::Printf(TEXT("%lld"), static_cast<int64>(FMath::RoundToDouble(Number)))
+			: FString::SanitizeFloat(Number);
+	}
+
+	/** The bare value, for listing an enum or quoting a bound. */
+	FString RenderJsonValue(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid())
+		{
+			return TEXT("null");
+		}
+		switch (Value->Type)
+		{
+		case EJson::String:  return Value->AsString();
+		case EJson::Number:  return NumberToText(Value->AsNumber());
+		case EJson::Boolean: return Value->AsBool() ? TEXT("true") : TEXT("false");
+		case EJson::Array:   return TEXT("an array");
+		case EJson::Object:  return TEXT("an object");
+		default:             return TEXT("null");
+		}
+	}
+
+	/** The value with its type in front - the "got" half of a type complaint. */
+	FString DescribeJsonValue(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid())
+		{
+			return TEXT("nothing");
+		}
+		switch (Value->Type)
+		{
+		case EJson::String:  return FString::Printf(TEXT("string \"%s\""), *Value->AsString());
+		case EJson::Number:  return FString::Printf(TEXT("number %s"), *NumberToText(Value->AsNumber()));
+		case EJson::Boolean: return Value->AsBool() ? TEXT("boolean true") : TEXT("boolean false");
+		case EJson::Array:   return TEXT("an array");
+		case EJson::Object:  return TEXT("an object");
+		default:             return TEXT("null");
+		}
+	}
+
+	/** Unknown type names answer true: an unmodelled keyword is not a failure. */
+	bool MatchesDeclaredType(const FString& DeclaredType, const TSharedPtr<FJsonValue>& Value)
+	{
+		if (DeclaredType == TEXT("string"))
+		{
+			return Value->Type == EJson::String;
+		}
+		if (DeclaredType == TEXT("number"))
+		{
+			return Value->Type == EJson::Number;
+		}
+		if (DeclaredType == TEXT("integer"))
+		{
+			return Value->Type == EJson::Number && IsWholeNumber(Value->AsNumber());
+		}
+		if (DeclaredType == TEXT("boolean"))
+		{
+			return Value->Type == EJson::Boolean;
+		}
+		if (DeclaredType == TEXT("array"))
+		{
+			return Value->Type == EJson::Array;
+		}
+		if (DeclaredType == TEXT("object"))
+		{
+			return Value->Type == EJson::Object;
+		}
+		return true;
+	}
+
+	/**
+	 * Scalars only; an enum of objects is not something this subset judges.
+	 *
+	 * Strings compare without regard to case because that is how the tools
+	 * themselves read these values - every op/kind/mode/world branch in the
+	 * plugin is an FString ==, which ignores case. Refusing "Add_Variable"
+	 * here would reject a call the tool would have carried out.
+	 */
+	bool JsonValuesEqual(const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
+	{
+		if (!A.IsValid() || !B.IsValid() || A->Type != B->Type)
+		{
+			return false;
+		}
+		switch (A->Type)
+		{
+		case EJson::String:  return A->AsString().Equals(B->AsString(), ESearchCase::IgnoreCase);
+		case EJson::Number:  return FMath::IsNearlyEqual(A->AsNumber(), B->AsNumber(), 1.e-9);
+		case EJson::Boolean: return A->AsBool() == B->AsBool();
+		default:             return false;
+		}
+	}
+
+	/** "steps[0]" + "tool" reads back to the caller as "steps[0].tool". */
+	FString QualifyPath(const FString& Path, const FString& Name)
+	{
+		return Path.IsEmpty() ? Name : Path + TEXT(".") + Name;
+	}
+
+	bool ValidateObjectAgainstSchema(
+		const FString& Path,
+		const TSharedPtr<FJsonObject>& Object,
+		const TSharedPtr<FJsonObject>& Schema,
+		FString& OutError);
+
+	bool ValidateAgainstSchema(
+		const FString& Path,
+		const TSharedPtr<FJsonValue>& Value,
+		const TSharedPtr<FJsonObject>& Schema,
+		FString& OutError)
+	{
+		if (!Value.IsValid() || !Schema.IsValid())
+		{
+			return true;
+		}
+
+		// "type" as an array of names, or absent, lands here as a skipped check.
+		FString DeclaredType;
+		if (Schema->TryGetStringField(FStringView(TEXT("type")), DeclaredType)
+			&& !MatchesDeclaredType(DeclaredType, Value))
+		{
+			// An explicit null is nearly always a client filling in an optional
+			// field it has no value for, so say what to do about it.
+			OutError = (Value->Type == EJson::Null)
+				? FString::Printf(
+					TEXT("parameter '%s' expects %s, got null - leave the parameter out instead of sending null"),
+					*Path, *DeclaredType)
+				: FString::Printf(TEXT("parameter '%s' expects %s, got %s"),
+					*Path, *DeclaredType, *DescribeJsonValue(Value));
+			return false;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* Allowed = nullptr;
+		if (Schema->TryGetArrayField(FStringView(TEXT("enum")), Allowed) && Allowed->Num() > 0)
+		{
+			bool bComparable = true;
+			bool bMatched = false;
+			TArray<FString> Options;
+			for (const TSharedPtr<FJsonValue>& Option : *Allowed)
+			{
+				if (!Option.IsValid() || Option->Type == EJson::Array || Option->Type == EJson::Object)
+				{
+					bComparable = false;
+					break;
+				}
+				Options.Add(RenderJsonValue(Option));
+				bMatched |= JsonValuesEqual(Option, Value);
+			}
+			if (bComparable && !bMatched)
+			{
+				OutError = FString::Printf(TEXT("parameter '%s' must be one of: %s - got '%s'"),
+					*Path, *FString::Join(Options, TEXT(", ")), *RenderJsonValue(Value));
+				return false;
+			}
+		}
+
+		if (Value->Type == EJson::Number)
+		{
+			const double Number = Value->AsNumber();
+			double Bound = 0.0;
+			if (Schema->TryGetNumberField(FStringView(TEXT("minimum")), Bound) && Number < Bound)
+			{
+				OutError = FString::Printf(TEXT("parameter '%s' must be at least %s, got %s"),
+					*Path, *NumberToText(Bound), *NumberToText(Number));
+				return false;
+			}
+			if (Schema->TryGetNumberField(FStringView(TEXT("maximum")), Bound) && Number > Bound)
+			{
+				OutError = FString::Printf(TEXT("parameter '%s' must be at most %s, got %s"),
+					*Path, *NumberToText(Bound), *NumberToText(Number));
+				return false;
+			}
+		}
+
+		if (Value->Type == EJson::String)
+		{
+			const int32 Length = Value->AsString().Len();
+			double Limit = 0.0;
+			if (Schema->TryGetNumberField(FStringView(TEXT("minLength")), Limit) && Length < Limit)
+			{
+				OutError = FString::Printf(TEXT("parameter '%s' must be at least %s characters, got %d"),
+					*Path, *NumberToText(Limit), Length);
+				return false;
+			}
+			if (Schema->TryGetNumberField(FStringView(TEXT("maxLength")), Limit) && Length > Limit)
+			{
+				OutError = FString::Printf(TEXT("parameter '%s' must be at most %s characters, got %d"),
+					*Path, *NumberToText(Limit), Length);
+				return false;
+			}
+		}
+
+		if (Value->Type == EJson::Array)
+		{
+			// Tuple form ("items" as an array of schemas) is not modelled, and
+			// TryGetObjectField leaves it alone.
+			const TSharedPtr<FJsonObject>* ItemSchema = nullptr;
+			if (Schema->TryGetObjectField(FStringView(TEXT("items")), ItemSchema) && ItemSchema->IsValid())
+			{
+				const TArray<TSharedPtr<FJsonValue>>& Items = Value->AsArray();
+				for (int32 Index = 0; Index < Items.Num(); ++Index)
+				{
+					const FString ItemPath = FString::Printf(TEXT("%s[%d]"), *Path, Index);
+					if (!ValidateAgainstSchema(ItemPath, Items[Index], *ItemSchema, OutError))
+					{
+						return false;
+					}
+				}
+			}
+		}
+
+		if (Value->Type == EJson::Object)
+		{
+			return ValidateObjectAgainstSchema(Path, Value->AsObject(), Schema, OutError);
+		}
+
+		return true;
+	}
+
+	bool ValidateObjectAgainstSchema(
+		const FString& Path,
+		const TSharedPtr<FJsonObject>& Object,
+		const TSharedPtr<FJsonObject>& Schema,
+		FString& OutError)
+	{
+		if (!Object.IsValid() || !Schema.IsValid())
+		{
+			return true;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* Required = nullptr;
+		if (Schema->TryGetArrayField(FStringView(TEXT("required")), Required))
+		{
+			for (const TSharedPtr<FJsonValue>& Entry : *Required)
+			{
+				FString Name;
+				if (!Entry.IsValid() || !Entry->TryGetString(Name))
+				{
+					continue;
+				}
+				if (!Object->HasField(Name))
+				{
+					OutError = FString::Printf(TEXT("parameter '%s' is required but was not given"),
+						*QualifyPath(Path, Name));
+					return false;
+				}
+			}
+		}
+
+		// Only declared properties are visited, so wait_ms and timeout_s - read
+		// by the transport and never by a tool - go past unexamined. A tool
+		// that does declare 'world' has it checked like any other parameter,
+		// which is what the caller wants: the enum on it is real.
+		const TSharedPtr<FJsonObject>* Properties = nullptr;
+		if (!Schema->TryGetObjectField(FStringView(TEXT("properties")), Properties)
+			|| !Properties->IsValid())
+		{
+			return true;
+		}
+
+		for (const auto& Pair : (*Properties)->Values)
+		{
+			const FString Name = UplinkCompat::JsonKeyToString(Pair.Key);
+			const TSharedPtr<FJsonValue> Supplied = Object->TryGetField(FStringView(Name));
+			if (!Supplied.IsValid() || !Pair.Value.IsValid())
+			{
+				continue;
+			}
+
+			// TryGetObject rather than AsObject: a property declared as
+			// anything but an object is a fragment to walk past, and AsObject
+			// would log an engine error on the way.
+			const TSharedPtr<FJsonObject>* PropertySchema = nullptr;
+			if (!Pair.Value->TryGetObject(PropertySchema) || !PropertySchema->IsValid())
+			{
+				continue;
+			}
+			if (!ValidateAgainstSchema(QualifyPath(Path, Name), Supplied, *PropertySchema, OutError))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
 }
 
 bool FUplinkToolRegistry::ValidateParams(
@@ -178,7 +513,10 @@ bool FUplinkToolRegistry::ValidateParams(
 	}
 	if (Unknown.Num() == 0)
 	{
-		return true;
+		// Names first, then types. A caller who got the name wrong needs to
+		// hear that and nothing else, and the type of a parameter the tool
+		// never had is not worth a sentence.
+		return ValidateObjectAgainstSchema(FString(), Params, Info.InputSchema, OutError);
 	}
 
 	// Name the accepted parameters, and point at the nearest one - a rejected
