@@ -78,6 +78,42 @@ Bugs 2 and 4 are the interesting ones. Both leave the state flag **true** —
 naturally check reports success while the world disagrees. Diagnosing those
 means looking at where things actually are, not at what they claim.
 
+## Detection is not diagnosis
+
+The distinction this benchmark is built around, and the reason the chain is
+indirect.
+
+**Detection** is nearly free: the exit flag is false, so the run did not
+complete. **Diagnosis** is the work, because the symptom is at the end of the
+chain and the cause is almost never there. A door that will not open could be
+the plate, the dispatcher binding, the cube's attachment, the cube's collision,
+or the door itself — and four of those five are upstream of the thing that looks
+broken.
+
+What that means in practice is that an agent should not go straight from "the
+door did not open" to editing the door. The useful move is to walk the chain from
+the *start* and find the first link that is not what it should be:
+
+```
+did the pickup fire?        cube bIsCarried, and where the cube actually is
+   ↓ no  →  cause is here (collision, overlap, or the branch)
+did the plate press?        plate bIsPressed
+   ↓ no  →  is the cube travelling with the player, or left behind?
+did the door hear it?       door bIsOpen, and its world position
+   ↓ no  →  the binding, not the door
+did the exit fire?          exit bReached
+```
+
+Two habits make that cheap. `observe` answers "what is around the player, what is
+it overlapping, and what events can it fire" in one call, which is most of the
+first row. And a `watch_events` on the dispatchers (`OnPickedUp`, `OnPressed`,
+`OnReached`) before the run turns "did it fire" from an inference into a record —
+a fired event with no visible effect and an event that never fired are different
+bugs, and the flags alone cannot tell them apart.
+
+That last point is why bugs 2 and 4 exist. Both leave the flag true, so anything
+that reasons from flags alone concludes the opposite of the truth.
+
 ## What to measure
 
 Run one bug, give the agent the goal and nothing else, and score:

@@ -32,11 +32,16 @@ namespace
 	 * never ran on a failed run - the exact run that left debris behind. The
 	 * next run then started dirty and its count assertions quietly meant
 	 * something else.
+	 *
+	 * Evidence is the odd one out. It is not a phase of the run but a detour
+	 * out of the main one, taken at the first failed step and returning to the
+	 * step after it.
 	 */
 	enum class EScenarioPhase : uint8
 	{
 		Setup,
 		Main,
+		Evidence,
 		Artifacts,
 		Teardown,
 		Complete,
@@ -48,10 +53,66 @@ namespace
 		{
 		case EScenarioPhase::Setup:     return TEXT("setup");
 		case EScenarioPhase::Main:      return TEXT("main");
+		case EScenarioPhase::Evidence:  return TEXT("evidence");
 		case EScenarioPhase::Artifacts: return TEXT("artifacts");
 		case EScenarioPhase::Teardown:  return TEXT("teardown");
 		default:                        return TEXT("complete");
 		}
+	}
+
+	/**
+	 * One tool the evidence bundle runs, and what it is there to answer.
+	 *
+	 * Detecting a failure and diagnosing one are different problems. An
+	 * assertion says false, and that is the easy half; the cause is almost
+	 * never in the step that reported it. A door that does not open can be
+	 * input that never fired, collision that never overlapped, logic that
+	 * never ran, or a null reference three calls away, and a boolean cannot
+	 * tell those apart. So this collects what can, out of tools that already
+	 * exist: a picture of the frame, a semantic read of the same moment, the
+	 * events that did or did not fire, and whatever the log complained about.
+	 *
+	 * The caps are per source and deliberately small. A bundle is read in an
+	 * agent's context window, where a thousand-line log dump costs more than
+	 * it tells.
+	 */
+	struct FEvidenceSource
+	{
+		const TCHAR* Tool;
+
+		/** The question this capture answers, recorded next to its result. */
+		const TCHAR* Question;
+
+		/**
+		 * Array in the result the cap applies to, so a list that was cut says
+		 * so. Null for a tool that reports its own truncation - observe does.
+		 */
+		const TCHAR* CountField;
+
+		/** Row limit, passed to the tool as 'max'; 0 for one that takes none. */
+		int32 Cap;
+	};
+
+	// Screenshot first: the game keeps running between steps, so the most
+	// perishable capture is the one taken closest to the failure.
+	const FEvidenceSource EvidenceSources[] =
+	{
+		{ TEXT("viewport_screenshot"), TEXT("what the frame looked like"), nullptr, 0 },
+		{ TEXT("observe"), TEXT("where the player was, what was around it, and what it was overlapping"), nullptr, 12 },
+		{ TEXT("drain_events"), TEXT("which watched events actually fired"), TEXT("events"), 50 },
+		{ TEXT("output_log"), TEXT("what the engine complained about"), TEXT("lines"), 40 },
+	};
+
+	const FEvidenceSource* FindEvidenceSource(const FString& Tool)
+	{
+		for (const FEvidenceSource& Source : EvidenceSources)
+		{
+			if (Tool == Source.Tool)
+			{
+				return &Source;
+			}
+		}
+		return nullptr;
 	}
 
 	/**
@@ -208,6 +269,7 @@ namespace
 				&& ArtifactsObject->IsValid())
 			{
 				(*ArtifactsObject)->TryGetBoolField(FStringView(TEXT("screenshot_on_failure")), bScreenshotOnFailure);
+				(*ArtifactsObject)->TryGetBoolField(FStringView(TEXT("evidence_on_failure")), bEvidenceOnFailure);
 			}
 			BudgetSeconds = GetNumber(Ctx.Params, TEXT("budget_seconds"), 0.0);
 
@@ -292,6 +354,7 @@ namespace
 			switch (Phase)
 			{
 			case EScenarioPhase::Setup:     return SetupSteps;
+			case EScenarioPhase::Evidence:  return EvidenceSteps;
 			case EScenarioPhase::Artifacts: return ArtifactSteps;
 			case EScenarioPhase::Teardown:  return TeardownSteps;
 			default:                        return Steps;
@@ -304,6 +367,7 @@ namespace
 			switch (Phase)
 			{
 			case EScenarioPhase::Setup:     return SetupReports;
+			case EScenarioPhase::Evidence:  return EvidenceReports;
 			case EScenarioPhase::Artifacts: return ArtifactReports;
 			case EScenarioPhase::Teardown:  return TeardownReports;
 			default:                        return StepReports;
@@ -384,14 +448,24 @@ namespace
 					break;
 
 				case EScenarioPhase::Main:
-					if (bScreenshotOnFailure && FailedSteps > 0)
+					QueueFailureArtifacts();
+					Phase = EScenarioPhase::Artifacts;
+					break;
+
+				case EScenarioPhase::Evidence:
+					AnnotateEvidence();
+					// Back into the run where it left off. The bundle is a
+					// detour taken at the failure, not the end of the test:
+					// with stop_on_failure off, the steps after a failed one
+					// still have to run.
+					if (Steps.IsValidIndex(MainResumeIndex))
 					{
-						FStepSpec Shot;
-						Shot.Tool = TEXT("viewport_screenshot");
-						Shot.Params = MakeShared<FJsonObject>();
-						Shot.TimeoutSeconds = 30.0;
-						ArtifactSteps.Add(MoveTemp(Shot));
+						Phase = EScenarioPhase::Main;
+						StepIndex = MainResumeIndex;
+						MainResumeIndex = INDEX_NONE;
+						return EUplinkToolStep::Pending;
 					}
+					QueueFailureArtifacts();
 					Phase = EScenarioPhase::Artifacts;
 					break;
 
@@ -407,6 +481,97 @@ namespace
 				if (CurrentSteps().Num() > 0)
 				{
 					return EUplinkToolStep::Pending;
+				}
+			}
+		}
+
+		/**
+		 * Queue the end-of-run captures. Reached from the main phase and from
+		 * an evidence detour that ended the run, which have to leave the same
+		 * artifacts behind either way.
+		 */
+		void QueueFailureArtifacts()
+		{
+			if (bScreenshotOnFailure && FailedSteps > 0)
+			{
+				FStepSpec Shot;
+				Shot.Tool = TEXT("viewport_screenshot");
+				Shot.Params = MakeShared<FJsonObject>();
+				Shot.TimeoutSeconds = 30.0;
+				ArtifactSteps.Add(MoveTemp(Shot));
+			}
+		}
+
+		/**
+		 * Assemble the bundle's steps. A collector this build does not have is
+		 * named and skipped: a scenario must not fail because the thing meant
+		 * to explain its failure was missing.
+		 */
+		void BuildEvidenceSteps()
+		{
+			for (const FEvidenceSource& Source : EvidenceSources)
+			{
+				const FUplinkToolDef* Def = Registry.Find(Source.Tool);
+				if (!Def)
+				{
+					EvidenceMissing.Add(Source.Tool);
+					continue;
+				}
+				FStepSpec Step;
+				Step.Tool = Source.Tool;
+				Step.Params = MakeShared<FJsonObject>();
+				if (Source.Cap > 0)
+				{
+					Step.Params->SetNumberField(TEXT("max"), Source.Cap);
+				}
+				// Read the world the failed step was asserting against, not
+				// whichever one an omitted parameter defaults to. Those differ
+				// exactly when it matters: a world:"editor" step that fails
+				// while a game is running would otherwise be explained with
+				// facts about the PIE world - a different place entirely,
+				// reported as if it were the scene of the failure.
+				if (!EvidenceWorld.IsEmpty())
+				{
+					Step.Params->SetStringField(TEXT("world"), EvidenceWorld);
+				}
+				Step.TimeoutSeconds = FMath::Clamp(Def->Info.TimeoutSeconds, 0.5, 900.0);
+				EvidenceSteps.Add(MoveTemp(Step));
+			}
+		}
+
+		/**
+		 * Label each capture with the question it answers, and say out loud
+		 * when a list hit its cap. Silence there reads as "that was all of
+		 * it", which is the one conclusion an evidence bundle must never
+		 * invite.
+		 */
+		void AnnotateEvidence()
+		{
+			for (const TSharedPtr<FJsonValue>& Value : EvidenceReports)
+			{
+				const TSharedPtr<FJsonObject>* Report = nullptr;
+				FString Tool;
+				if (!Value.IsValid() || !Value->TryGetObject(Report)
+					|| !(*Report)->TryGetStringField(FStringView(TEXT("tool")), Tool))
+				{
+					continue;
+				}
+				const FEvidenceSource* Source = FindEvidenceSource(Tool);
+				if (!Source)
+				{
+					continue;
+				}
+				(*Report)->SetStringField(TEXT("question"), Source->Question);
+
+				const TSharedPtr<FJsonObject>* StepData = nullptr;
+				const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+				if (Source->CountField != nullptr && Source->Cap > 0
+					&& (*Report)->TryGetObjectField(FStringView(TEXT("data")), StepData) && StepData->IsValid()
+					&& (*StepData)->TryGetArrayField(FStringView(Source->CountField), Rows)
+					&& Rows->Num() >= Source->Cap)
+				{
+					(*Report)->SetBoolField(TEXT("truncated"), true);
+					(*Report)->SetNumberField(TEXT("limit"), Source->Cap);
 				}
 			}
 		}
@@ -498,17 +663,55 @@ namespace
 				case EScenarioPhase::Setup:     ++SetupFailed; break;
 				case EScenarioPhase::Teardown:  ++TeardownFailed; break;
 				case EScenarioPhase::Artifacts: break; // a missed capture is not a test result
+				case EScenarioPhase::Evidence:  break; // nor is a capture that explains one
 				default:                        ++FailedSteps; break;
 				}
 				if (Phase == EScenarioPhase::Main && FirstFailedStep < 0)
 				{
 					FirstFailedStep = StepIndex;
+					// Gather evidence once, at the first failure. Ten failing
+					// steps that each dumped a screenshot and a log would bury
+					// the one that mattered under nine that followed from it.
+					if (bEvidenceOnFailure)
+					{
+						bEvidencePending = true;
+						EvidenceTool = Spec.Tool;
+						EvidenceFailReason = FailReason;
+						EvidenceWorld.Empty();
+						Spec.Params->TryGetStringField(FStringView(TEXT("world")), EvidenceWorld);
+						// A step whose world came from an earlier result is
+						// recorded unexpanded here, and that text names no
+						// world at all. Drop it rather than collect against a
+						// world that does not exist.
+						if (EvidenceWorld.StartsWith(TEXT("$")))
+						{
+							EvidenceWorld.Empty();
+						}
+					}
 				}
 			}
 		}
 
 		EUplinkToolStep AdvanceOrFinish(FUplinkToolResult& Out)
 		{
+			// Collect the evidence before anything else reacts to the failure.
+			// This is the only moment the failed world exists: the steps after
+			// it move on from that state, and teardown takes it apart.
+			if (Phase == EScenarioPhase::Main && bEvidencePending)
+			{
+				bEvidencePending = false;
+				const bool bRunEnds = bStopOnFailure || !Steps.IsValidIndex(StepIndex + 1);
+				MainResumeIndex = bRunEnds ? INDEX_NONE : StepIndex + 1;
+				BuildEvidenceSteps();
+				Phase = EScenarioPhase::Evidence;
+				StepIndex = 0;
+				if (EvidenceSteps.Num() > 0)
+				{
+					return EUplinkToolStep::Pending;
+				}
+				return AdvancePhase(Out); // nothing in this build to collect with
+			}
+
 			// stop_on_failure ends the MAIN phase early. It does not end the
 			// scenario: teardown still runs, because the run that failed is the
 			// one most likely to have left something behind.
@@ -565,6 +768,35 @@ namespace
 			{
 				Data->SetArrayField(TEXT("artifacts"), ArtifactReports);
 			}
+			// Beside 'artifacts' rather than inside it: artifacts are captures
+			// of the run as a whole, this is the state of the world at one
+			// named step, and folding them together loses which step that was.
+			if (EvidenceReports.Num() > 0 || EvidenceMissing.Num() > 0)
+			{
+				TSharedRef<FJsonObject> Evidence = MakeShared<FJsonObject>();
+				Evidence->SetNumberField(TEXT("step"), FirstFailedStep);
+				Evidence->SetStringField(TEXT("tool"), EvidenceTool);
+				if (!EvidenceFailReason.IsEmpty())
+				{
+					Evidence->SetStringField(TEXT("fail_reason"), EvidenceFailReason);
+				}
+				// Say what this is, because the difference matters to whoever
+				// reads it next: these are readings taken at the failure, not
+				// an account of what caused it.
+				Evidence->SetStringField(TEXT("note"), TEXT("Readings taken at the failed step, ")
+					TEXT("before teardown. Facts only - no cause is inferred."));
+				Evidence->SetArrayField(TEXT("collected"), EvidenceReports);
+				if (EvidenceMissing.Num() > 0)
+				{
+					TArray<TSharedPtr<FJsonValue>> Missing;
+					for (const FString& Tool : EvidenceMissing)
+					{
+						Missing.Add(MakeShared<FJsonValueString>(Tool));
+					}
+					Evidence->SetArrayField(TEXT("not_available"), Missing);
+				}
+				Data->SetObjectField(TEXT("evidence"), Evidence);
+			}
 			Data->SetNumberField(TEXT("total_seconds"), Total);
 			if (BudgetSeconds > 0.0)
 			{
@@ -604,19 +836,30 @@ namespace
 		FUplinkToolRegistry& Registry;
 		TArray<FStepSpec> SetupSteps;
 		TArray<FStepSpec> Steps;
+		TArray<FStepSpec> EvidenceSteps;
 		TArray<FStepSpec> ArtifactSteps;
 		TArray<FStepSpec> TeardownSteps;
 		TArray<TSharedPtr<FJsonValue>> SetupReports;
 		TArray<TSharedPtr<FJsonValue>> StepReports;
+		TArray<TSharedPtr<FJsonValue>> EvidenceReports;
 		TArray<TSharedPtr<FJsonValue>> ArtifactReports;
 		TArray<TSharedPtr<FJsonValue>> TeardownReports;
+		TArray<FString> EvidenceMissing;
+		FString EvidenceTool;
+		FString EvidenceFailReason;
+		FString EvidenceWorld;
 		TSharedPtr<IUplinkInvocation> Child;
 		FUplinkToolContext ChildContext;
 		EScenarioPhase Phase = EScenarioPhase::Main;
 		bool bChildStarted = false;
 		bool bStopOnFailure = true;
 		bool bScreenshotOnFailure = false;
+		bool bEvidenceOnFailure = false;
+		bool bEvidencePending = false;
 		int32 StepIndex = 0;
+		// Where the main phase resumes after an evidence detour, or INDEX_NONE
+		// when the failure ended the run.
+		int32 MainResumeIndex = INDEX_NONE;
 		int32 FailedSteps = 0;
 		int32 SetupFailed = 0;
 		int32 TeardownFailed = 0;
@@ -631,8 +874,8 @@ void UplinkTools::RegisterScenario(FUplinkToolRegistry& Registry)
 {
 	FUplinkToolInfo Info;
 	Info.Name = TEXT("run_scenario");
-	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step. Each step inherits the timeout its own tool declares unless overridden. A step with expect_failure:true is asserting a refusal - it passes when the tool errors, which is how a scenario mixes normal steps with rejection tests. Optional phases: 'setup' builds the fixture and, if any setup step fails, the steps are skipped entirely rather than failing for the wrong reason (reference setup results as \"$setup[N].field\"); 'teardown' ALWAYS runs, including after an aborted run, which is when cleanup matters most. artifacts:{screenshot_on_failure:true} captures the viewport when a step fails. budget_seconds fails a scenario that passed every assertion but took longer than it should - a performance regression otherwise hides in a green suite.");
-	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"expect_failure":{"type":"boolean","default":false,"description":"This step asserts a refusal: it passes when the tool errors and fails when it succeeds"},"timeout":{"type":"number","description":"Seconds for this step; defaults to the tool's own declared timeout - pie_start asks for 900"}},"required":["tool"]}},"setup":{"type":"array","description":"Fixture steps run first; if one fails the main steps are skipped","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object"},"expect_failure":{"type":"boolean"},"timeout":{"type":"number"}},"required":["tool"]}},"teardown":{"type":"array","description":"Cleanup steps that always run, including after an aborted run","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object"},"expect_failure":{"type":"boolean"},"timeout":{"type":"number"}},"required":["tool"]}},"artifacts":{"type":"object","properties":{"screenshot_on_failure":{"type":"boolean","default":false}}},"budget_seconds":{"type":"number","description":"Fail the scenario if the whole run takes longer than this"},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
+	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step. Each step inherits the timeout its own tool declares unless overridden. A step with expect_failure:true is asserting a refusal - it passes when the tool errors, which is how a scenario mixes normal steps with rejection tests. Optional phases: 'setup' builds the fixture and, if any setup step fails, the steps are skipped entirely rather than failing for the wrong reason (reference setup results as \"$setup[N].field\"); 'teardown' ALWAYS runs, including after an aborted run, which is when cleanup matters most. artifacts:{screenshot_on_failure:true} captures the viewport when a step fails; artifacts:{evidence_on_failure:true} goes further, gathering an 'evidence' bundle at the FIRST failed step and before teardown runs - the viewport, observe (the player, the nearest actors, their collision state and overlaps), drain_events (which watched events actually fired) and the recent output_log. Detecting a failure and diagnosing one are different problems: the assertion tells you the door did not open, the bundle is the material for working out whether the input never fired, the collision never overlapped, or the logic never ran. Facts only, capped per source, and a capture that fails never changes the verdict. budget_seconds fails a scenario that passed every assertion but took longer than it should - a performance regression otherwise hides in a green suite.");
+	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"expect_failure":{"type":"boolean","default":false,"description":"This step asserts a refusal: it passes when the tool errors and fails when it succeeds"},"timeout":{"type":"number","description":"Seconds for this step; defaults to the tool's own declared timeout - pie_start asks for 900"}},"required":["tool"]}},"setup":{"type":"array","description":"Fixture steps run first; if one fails the main steps are skipped","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object"},"expect_failure":{"type":"boolean"},"timeout":{"type":"number"}},"required":["tool"]}},"teardown":{"type":"array","description":"Cleanup steps that always run, including after an aborted run","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object"},"expect_failure":{"type":"boolean"},"timeout":{"type":"number"}},"required":["tool"]}},"artifacts":{"type":"object","properties":{"screenshot_on_failure":{"type":"boolean","default":false},"evidence_on_failure":{"type":"boolean","default":false,"description":"At the first failed main step, and before teardown, gather an 'evidence' bundle: the viewport, observe, drain_events and the recent log - the material for diagnosing the failure, not just detecting it"}}},"budget_seconds":{"type":"number","description":"Fail the scenario if the whole run takes longer than this"},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
 	Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
 	Info.TimeoutSeconds = 600.0;
