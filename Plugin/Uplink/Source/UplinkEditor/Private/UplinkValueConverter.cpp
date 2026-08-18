@@ -124,6 +124,8 @@ namespace UplinkValue
 				nullptr, PPF_None);
 		}
 
+		// The return value sits in this same frame, so it has to be skipped on
+		// the way in: it belongs to the call, not to the caller.
 		FText FailReason;
 		if (!FJsonObjectConverter::JsonObjectToUStruct(
 			ArgObject, Function, Frame,
