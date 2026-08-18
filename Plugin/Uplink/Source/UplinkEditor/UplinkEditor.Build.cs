@@ -25,23 +25,17 @@ public class UplinkEditor : ModuleRules
 			"BlueprintGraph",
 			"UMG",
 			"UMGEditor",
-			"Niagara",
-			"NiagaraCore",
-			"NiagaraEditor",
 			"Slate",
 			"SlateCore",
 			"EditorSubsystem",
-			"AIModule",
 			"AssetTools",
-			"Landscape",
 			"Projects",
-			"LevelSequence",
-			"MovieScene",
-			"AnimGraph",
-			"MaterialEditor",
-			"RHI",
 			// UGameMapsSettings - the project's default and startup maps.
 			"EngineSettings",
+			// navigate_to walks the player with SimpleMoveToLocation. The
+			// behaviour-tree tools moved to UplinkContentTools and took the rest
+			// of AIModule with them; this one call keeps it needed here.
+			"AIModule",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)

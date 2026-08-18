@@ -2,7 +2,7 @@
 // sequence_query - read a Level Sequence: playback range, bindings, tracks
 // and section timings in seconds, so gameplay can be aligned to cinematics.
 
-#include "UplinkTools.h"
+#include "UplinkContentTools.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -51,7 +51,7 @@ namespace
 	}
 }
 
-void UplinkTools::RegisterSequencer(FUplinkToolRegistry& Registry)
+void UplinkContentTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("sequence_query"),

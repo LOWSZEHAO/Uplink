@@ -3,7 +3,7 @@
 // place gameplay events correctly instead of guessing with Delay nodes) and
 // anim_modify (add/remove notifies at exact times).
 
-#include "UplinkTools.h"
+#include "UplinkContentTools.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -38,7 +38,7 @@ namespace
 	}
 }
 
-void UplinkTools::RegisterAnim(FUplinkToolRegistry& Registry)
+void UplinkContentTools::RegisterAnim(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("anim_query"),

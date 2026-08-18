@@ -3,7 +3,7 @@
 // compile errors. Authoring a material blind is how a missing texture input
 // turns into a black surface with nothing in the log to explain it.
 
-#include "UplinkTools.h"
+#include "UplinkContentTools.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -77,7 +77,7 @@ namespace
 	}
 }
 
-void UplinkTools::RegisterMaterial(FUplinkToolRegistry& Registry)
+void UplinkContentTools::RegisterMaterial(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("material_query"),

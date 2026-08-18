@@ -4,7 +4,7 @@
 // which behaviour tree node is currently active is not exposed to Blueprint at
 // all, and that is usually the question being asked.
 
-#include "UplinkTools.h"
+#include "UplinkContentTools.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -45,7 +45,7 @@ namespace
 	}
 }
 
-void UplinkTools::RegisterAI(FUplinkToolRegistry& Registry)
+void UplinkContentTools::RegisterAI(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("ai_query"),

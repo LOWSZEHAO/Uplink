@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 3,
-	"VersionName": "0.29.0",
+	"VersionName": "0.30.0",
 	"FriendlyName": "Uplink",
 	"Description": "Direct data link between an AI agent (MCP) and the Unreal Editor — assets, Blueprints, materials and every reflected UFUNCTION, with undoable, verifiable edits.",
 	"Category": "Editor",
@@ -14,6 +14,12 @@
 	"Installed": false,
 	"EnabledByDefault": true,
 	"Modules": [
+		{
+			"Name": "UplinkContentTools",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64" ]
+		},
 		{
 			"Name": "UplinkEditor",
 			"Type": "Editor",

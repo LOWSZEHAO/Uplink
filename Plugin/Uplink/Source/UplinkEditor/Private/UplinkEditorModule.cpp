@@ -43,38 +43,37 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterBlueprint(*Registry);
 	UplinkTools::RegisterReflection(*Registry);
 	UplinkTools::RegisterWidget(*Registry);
-	UplinkTools::RegisterAnim(*Registry);
-	UplinkTools::RegisterNiagara(*Registry);
 	UplinkTools::RegisterSlate(*Registry);
 	UplinkTools::RegisterDev(*Registry);
 	UplinkTools::RegisterRecord(*Registry, *InputRecorder);
-	UplinkTools::RegisterEnvironment(*Registry);
 	UplinkTools::RegisterData(*Registry);
 	UplinkTools::RegisterTests(*Registry);
-	UplinkTools::RegisterSequencer(*Registry);
 	UplinkTools::RegisterPCG(*Registry);
 	UplinkTools::RegisterGASP(*Registry);
-	UplinkTools::RegisterMaterial(*Registry);
-	UplinkTools::RegisterAI(*Registry);
 	UplinkTools::RegisterAutoplay(*Registry);
 	UplinkTools::RegisterRepair(*Registry);
 	UplinkTools::RegisterReferences(*Registry);
 	UplinkTools::RegisterSemantic(*Registry);
 
-	// Tools contributed by other plugins: already-loaded providers now, and
-	// late-loading ones as they register their modular feature.
+	// Tools contributed by other modules: already-loaded providers now, and
+	// late-loading ones as they register their modular feature. UplinkContentTools
+	// is one of these - it ships in this plugin but is not a special case here.
+	//
+	// RegisterFrom rather than RegisterUplinkTools, so each tool is stamped with
+	// the provider that brought it; called directly, they would all read as
+	// Uplink's own.
 	IModularFeatures& ModularFeatures = IModularFeatures::Get();
 	for (IUplinkToolProvider* Provider :
 		ModularFeatures.GetModularFeatureImplementations<IUplinkToolProvider>(IUplinkToolProvider::GetModularFeatureName()))
 	{
-		Provider->RegisterUplinkTools(*Registry);
+		Registry->RegisterFrom(*Provider);
 	}
 	ProviderRegisteredHandle = ModularFeatures.OnModularFeatureRegistered().AddLambda(
 		[this](const FName& Type, IModularFeature* Feature)
 		{
 			if (Type == IUplinkToolProvider::GetModularFeatureName() && Registry.IsValid() && Feature)
 			{
-				static_cast<IUplinkToolProvider*>(Feature)->RegisterUplinkTools(*Registry);
+				Registry->RegisterFrom(*static_cast<IUplinkToolProvider*>(Feature));
 			}
 		});
 

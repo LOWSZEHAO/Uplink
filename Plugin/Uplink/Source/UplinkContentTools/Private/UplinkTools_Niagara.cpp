@@ -4,7 +4,7 @@
 // On UE 5.7 the stack-editing tools report unsupported; user-parameter
 // setting works on both versions.
 
-#include "UplinkTools.h"
+#include "UplinkContentTools.h"
 #include "UplinkCompat.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
@@ -138,7 +138,7 @@ namespace
 		TEXT("Niagara stack authoring needs UE 5.8+ (UNiagaraExternalEditUtilities does not exist in this engine version)");
 }
 
-void UplinkTools::RegisterNiagara(FUplinkToolRegistry& Registry)
+void UplinkContentTools::RegisterNiagara(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("niagara_create"),

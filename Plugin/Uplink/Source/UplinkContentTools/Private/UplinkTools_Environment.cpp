@@ -3,7 +3,7 @@
 // landscape_create (heightmap file -> Landscape actor), foliage_scatter
 // (instanced meshes scattered onto the ground).
 
-#include "UplinkTools.h"
+#include "UplinkContentTools.h"
 #include "UplinkCompat.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
@@ -155,7 +155,7 @@ namespace
 	}
 }
 
-void UplinkTools::RegisterEnvironment(FUplinkToolRegistry& Registry)
+void UplinkContentTools::RegisterEnvironment(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("lighting_setup"),
