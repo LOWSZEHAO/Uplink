@@ -101,16 +101,52 @@ bool FUplinkServer::Start(uint32 InPort)
 
 	// Safety: refuse to start if the engine's HTTP listener has been configured
 	// to bind beyond loopback — this server must never be network-reachable.
+	auto IsLoopback = [](const FString& Address)
+	{
+		return Address.IsEmpty() || Address == TEXT("localhost") || Address == TEXT("127.0.0.1");
+	};
+
 	FString BindAddress;
 	if (GConfig && GConfig->GetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), BindAddress, GEngineIni))
 	{
-		if (!BindAddress.IsEmpty() && BindAddress != TEXT("localhost") && BindAddress != TEXT("127.0.0.1"))
+		if (!IsLoopback(BindAddress))
 		{
 			UE_LOG(LogUplink, Error,
 				TEXT("Refusing to start: [HTTPServer.Listeners] DefaultBindAddress is '%s' (not loopback). Uplink only serves localhost."),
 				*BindAddress);
 			return false;
 		}
+	}
+
+	// DefaultBindAddress is not the whole story: the same section takes a
+	// ListenerOverrides array whose per-port entry wins over it
+	// (HttpServerConfig.cpp). A project carrying an override for this port would
+	// bind wide while the check above saw nothing wrong, so read those too.
+	TArray<FString> ListenerOverrides;
+	if (GConfig)
+	{
+		GConfig->GetArray(TEXT("HTTPServer.Listeners"), TEXT("ListenerOverrides"), ListenerOverrides, GEngineIni);
+	}
+	for (FString Override : ListenerOverrides)
+	{
+		Override.TrimStartAndEndInline();
+		Override.ReplaceInline(TEXT("("), TEXT(""));
+		Override.ReplaceInline(TEXT(")"), TEXT(""));
+
+		uint32 OverridePort = 0;
+		if (!FParse::Value(*Override, TEXT("Port="), OverridePort) || OverridePort != Port)
+		{
+			continue;
+		}
+		FString OverrideAddress;
+		if (FParse::Value(*Override, TEXT("BindAddress="), OverrideAddress) && !IsLoopback(OverrideAddress))
+		{
+			UE_LOG(LogUplink, Error,
+				TEXT("Refusing to start: [HTTPServer.Listeners] ListenerOverrides binds port %u to '%s' (not loopback). Uplink only serves localhost."),
+				Port, *OverrideAddress);
+			return false;
+		}
+		break;
 	}
 
 	FHttpServerModule& HttpServerModule = FHttpServerModule::Get();

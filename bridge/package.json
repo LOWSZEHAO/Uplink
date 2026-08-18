@@ -2,6 +2,7 @@
   "name": "uplink-bridge",
   "version": "0.26.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "MCP stdio bridge for the Uplink Unreal Engine plugin",
   "bin": {

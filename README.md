@@ -4,7 +4,7 @@
 
 Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcontextprotocol.io) bridge. It gives an AI assistant the whole editor — assets, Blueprints, actors, materials, animation, every reflected UFUNCTION in your project — and it can verify its own edits against a running Play-In-Editor session.
 
-> The point is not how many tools it has. It is that every one of them tells you the truth: edits are undoable, a bad path is refused instead of silently written, a misspelt parameter is rejected instead of ignored, and nothing reports success for work it did not do.
+> Tool count is the boring number. The work went into making the tools honest about what they did and did not do — see *Why* below.
 
 ## Prove it against your own editor
 
@@ -43,7 +43,7 @@ PIE control, input injection, event watching and assertions exist for one purpos
 
 **v0.26.0 — 104 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
 
-Recent work has gone into trustworthiness — undo transactions, refused bad paths, rejected unknown parameters, capped output, and no tool reporting success for work it did not do — and into the tools for understanding an unfamiliar project, because that is where an agent wastes the most time.
+Recent work has been trustworthiness (see *Why*) and the tools for reading an unfamiliar project — that is where an agent burns the most time, guessing at things it could have looked up.
 
 ## Quickstart
 
@@ -74,6 +74,8 @@ Recent work has gone into trustworthiness — undo transactions, refused bad pat
    .\scripts\build_all.ps1
    ```
 
+   The link is a junction, so one clone serves every project you point it at — but the plugin's `Binaries/` and `Intermediate/` are shared along with the source. Link the same clone into a 5.7 project *and* a 5.8 one and whichever you built last wins; the other opens with "modules are missing or built with a different engine version". Delete `Plugin/Uplink/Binaries` and `Plugin/Uplink/Intermediate` and rebuild when you switch, or keep a clone per engine.
+
 4. **Register with Claude Code — no Node required.** The plugin speaks MCP natively over HTTP:
 
    ```powershell
@@ -82,7 +84,7 @@ Recent work has gone into trustworthiness — undo transactions, refused bad pat
 
 5. Start the editor, then ask your client for the `status` tool. You should get engine, project and PIE state back.
 
-**Optional bridge.** The native HTTP endpoint only exists while the editor runs, so a client shows the server as disconnected when the editor is closed (reconnect after launching it). If you would rather the tools stayed visible and answered "editor not running", use the Node bridge instead — this is the only part that needs **Node.js 18+**:
+**Optional bridge.** The native HTTP endpoint only exists while the editor runs, so a client shows the server as disconnected when the editor is closed (reconnect after launching it). The Node bridge stays up instead: with the editor closed it exposes only `status`, which answers "not connected" rather than the whole server going away. This is the only part that needs **Node.js 18+**:
 
 ```powershell
 cd bridge; npm install
@@ -95,7 +97,7 @@ Worth understanding before you point an agent at real work.
 
 - **There is no authentication.** Any process on your machine can call the server while the editor is running. It binds loopback only (`127.0.0.1`, never reachable from the network), validates browser `Origin` headers, caps bodies at 2 MB, and refuses to start if the port is taken or the engine's HTTP listener has been pointed at a non-loopback address — but on your own machine it is open by design.
 - **`call_function` calls arbitrary UFUNCTIONs, deliberately.** That is what makes most of the engine reachable without a tool per feature. It also means the blast radius is "anything Blueprint could do", plus editor scripting libraries.
-- **Mutations are undoable.** Every tool that writes runs inside its own named editor transaction, so an agent's edits roll back with Ctrl+Z or `edit_history` like a hand edit. PIE-world changes are not transacted — the engine does not record them.
+- **Mutations are undoable, with exceptions.** A tool that writes is dispatched inside its own named editor transaction, so an agent's edits roll back with Ctrl+Z or `edit_history` like a hand edit. Nothing transacts while a PIE session is live — the engine does not record changes to a play world, and wrapping them would only leave empty undo entries behind. Tools that drive the session rather than edit assets opt out on purpose: `pie_*`, `input_action`, `input_key`, `navigate_to`, `run_scenario`, `input_replay`, and `live_compile` / `run_tests` / `edit_history` itself.
 - **Nothing is saved unless asked.** Authoring leaves work dirty in memory; `save` writes it. That cuts both ways: unsaved mistakes vanish on restart, and so does unsaved good work.
 - **Use version control.** The same advice as for any tool that edits your project in bulk.
 
@@ -151,9 +153,9 @@ AI agent (MCP client) ──┤   (native MCP — no Node needed)   ├── Pl
 ```
 
 - **`Plugin/Uplink`** — a C++ editor plugin serving MCP natively over a loopback HTTP endpoint. One codebase compiles against **UE 5.7 and 5.8**; all version divergence lives in [`UplinkCompat.h`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkCompat.h).
-- **`bridge/`** — an optional Node stdio MCP server for clients that cannot speak HTTP. It stays alive when the editor is closed, so tools degrade to a clear "not connected" answer instead of the MCP server dying.
+- **`bridge/`** — an optional Node stdio MCP server for clients that cannot speak HTTP. It stays alive when the editor is closed, so `status` answers "not connected" instead of the MCP server dying.
 
-Every tool declares whether it only reads. Anything that writes is dispatched inside its own editor transaction — which is what makes an agent's edits undoable by hand afterwards — and its parameters are checked against its own published schema before it runs.
+Every tool declares whether it only reads. Anything that writes is dispatched inside its own editor transaction unless it opted out — that is what makes an agent's edits undoable by hand afterwards — and its parameters are checked against its own published schema before it runs.
 
 ## Extending Uplink with your own tools
 

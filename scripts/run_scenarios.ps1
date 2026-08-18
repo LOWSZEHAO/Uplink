@@ -6,6 +6,7 @@
 # Requires the editor to be open with the Uplink plugin enabled. Each file is
 # posted to run_scenario, which executes the steps in order and returns a
 # per-step report.
+# Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 [CmdletBinding()]
 param(
