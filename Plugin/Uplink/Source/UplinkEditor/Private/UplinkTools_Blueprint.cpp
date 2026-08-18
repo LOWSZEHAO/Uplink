@@ -140,6 +140,8 @@ namespace
 		return nullptr;
 	}
 
+	bool MakePinType(const FString& TypeString, FEdGraphPinType& Out, FString& OutError);
+
 	bool MakePinType(const FString& TypeString, FEdGraphPinType& Out, FString& OutError)
 	{
 		Out = FEdGraphPinType();
@@ -149,6 +151,48 @@ namespace
 		{
 			Out.ContainerType = EPinContainerType::Array;
 			Inner = Inner.RightChop(6);
+		}
+		else if (Inner.StartsWith(TEXT("set:")))
+		{
+			Out.ContainerType = EPinContainerType::Set;
+			Inner = Inner.RightChop(4);
+		}
+		else if (Inner.StartsWith(TEXT("map:")))
+		{
+			// map:<key>:<value> - the value type rides in the terminal category.
+			Out.ContainerType = EPinContainerType::Map;
+			const FString Spec = Inner.RightChop(4);
+			FString KeyPart, ValuePart;
+			if (!Spec.Split(TEXT(":"), &KeyPart, &ValuePart)
+				|| KeyPart.IsEmpty() || ValuePart.IsEmpty())
+			{
+				OutError = TEXT("map needs both halves: map:<key>:<value>, e.g. map:name:float");
+				return false;
+			}
+			// Object/struct specs contain their own colon (object:/Script/...),
+			// so re-join everything after the first split point for the key when
+			// the key itself is a prefixed form.
+			if ((KeyPart == TEXT("object") || KeyPart == TEXT("class") || KeyPart == TEXT("struct")
+				|| KeyPart == TEXT("enum") || KeyPart == TEXT("soft_object") || KeyPart == TEXT("soft_class")))
+			{
+				// key is prefixed: find the value after the key's own payload.
+				// Simplest honest rule: prefixed keys are not supported - keys in
+				// Blueprint maps are almost always name/string/int anyway.
+				OutError = TEXT("map keys must be simple types (bool,int,int64,float,string,name,text,byte). Prefixed key types are not supported.");
+				return false;
+			}
+			FEdGraphPinType ValueType;
+			if (!MakePinType(ValuePart, ValueType, OutError))
+			{
+				return false;
+			}
+			if (ValueType.ContainerType != EPinContainerType::None)
+			{
+				OutError = TEXT("a map value cannot itself be a container");
+				return false;
+			}
+			Out.PinValueType = FEdGraphTerminalType::FromPinType(ValueType);
+			Inner = KeyPart;
 		}
 
 		if (Inner == TEXT("bool")) { Out.PinCategory = UEdGraphSchema_K2::PC_Boolean; }
@@ -203,9 +247,35 @@ namespace
 			Out.PinCategory = UEdGraphSchema_K2::PC_Struct;
 			Out.PinSubCategoryObject = Struct;
 		}
+		else if (Inner.StartsWith(TEXT("enum:")))
+		{
+			const FString EnumPath = Inner.RightChop(5);
+			UEnum* Enum = LoadObject<UEnum>(nullptr, *EnumPath);
+			if (!Enum)
+			{
+				OutError = FString::Printf(TEXT("enum not found: %s (e.g. /Script/Engine.ECollisionChannel or /Game/E_State.E_State)"), *EnumPath);
+				return false;
+			}
+			// Byte-backed, the way the editor types an enum variable.
+			Out.PinCategory = UEdGraphSchema_K2::PC_Byte;
+			Out.PinSubCategoryObject = Enum;
+		}
+		else if (Inner.StartsWith(TEXT("soft_object:")) || Inner.StartsWith(TEXT("soft_class:")))
+		{
+			const bool bClassPin = Inner.StartsWith(TEXT("soft_class:"));
+			const FString ClassPath = Inner.RightChop(bClassPin ? 11 : 12);
+			UClass* Class = StaticLoadClass(UObject::StaticClass(), nullptr, *ClassPath);
+			if (!Class)
+			{
+				OutError = FString::Printf(TEXT("class not found: %s"), *ClassPath);
+				return false;
+			}
+			Out.PinCategory = bClassPin ? UEdGraphSchema_K2::PC_SoftClass : UEdGraphSchema_K2::PC_SoftObject;
+			Out.PinSubCategoryObject = Class;
+		}
 		else
 		{
-			OutError = FString::Printf(TEXT("unknown type '%s' (bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>)"), *TypeString);
+			OutError = FString::Printf(TEXT("unknown type '%s' (bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,soft_object:<class>,soft_class:<class>,struct:<path>,enum:<path>,array:<inner>,set:<inner>,map:<key>:<value>)"), *TypeString);
 			return false;
 		}
 		return true;
@@ -778,18 +848,91 @@ namespace
 		FString Error;
 		const FString Op = GetString(OpParams, TEXT("op"));
 
-		if (Op == TEXT("add_variable"))
+		if (Op == TEXT("add_variable") || Op == TEXT("set_variable"))
 		{
-			FEdGraphPinType PinType;
-			if (!MakePinType(GetString(OpParams, TEXT("type"), TEXT("float")), PinType, Error))
-			{
-				return FUplinkToolResult::Error(Error);
-			}
 			const FName VarName(*GetString(OpParams, TEXT("name")));
-			if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, VarName, PinType, GetString(OpParams, TEXT("default"))))
+
+			if (Op == TEXT("add_variable"))
 			{
-				return FUplinkToolResult::Error(TEXT("AddMemberVariable failed (name collision?)"));
+				FEdGraphPinType PinType;
+				if (!MakePinType(GetString(OpParams, TEXT("type"), TEXT("float")), PinType, Error))
+				{
+					return FUplinkToolResult::Error(Error);
+				}
+				if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, VarName, PinType, GetString(OpParams, TEXT("default"))))
+				{
+					return FUplinkToolResult::Error(TEXT("AddMemberVariable failed (name collision?)"));
+				}
 			}
+			else if (FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, VarName) == INDEX_NONE)
+			{
+				TArray<FString> Names;
+				for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+				{
+					Names.Add(Variable.VarName.ToString());
+				}
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no variable '%s' on this blueprint. Variables: %s"),
+					*VarName.ToString(), *FString::Join(Names, TEXT(", "))));
+			}
+
+			// The knobs on the variable details panel, addressable on creation or
+			// afterwards. Without these, every variable an agent made was private,
+			// uncategorised and unspawnable - fine for a scratch counter, wrong
+			// for anything a designer is meant to touch.
+			bool bFlag = false;
+			if (OpParams->TryGetBoolField(FStringView(TEXT("instance_editable")), bFlag))
+			{
+				// The engine name is inverted history: "blueprint only" means NOT
+				// editable on placed instances.
+				FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, VarName, !bFlag);
+			}
+			if (OpParams->TryGetBoolField(FStringView(TEXT("expose_on_spawn")), bFlag))
+			{
+				if (bFlag)
+				{
+					FBlueprintEditorUtils::SetBlueprintVariableMetaData(
+						Blueprint, VarName, nullptr, FBlueprintMetadata::MD_ExposeOnSpawn, TEXT("true"));
+				}
+				else
+				{
+					FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(
+						Blueprint, VarName, nullptr, FBlueprintMetadata::MD_ExposeOnSpawn);
+				}
+			}
+			if (OpParams->TryGetBoolField(FStringView(TEXT("read_only")), bFlag))
+			{
+				FBlueprintEditorUtils::SetBlueprintPropertyReadOnlyFlag(Blueprint, VarName, bFlag);
+			}
+			const FString Category = GetString(OpParams, TEXT("category"));
+			if (!Category.IsEmpty())
+			{
+				FBlueprintEditorUtils::SetBlueprintVariableCategory(
+					Blueprint, VarName, nullptr, FText::FromString(Category), /*bDontRecompile=*/true);
+			}
+			const FString Tooltip = GetString(OpParams, TEXT("tooltip"));
+			if (!Tooltip.IsEmpty())
+			{
+				FBlueprintEditorUtils::SetBlueprintVariableMetaData(
+					Blueprint, VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip);
+			}
+			if (OpParams->TryGetBoolField(FStringView(TEXT("replicated")), bFlag))
+			{
+				const int32 VarIndex = FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, VarName);
+				if (VarIndex != INDEX_NONE)
+				{
+					if (bFlag)
+					{
+						Blueprint->NewVariables[VarIndex].PropertyFlags |= CPF_Net;
+					}
+					else
+					{
+						Blueprint->NewVariables[VarIndex].PropertyFlags &= ~CPF_Net;
+					}
+					FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+				}
+			}
+
 			Data->SetStringField(TEXT("variable"), VarName.ToString());
 		}
 		else if (Op == TEXT("remove_variable"))
@@ -1580,7 +1723,7 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("bp_query"),
 		TEXT("Inspect a Blueprint: parent class, variables, and graphs with their nodes, pins and connections (node guids are the handles bp_modify uses)."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"graph":{"type":"string","description":"Only this graph (default: all)"},"max_nodes":{"type":"number","default":100}},"required":["blueprint"]})json"),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"graph":{"type":"string","description":"Only this graph (default: all)"},"max_nodes":{"type":"number","default":100},"offset":{"type":"number","default":0,"description":"Skip this many nodes per graph - page a big graph with offset + next_offset"}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -1644,6 +1787,11 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 			const FString GraphFilter = GetString(Ctx.Params, TEXT("graph"));
 			const int32 MaxNodes = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max_nodes"), 100)), 1, 500);
+			// Paging: a hand-authored event graph can run to thousands of nodes,
+			// and a capped read with no way to ask for the rest meant the far end
+			// of a big graph was simply unreadable. offset + total + next_offset
+			// make "read the whole thing" a loop instead of a dead end.
+			const int32 Offset = FMath::Max(0, static_cast<int32>(GetNumber(Ctx.Params, TEXT("offset"), 0)));
 			TArray<UEdGraph*> AllGraphs;
 			Blueprint->GetAllGraphs(AllGraphs);
 
@@ -1661,19 +1809,31 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 				TSharedRef<FJsonObject> GraphJson = MakeShared<FJsonObject>();
 				GraphJson->SetStringField(TEXT("name"), Graph->GetName());
 				TArray<TSharedPtr<FJsonValue>> Nodes;
+				int32 Seen = 0;
 				for (UEdGraphNode* Node : Graph->Nodes)
 				{
+					if (!Node)
+					{
+						continue;
+					}
+					if (Seen++ < Offset)
+					{
+						continue;
+					}
 					if (Nodes.Num() >= MaxNodes)
 					{
 						break;
 					}
-					if (Node)
-					{
-						Nodes.Add(MakeShared<FJsonValueObject>(NodeToJson(Node)));
-					}
+					Nodes.Add(MakeShared<FJsonValueObject>(NodeToJson(Node)));
 				}
 				GraphJson->SetArrayField(TEXT("nodes"), Nodes);
-				GraphJson->SetBoolField(TEXT("truncated"), Graph->Nodes.Num() > Nodes.Num());
+				GraphJson->SetNumberField(TEXT("total_nodes"), Graph->Nodes.Num());
+				const bool bMore = Offset + Nodes.Num() < Graph->Nodes.Num();
+				GraphJson->SetBoolField(TEXT("truncated"), bMore || Offset > 0);
+				if (bMore)
+				{
+					GraphJson->SetNumberField(TEXT("next_offset"), Offset + Nodes.Num());
+				}
 				Graphs.Add(MakeShared<FJsonValueObject>(GraphJson));
 			}
 			Data->SetArrayField(TEXT("graphs"), Graphs);
@@ -1682,8 +1842,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_function {name, inputs?, outputs?, pure?, thread_safe?, category?} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"outputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type}] return values - creates the Result node, wired to the entry"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
+		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?,instance_editable?,expose_on_spawn?,read_only?,replicated?,category?,tooltip?} | set_variable {name, same options} - configure an existing variable | remove_variable {name} | add_function {name, inputs?, outputs?, pure?, thread_safe?, category?} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","set_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"instance_editable":{"type":"boolean","description":"add/set_variable: editable on placed instances"},"expose_on_spawn":{"type":"boolean","description":"add/set_variable: show as a SpawnActor pin"},"read_only":{"type":"boolean","description":"add/set_variable: blueprint-read-only"},"replicated":{"type":"boolean","description":"add/set_variable: replicate this property"},"tooltip":{"type":"string","description":"add/set_variable"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function / add_variable / set_variable: category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"outputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type}] return values - creates the Result node, wired to the entry"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
