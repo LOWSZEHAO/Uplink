@@ -156,18 +156,9 @@ Plugin/Uplink/     the UE editor plugin (C++)
 bridge/            Node stdio MCP server (optional)
 scripts/           build, project-linking and scenario-running helpers (PowerShell)
 scenarios/         runnable proof - a regression suite in the tool's own format
-benchmark/         a small game Uplink builds, with bugs you can switch on
 TOOLS.md           full tool reference (parameters, conventions, security model)
 PROMPTING.md       how to prompt an agent that is driving your editor
 ```
-
-The [benchmark](benchmark) is worth a look if you care whether any of this
-actually closes the loop. It is a four-actor game — pick up a cube, stand on a
-plate, open a door, reach the exit — that Uplink builds from nothing, plus bugs
-you can switch on one at a time. The chain is deliberately indirect: the plate
-reacts to the cube rather than to the player, so a broken pickup shows up two
-steps later as a door that never opens, and the thing that looks broken is never
-the thing that is broken.
 
 ## License
 

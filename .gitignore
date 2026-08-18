@@ -22,6 +22,8 @@ scripts/hosts.local.json
 docs/
 notes/
 *.notes.md
+# Experiments live outside the repo until they have a result worth showing.
+benchmark/
 
 # --- OS noise ---
 Thumbs.db

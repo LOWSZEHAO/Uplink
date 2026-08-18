@@ -1,0 +1,20 @@
+# Normalise line endings so a checkout on Windows and one on Linux produce the
+# same file, and a diff never shows a whole file changed because someone's
+# editor rewrote the endings. Without this the repo had drifted: 106 files LF,
+# three CRLF, and every commit warned about it.
+* text=auto eol=lf
+
+# Batch files are read by cmd.exe, which wants CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Unreal content. None is tracked today, but a plugin that later ships an
+# example asset must never have it line-ending-converted.
+*.uasset binary
+*.umap binary
+*.upk    binary
+*.udk    binary
+
+*.png binary
+*.jpg binary
+*.ico binary
