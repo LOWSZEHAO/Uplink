@@ -156,6 +156,7 @@ Plugin/Uplink/     the UE editor plugin (C++)
 bridge/            Node stdio MCP server (optional)
 scripts/           build, project-linking and scenario-running helpers (PowerShell)
 scenarios/         runnable proof - a regression suite in the tool's own format
+CHANGELOG.md       what changed, and what changed behaviour rather than adding to it
 TOOLS.md           full tool reference (parameters, conventions, security model)
 PROMPTING.md       how to prompt an agent that is driving your editor
 ```
