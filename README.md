@@ -26,7 +26,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.28.0 — 106 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.29.0 — 106 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. An audit this month found five authoring calls that reported success while doing the wrong thing, all of them already shipped. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -156,9 +156,18 @@ Plugin/Uplink/     the UE editor plugin (C++)
 bridge/            Node stdio MCP server (optional)
 scripts/           build, project-linking and scenario-running helpers (PowerShell)
 scenarios/         runnable proof - a regression suite in the tool's own format
+benchmark/         a small game Uplink builds, with bugs you can switch on
 TOOLS.md           full tool reference (parameters, conventions, security model)
 PROMPTING.md       how to prompt an agent that is driving your editor
 ```
+
+The [benchmark](benchmark) is worth a look if you care whether any of this
+actually closes the loop. It is a four-actor game — pick up a cube, stand on a
+plate, open a door, reach the exit — that Uplink builds from nothing, plus bugs
+you can switch on one at a time. The chain is deliberately indirect: the plate
+reacts to the cube rather than to the player, so a broken pickup shows up two
+steps later as a door that never opens, and the thing that looks broken is never
+the thing that is broken.
 
 ## License
 
