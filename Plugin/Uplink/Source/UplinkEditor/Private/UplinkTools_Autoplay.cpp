@@ -431,10 +431,15 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				// Group the keys by action, which is the way a person thinks
 				// about it: "what moves the character".
 				TMap<FString, TArray<FString>> KeysByAction;
+				TMap<FString, FString> PathByAction;
 				for (const FEnhancedActionKeyMapping& Mapping : Context->GetMappings())
 				{
 					const FString ActionName = Mapping.Action ? Mapping.Action->GetName() : TEXT("(none)");
 					KeysByAction.FindOrAdd(ActionName).Add(Mapping.Key.ToString());
+					if (Mapping.Action)
+					{
+						PathByAction.FindOrAdd(ActionName) = Mapping.Action->GetPathName();
+					}
 				}
 
 				TArray<TSharedPtr<FJsonValue>> Actions;
@@ -442,6 +447,15 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				{
 					TSharedRef<FJsonObject> ActionRow = MakeShared<FJsonObject>();
 					ActionRow->SetStringField(TEXT("action"), Pair.Key);
+					// The path, not just the name: input_action takes the asset
+					// path, and guessing it from the name is wrong as often as
+					// not - the third-person template keeps IA_Move under
+					// /Game/Input/Actions/, one folder deeper than the context
+					// that references it.
+					if (const FString* Path = PathByAction.Find(Pair.Key))
+					{
+						ActionRow->SetStringField(TEXT("path"), *Path);
+					}
 					ActionRow->SetStringField(TEXT("keys"), FString::Join(Pair.Value, TEXT(", ")));
 					Actions.Add(MakeShared<FJsonValueObject>(ActionRow));
 				}

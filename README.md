@@ -2,15 +2,13 @@
 
 **A direct data link between an AI agent and a running Unreal Engine editor.**
 
-Uplink is a C++ editor plugin that speaks [MCP](https://modelcontextprotocol.io), plus an optional Node bridge. It hands an AI assistant the editor itself: assets, Blueprints, actors, materials, animation, and every reflected UFUNCTION in your project. It can also start Play-In-Editor and check its own work while the game runs.
+Uplink is a C++ editor plugin that speaks [MCP](https://modelcontextprotocol.io), plus an optional Node bridge. It hands an AI assistant the editor itself: assets, Blueprints, actors, materials, animation, and every reflected UFUNCTION in your project.
 
 ## Why
 
 An agent editing your project is only useful if you can trust what it did. Most of the work here went into that rather than into new features. A tool that writes runs inside its own named editor transaction, so you can undo it by hand. An object path that resolves to nothing is refused instead of quietly written as null. A misspelt parameter comes back with a suggestion instead of being ignored. Lists say when they were cut short.
 
 The other half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or in your project, and `get_property` / `set_property` walk dotted paths through structs and object references. Systems with no dedicated tool are still reachable.
-
-PIE control, input injection, event watching and assertions are there so the agent can check its own work in a running game before it tells you it is done.
 
 ## Status
 
@@ -83,7 +81,7 @@ Worth reading before you point an agent at real work.
 | Layer | Tools |
 |---|---|
 | **Understand an unknown project** | `project_entry` (default map, game mode, and every level — the difference between the map the editor opens and the map a player starts from) · `ui_live` (what is on screen right now, with text and screen rects) · `input_map` (mapping contexts, actions and their keys) · `actor_components` (a live actor's components under their real names) · `streaming_status` (which sublevels are loaded) · `frame_strip` (N frames as one contact sheet — what changed) · `dialog_state` (is a modal blocking every tool) |
-| **Play the game** | PIE lifecycle (`pie_start` waits for BeginPlay, plus stop/status/pause/resume/step) · player control (`input_action`, `input_key`, `click_widget`, `possess`, `player_teleport`, `player_info`, `navigate_to`) |
+| **Play-In-Editor** | PIE lifecycle (`pie_start` waits for BeginPlay, plus stop/status/pause/resume/step) · player control (`input_action`, `input_key`, `click_widget`, `possess`, `player_teleport`, `player_info`, `navigate_to`) |
 | **Observe & assert** | `watch_events` / `drain_events` / `unwatch` (any BlueprintAssignable delegate, payloads decoded) · `wait_until` (timeout is a result, not an error) · `get_world_state` · `viewport_annotate` · `perf_stats` · `profile_capture` |
 | **Scripted checks** | `run_scenario` — ordered steps, per-step expectations, `$steps[N].field` templating, structured pass/fail |
 | **Record & replay** | `input_record` (passive tap on a real play session) · `input_replay` (a regression test from a human run) |
