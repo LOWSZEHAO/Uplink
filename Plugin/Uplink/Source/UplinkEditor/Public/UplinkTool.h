@@ -88,9 +88,10 @@ struct FUplinkWorldEntry
 namespace UplinkWorlds
 {
 	/**
-	 * Every live world, editor first, then PIE instances in order, then
-	 * previews. Rebuilt per call for the same reason contexts do not cache a
-	 * UWorld*: worlds appear and die between ticks.
+	 * Every live world, editor first, then PIE instances in order, then the
+	 * rest - previews, but also the inactive levels the editor keeps loaded.
+	 * Rebuilt per call for the same reason contexts do not cache a UWorld*:
+	 * worlds appear and die between ticks.
 	 */
 	UPLINKEDITOR_API TArray<FUplinkWorldEntry> Enumerate();
 }
