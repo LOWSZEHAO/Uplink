@@ -26,7 +26,7 @@ step if you want one.
 | `02-edits-and-cleanup` | A mutating tool really changes the level, later steps see the change, and the scenario puts the world back. |
 | `03-blueprint-authoring` | A Blueprint can be authored from nothing — variable, function graph, clean compile — and the engine agrees when read back. |
 | `04-refuses-bad-input` | The failure behaviour: a mistyped parameter, an unresolvable asset path, and an unknown tool name are all refused, not quietly ignored. |
-| `05-playtest` | The headline claim: start the game, move the player, query the world, capture the view, shut down — one request. |
+| `05-playtest` | Verification in a running game: start it, move the player, query the world, capture the view, shut down — one request. |
 | `06-asset-creation` | The assets `bp_create` cannot make: a Widget Blueprint whose generated class resolves and takes a root widget, and a Material Instance parented through its factory. Names the factory it expects. |
 | `07-graph-flow-control` | A gameplay graph with decisions in it: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch, Select and Self, built in one batched call and compiled clean. |
 
