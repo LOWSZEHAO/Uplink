@@ -1,10 +1,10 @@
 # Uplink tool reference
 
-All 106 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 107 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
-- **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world.
+- **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world. `"pie"` means *whichever* world the editor is currently playing in; when that is ambiguous — playing as several clients — call **`worlds`** and pass an id like `"pie:1"` to name exactly one. An unknown world is refused with the ids that do exist.
 - **Actors** are addressed by exact name, exact editor label, or label substring (first match). When a lookup fails, the error lists what is actually there.
 - **Vectors** are `{x,y,z}` objects; **rotators** are `{pitch,yaw,roll}`.
 - **Unknown parameters are rejected**, with the accepted list and a suggestion when one is close. A misspelt name never silently falls back to a default.
@@ -26,6 +26,7 @@ cost real time driving a real game.
 | `input_map` | What can I press, and what does it do? Every Enhanced Input mapping context with its actions and bound keys, plus which contexts are actually applied to the live player. Beats searching assets for something called `IA_Move`. `{path_prefix?, applied_only?, max?}` |
 | `actor_components` | A live actor's components under the names `get_property` and `set_property` expect. Guessing fails quietly: a character's movement component is `CharMoveComp`, not `CharacterMovement`. `{actor, class_contains?, max?, world?}` |
 | `streaming_status` | Which sublevels are loaded, visible, or still coming, with the world's actor count. Without it, an unfinished stream looks identical to a broken level or an empty one. `{world?}` |
+| `worlds` | Every live world with an id you can pass as `world`: the level being edited, one per PIE instance when playing as several clients, and the preview world behind each open asset editor. Reports type, net mode, map, PIE instance, actor count, and which one an omitted `world` resolves to right now. The editor keeps more worlds around than "editor or pie" can say, and `"pie"` silently picks one of them. |
 | `frame_strip` | What changed over the last few seconds — N frames at a fixed interval returned as ONE contact sheet. Use it for transitions, fades, animations, whether a door actually opened: a single screenshot is one instant, and everything between calls is invisible. Includes the UI layer during play. `{frames?, interval_ms?, columns?, scale?}` |
 | `dialog_state` | Is a modal window blocking the editor, and what does it say? Every tool runs on the game thread, so a modal freezes all of them — calls simply hang with no diagnostic. Ask this first when Uplink starts answering again. `dismiss:true` closes it, which answers any question it was asking, so read the title first. `{dismiss?}` |
 
@@ -93,10 +94,21 @@ A scenario runs in phases, and the phases exist for reasons worth knowing:
 |---|---|
 | `setup` | Builds the fixture. If a setup step fails the main steps are **skipped entirely** — assertions against a fixture that was never built fail for the wrong reason and send you chasing the wrong bug. Results are addressable as `"$setup[N].field"`, the same way `"$steps[N].field"` works. |
 | `steps` | The test itself. `stop_on_failure` (default true) ends this phase early. |
-| `artifacts` | `{screenshot_on_failure: true}` captures the viewport when a step failed, so there is a picture of the moment it went wrong rather than only a field name. |
+| `artifacts` | `{screenshot_on_failure: true}` captures the viewport when a step failed, so there is a picture of the moment it went wrong rather than only a field name. `{evidence_on_failure: true}` goes further — see below. |
 | `teardown` | **Always runs** — after a pass, after a failure, and after `stop_on_failure` aborted the run. That last case is the whole point: the run that fails is the one that leaves debris, and the next run's count assertions then quietly mean something else. Every step gets its chance; teardown does not stop at the first failure, and a failed teardown is reported separately from a failed test. |
 
 `budget_seconds` fails a scenario that passed every assertion but took longer than it should. Without it a performance regression hides inside a green suite.
+
+**Evidence on failure.** Detecting a failure and diagnosing one are different problems. An assertion saying `false` is the easy half; the cause is almost never in the step that reported it — a door that does not open can be input that never fired, collision that never overlapped, logic that never ran, or a null reference three calls away, and a boolean cannot tell those apart. `artifacts: {evidence_on_failure: true}` takes a reading at the **first** failed step, before teardown, while the world is still in the state that failed:
+
+| Capture | The question it answers |
+|---|---|
+| `viewport_screenshot` | what the frame looked like |
+| `observe` | where the player was, what was around it, what it was overlapping |
+| `drain_events` | which watched events actually fired |
+| `output_log` | what the engine complained about |
+
+Every list is capped, because this is read in an agent's context window. Gathering evidence never changes the verdict, and a capture that fails is recorded rather than scored. There is deliberately no `likely_cause` field: the bundle is facts, and inferring from them is the reader's job.
 
 ## Record & replay
 

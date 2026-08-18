@@ -26,7 +26,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.29.0 — 106 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.30.0 — 107 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. An audit this month found five authoring calls that reported success while doing the wrong thing, all of them already shipped. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -91,7 +91,7 @@ Worth reading before you point an agent at real work.
 
 ## The toolset
 
-106 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
+107 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|
@@ -140,7 +140,7 @@ AI agent (MCP client) ──┤   (native MCP — no Node needed)   ├── Pl
                                                                      └ per-tool editor transactions
 ```
 
-- **`Plugin/Uplink`** — a C++ editor plugin serving MCP natively over a loopback HTTP endpoint. One codebase compiles against **UE 5.7 and 5.8**; all version divergence lives in [`UplinkCompat.h`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkCompat.h).
+- **`Plugin/Uplink`** — a C++ editor plugin serving MCP natively over a loopback HTTP endpoint. One codebase compiles against **UE 5.7 and 5.8**; all version divergence lives in [`UplinkCompat.h`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkCompat.h). Two modules: **`UplinkEditor`** is the core — transport, registry, tasks, reflection, worlds, assets, Blueprints, play — and **`UplinkContentTools`** carries the tools with heavy dependencies (Niagara, PCG, materials, animation, landscape, sequencer, AI). The second one registers through `IUplinkToolProvider` exactly like a third-party plugin would, which is both how the core keeps those dependencies out of its own build and how that extension point stays honest: it has a real consumer rather than a worked example.
 - **`bridge/`** — an optional Node stdio MCP server for clients that cannot speak HTTP. It stays alive when the editor is closed, so `status` answers "not connected" instead of the MCP server dying.
 
 Every tool declares whether it only reads. Anything that writes runs in its own editor transaction unless it opted out, which is what makes its edits undoable by hand afterwards, and its parameters are checked against its published schema before it runs.
