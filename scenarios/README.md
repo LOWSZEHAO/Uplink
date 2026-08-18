@@ -28,13 +28,14 @@ step if you want one.
 | `04-refuses-bad-input` | The failure behaviour: a mistyped parameter, an unresolvable asset path, and an unknown tool name are all refused, not quietly ignored. |
 | `05-playtest` | The headline claim: start the game, move the player, query the world, capture the view, shut down — one request. |
 | `06-asset-creation` | The assets `bp_create` cannot make: a Widget Blueprint whose generated class resolves and takes a root widget, and a Material Instance parented through its factory. Names the factory it expects. |
+| `07-graph-flow-control` | A gameplay graph with decisions in it: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch, Select and Self, built in one batched call and compiled clean. |
 
 Everything here runs against any project. `05-playtest` needs a default map with
 a playable pawn, which every template has.
 
 ## Reading the results
 
-Five of the six pass in the ordinary way: every step succeeds.
+Six of the seven pass in the ordinary way: every step succeeds.
 
 **`04-refuses-bad-input` is inverted.** Every step in it is *meant* to fail —
 that is the assertion. It runs with `stop_on_failure: false`, and the runner

@@ -1,0 +1,204 @@
+{
+  "_name": "Graph flow control",
+  "_purpose": "The node kinds a real gameplay graph is made of, authored in one batched bp_modify call: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch on Int, Select and Self - exec-wired off BeginPlay, arranged, and compiled clean. If this passes, an agent can author graphs that make decisions, not just call functions.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_FlowScenario"
+        }
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_FlowScenario",
+        "parent_class": "/Script/Engine.Actor"
+      }
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_FlowScenario.BP_FlowScenario",
+        "ops": [
+          {
+            "op": "add_variable",
+            "name": "Score",
+            "type": "int"
+          },
+          {
+            "op": "add_node",
+            "kind": "event",
+            "name": "ReceiveBeginPlay",
+            "ref": "begin"
+          },
+          {
+            "op": "add_node",
+            "kind": "branch",
+            "ref": "if"
+          },
+          {
+            "op": "add_node",
+            "kind": "call_function",
+            "class": "/Script/Engine.KismetMathLibrary",
+            "function": "Greater_IntInt",
+            "ref": "gt"
+          },
+          {
+            "op": "add_node",
+            "kind": "variable_get",
+            "name": "Score",
+            "ref": "score"
+          },
+          {
+            "op": "add_node",
+            "kind": "call_function",
+            "class": "/Script/Engine.GameplayStatics",
+            "function": "GetPlayerController",
+            "ref": "getPC"
+          },
+          {
+            "op": "add_node",
+            "kind": "cast",
+            "class": "/Script/Engine.PlayerController",
+            "ref": "cast"
+          },
+          {
+            "op": "add_node",
+            "kind": "sequence",
+            "ref": "seq"
+          },
+          {
+            "op": "add_node",
+            "kind": "macro",
+            "name": "ForLoop",
+            "ref": "loop"
+          },
+          {
+            "op": "add_node",
+            "kind": "make_struct",
+            "struct": "/Script/CoreUObject.Vector",
+            "ref": "vec"
+          },
+          {
+            "op": "add_node",
+            "kind": "break_struct",
+            "struct": "/Script/CoreUObject.Vector",
+            "ref": "brk"
+          },
+          {
+            "op": "add_node",
+            "kind": "switch_int",
+            "ref": "swi"
+          },
+          {
+            "op": "add_node",
+            "kind": "select",
+            "ref": "sel"
+          },
+          {
+            "op": "add_node",
+            "kind": "self",
+            "ref": "me"
+          },
+          {
+            "op": "connect",
+            "from_node": "@score",
+            "from_pin": "Score",
+            "to_node": "@gt",
+            "to_pin": "A"
+          },
+          {
+            "op": "set_pin_default",
+            "node": "@gt",
+            "pin": "B",
+            "value": "10"
+          },
+          {
+            "op": "connect",
+            "from_node": "@gt",
+            "from_pin": "ReturnValue",
+            "to_node": "@if",
+            "to_pin": "Condition"
+          },
+          {
+            "op": "connect",
+            "from_node": "@begin",
+            "from_pin": "then",
+            "to_node": "@if",
+            "to_pin": "execute"
+          },
+          {
+            "op": "connect",
+            "from_node": "@if",
+            "from_pin": "Then",
+            "to_node": "@seq",
+            "to_pin": "execute"
+          },
+          {
+            "op": "connect",
+            "from_node": "@seq",
+            "from_pin": "then_0",
+            "to_node": "@loop",
+            "to_pin": "execute"
+          },
+          {
+            "op": "connect",
+            "from_node": "@getPC",
+            "from_pin": "ReturnValue",
+            "to_node": "@cast",
+            "to_pin": "Object"
+          },
+          {
+            "op": "connect",
+            "from_node": "@if",
+            "from_pin": "Else",
+            "to_node": "@cast",
+            "to_pin": "execute"
+          },
+          {
+            "op": "connect",
+            "from_node": "@vec",
+            "from_pin": "Vector",
+            "to_node": "@brk",
+            "to_pin": "Vector"
+          },
+          {
+            "op": "set_pin_default",
+            "node": "@vec",
+            "pin": "X",
+            "value": "1.5"
+          },
+          {
+            "op": "arrange"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "tool": "bp_query",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_FlowScenario.BP_FlowScenario"
+      },
+      "expect": {
+        "status": "up_to_date"
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_FlowScenario"
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 	"Version": 3,
 	"VersionName": "0.26.0",
 	"FriendlyName": "Uplink",
-	"Description": "Direct data link between an AI agent (MCP) and the Unreal Editor — editor control plus Play-In-Editor gameplay testing.",
+	"Description": "Direct data link between an AI agent (MCP) and the Unreal Editor — assets, Blueprints, materials and every reflected UFUNCTION, with undoable, verifiable edits.",
 	"Category": "Editor",
 	"CreatedBy": "Low Sze Hao",
 	"CreatedByURL": "https://github.com/LOWSZEHAO",

@@ -18,12 +18,25 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/StaticMesh.h"
 #include "JsonObjectConverter.h"
+#include "K2Node_BreakStruct.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
+#include "K2Node_ExecutionSequence.h"
 #include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
+#include "K2Node_IfThenElse.h"
 #include "K2Node_Knot.h"
+#include "K2Node_MacroInstance.h"
+#include "K2Node_MakeArray.h"
+#include "K2Node_MakeStruct.h"
+#include "K2Node_Select.h"
+#include "K2Node_Self.h"
+#include "K2Node_SwitchEnum.h"
+#include "K2Node_SwitchInteger.h"
+#include "K2Node_SwitchString.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -1156,9 +1169,150 @@ namespace
 					NewNode = Node;
 				}
 			}
+			// --- flow control -------------------------------------------------
+			else if (Kind == TEXT("branch"))
+			{
+				NewNode = NewObject<UK2Node_IfThenElse>(Graph);
+			}
+			else if (Kind == TEXT("sequence"))
+			{
+				NewNode = NewObject<UK2Node_ExecutionSequence>(Graph);
+			}
+			else if (Kind == TEXT("cast"))
+			{
+				UClass* TargetType = StaticLoadClass(UObject::StaticClass(), nullptr, *GetString(OpParams, TEXT("class")));
+				if (!TargetType)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("cast needs 'class' to name the type to cast TO, e.g. /Script/Engine.PlayerController or /Game/BP_Door.BP_Door_C (got '%s')"),
+						*GetString(OpParams, TEXT("class"))));
+				}
+				UK2Node_DynamicCast* Node = NewObject<UK2Node_DynamicCast>(Graph);
+				Node->TargetType = TargetType;
+				bool bPure = false;
+				OpParams->TryGetBoolField(FStringView(TEXT("pure")), bPure);
+				Node->SetPurity(bPure);
+				NewNode = Node;
+			}
+			else if (Kind == TEXT("switch_enum"))
+			{
+				UEnum* Enum = LoadObject<UEnum>(nullptr, *GetString(OpParams, TEXT("enum")));
+				if (!Enum)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("switch_enum needs 'enum', e.g. /Script/Engine.ECollisionChannel or /Game/E_State.E_State (got '%s')"),
+						*GetString(OpParams, TEXT("enum"))));
+				}
+				UK2Node_SwitchEnum* Node = NewObject<UK2Node_SwitchEnum>(Graph);
+				Node->SetEnum(Enum);
+				NewNode = Node;
+			}
+			else if (Kind == TEXT("switch_int"))
+			{
+				NewNode = NewObject<UK2Node_SwitchInteger>(Graph);
+			}
+			else if (Kind == TEXT("switch_string"))
+			{
+				NewNode = NewObject<UK2Node_SwitchString>(Graph);
+			}
+			else if (Kind == TEXT("macro"))
+			{
+				// Loops and the rest of the standard library are macro instances,
+				// not node classes - ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate,
+				// FlipFlop and friends all live in one engine Blueprint.
+				const FString Library = GetString(OpParams, TEXT("library"),
+					TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+				UBlueprint* MacroLibrary = LoadObject<UBlueprint>(nullptr, *Library);
+				if (!MacroLibrary)
+				{
+					return FUplinkToolResult::Error(FString::Printf(TEXT("macro library not found: %s"), *Library));
+				}
+				const FString MacroName = GetString(OpParams, TEXT("name"));
+				UEdGraph* MacroGraph = nullptr;
+				TArray<FString> Available;
+				for (UEdGraph* Candidate : MacroLibrary->MacroGraphs)
+				{
+					if (!Candidate)
+					{
+						continue;
+					}
+					Available.Add(Candidate->GetName());
+					if (Candidate->GetName().Equals(MacroName, ESearchCase::IgnoreCase))
+					{
+						MacroGraph = Candidate;
+					}
+				}
+				if (!MacroGraph)
+				{
+					Available.Sort();
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("macro '%s' not found in %s. Available: %s"),
+						*MacroName, *Library, *FString::Join(Available, TEXT(", "))));
+				}
+				UK2Node_MacroInstance* Node = NewObject<UK2Node_MacroInstance>(Graph);
+				Node->SetMacroGraph(MacroGraph);
+				NewNode = Node;
+			}
+			// --- data ---------------------------------------------------------
+			else if (Kind == TEXT("make_struct") || Kind == TEXT("break_struct"))
+			{
+				UScriptStruct* StructType = LoadObject<UScriptStruct>(nullptr, *GetString(OpParams, TEXT("struct")));
+				if (!StructType)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("%s needs 'struct', e.g. /Script/CoreUObject.Vector or /Game/S_Row.S_Row (got '%s')"),
+						*Kind, *GetString(OpParams, TEXT("struct"))));
+				}
+				if (Kind == TEXT("make_struct"))
+				{
+					UK2Node_MakeStruct* Node = NewObject<UK2Node_MakeStruct>(Graph);
+					Node->StructType = StructType;
+					NewNode = Node;
+				}
+				else
+				{
+					UK2Node_BreakStruct* Node = NewObject<UK2Node_BreakStruct>(Graph);
+					Node->StructType = StructType;
+					NewNode = Node;
+				}
+			}
+			else if (Kind == TEXT("make_array"))
+			{
+				NewNode = NewObject<UK2Node_MakeArray>(Graph);
+			}
+			else if (Kind == TEXT("select"))
+			{
+				NewNode = NewObject<UK2Node_Select>(Graph);
+			}
+			else if (Kind == TEXT("self"))
+			{
+				NewNode = NewObject<UK2Node_Self>(Graph);
+			}
+			else if (Kind == TEXT("function_result"))
+			{
+				// The return node of a function graph. Only meaningful there, and
+				// a graph may only have one, so hand back the existing one rather
+				// than making a second that silently wins or loses.
+				for (UEdGraphNode* Existing : Graph->Nodes)
+				{
+					if (UK2Node_FunctionResult* Result = Cast<UK2Node_FunctionResult>(Existing))
+					{
+						ResultNode = Result;
+						Data->SetObjectField(TEXT("node"), NodeToJson(Result));
+						break;
+					}
+				}
+				if (!ResultNode)
+				{
+					NewNode = NewObject<UK2Node_FunctionResult>(Graph);
+				}
+			}
 			else
 			{
-				return FUplinkToolResult::Error(TEXT("kind must be call_function, custom_event, event, component_bound_event, variable_get, or variable_set"));
+				return FUplinkToolResult::Error(TEXT(
+					"unknown 'kind'. Events and calls: call_function, custom_event, event, component_bound_event. "
+					"Data: variable_get, variable_set, make_struct, break_struct, make_array, select, self. "
+					"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result."));
 			}
 
 			if (NewNode)
@@ -1426,8 +1580,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name}, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
+		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

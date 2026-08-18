@@ -2,7 +2,7 @@
 
 **A direct data link between an AI agent and a running Unreal Engine editor.**
 
-Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcontextprotocol.io) bridge. It gives an AI assistant the whole editor — assets, Blueprints, actors, materials, animation, every reflected UFUNCTION in your project — and, unusually, it can also start the game and read what happens while it runs.
+Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcontextprotocol.io) bridge. It gives an AI assistant the whole editor — assets, Blueprints, actors, materials, animation, every reflected UFUNCTION in your project — and it can verify its own edits against a running Play-In-Editor session.
 
 > The point is not how many tools it has. It is that every one of them tells you the truth: edits are undoable, a bad path is refused instead of silently written, a misspelt parameter is rejected instead of ignored, and nothing reports success for work it did not do.
 
@@ -22,7 +22,7 @@ You do not have to take any of that on trust: [`scenarios/`](scenarios) holds a 
 .\scripts\run_scenarios.ps1
 ```
 
-A whole playtest is one request:
+Verifying a change in a running game is one request:
 
 ```json
 { "steps": [
@@ -45,7 +45,7 @@ An agent editing your project is only useful if you can trust what it did. Most 
 
 The second half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or your project, so systems without a dedicated tool are still reachable, and `get_property` / `set_property` walk dotted paths through structs and object references. That is why 104 tools cover as much as far larger tool counts elsewhere.
 
-It can also start the game and read what happens while it runs — PIE control, input injection, event watching, assertions. That is genuinely useful for checking your own work. It is not a promise that it will play a game to completion.
+PIE control, input injection, event watching and assertions exist for one purpose: letting the agent check its own work in a running game before telling you it is done.
 
 ## Status
 
@@ -116,11 +116,11 @@ Worth understanding before you point an agent at real work.
 | **Understand an unknown project** | `project_entry` (default map, game mode, and every level — the difference between the map the editor opens and the map a player starts from) · `ui_live` (what is on screen right now, with text and screen rects) · `input_map` (mapping contexts, actions and their keys) · `actor_components` (a live actor's components under their real names) · `streaming_status` (which sublevels are loaded) · `frame_strip` (N frames as one contact sheet — what changed) · `dialog_state` (is a modal blocking every tool) |
 | **Play the game** | PIE lifecycle (`pie_start` waits for BeginPlay, plus stop/status/pause/resume/step) · player control (`input_action`, `input_key`, `click_widget`, `possess`, `player_teleport`, `player_info`, `navigate_to`) |
 | **Observe & assert** | `watch_events` / `drain_events` / `unwatch` (any BlueprintAssignable delegate, payloads decoded) · `wait_until` (timeout is a result, not an error) · `get_world_state` · `viewport_annotate` · `perf_stats` · `profile_capture` |
-| **Scripted playtests** | `run_scenario` — ordered steps, per-step expectations, `$steps[N].field` templating, structured pass/fail |
+| **Scripted checks** | `run_scenario` — ordered steps, per-step expectations, `$steps[N].field` templating, structured pass/fail |
 | **Record & replay** | `input_record` (passive tap on a real play session) · `input_replay` (a regression test from a human run) |
 | **Ask the world** | `trace` (line/sphere/box/capsule, by channel or collision profile) · `ai_query` (behaviour tree **active node** and blackboard) · `material_query` (expressions, connections, **compile errors**) |
 | **Blueprint repair** | `bp_find_broken` (every Blueprint that will not compile, grouped by the C++ change that broke it) · `bp_repair` (bulk *Refresh Node* + recompile, reporting what healed and what needs a decision) |
-| **Blueprints** | `bp_create` · `bp_query` · `bp_add_component` · `bp_modify` (variables, function graphs, nodes, wiring, node properties — a whole event graph in one batched call) · `bp_compile` |
+| **Blueprints** | `bp_create` · `bp_query` · `bp_add_component` · `bp_modify` (variables, function graphs, nodes, wiring, node properties — a whole event graph in one batched call, including Branch, Sequence, Cast, Switch, Select, Make/Break Struct and the standard macros: ForEachLoop, WhileLoop, Gate, FlipFlop…) · `bp_compile` |
 | **Content** | widgets · animation & cinematics · motion matching (GASP) · Niagara · PCG · landscape, lighting and foliage |
 | **Editor & world** | actors (`level_actors`, `spawn_actor`, `spawn_batch` up to 1000, `delete_actors`, `move_actor`) · screenshots and camera · `edit_history` (undo stack) · `ui_tree` / `capture_widget` (any editor panel, even occluded) · `live_compile` |
 | **Reflection** | `get_property` / `set_property` (dotted paths through structs *and* object references) · **`call_function`** (any UFUNCTION) · `class_info` · `find_functions` |

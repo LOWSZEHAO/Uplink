@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 104 tools. Ordered by what you are trying to do: **play and test the game**, then **ask the world questions**, then **author content**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 104 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -127,8 +127,8 @@ own Blueprint events.
 |---|---|
 | `add_variable` / `remove_variable` | Member variables by friendly type string: `bool,int,int64,float,string,name,text,byte,vector,rotator,transform,object:<class>,class:<class>,struct:<path>,array:<inner>`. Removing a name the blueprint does not have is refused, with the real names listed. |
 | `add_function` / `remove_function` | Create or delete a real **function graph** — not just nodes in the event graph. `{name, thread_safe?, pure?, category?, inputs:[{name, type, by_ref?, const?}]}`. `thread_safe` is required for anim-graph node functions, which cannot run on the game thread; `by_ref`+`const` are required to match a prototype-validated signature such as an anim node binding, which declares its parameters const-reference. |
-| `add_node` | `call_function` `{class (default self), function}` · `custom_event` `{name}` · `event` `{name}` (e.g. `ReceiveBeginPlay`; reuses a matching ghost/existing node rather than stacking a duplicate) · `component_bound_event` `{component, event}` — bind a component's or widget's delegate as a graph event (button `OnClicked`, `NiagaraComponent` `OnSystemFinished`) · `variable_get` / `variable_set` `{name}`. Plus `graph?, x?, y?, ref?`. |
-| `connect` / `break_links` / `delete_node` | Wiring, with schema rejection reasons on failure. Exec pins are `execute` / `then`. |
+| `add_node` | **Events and calls:** `call_function` `{class (default self), function}` · `custom_event` `{name}` · `event` `{name}` (e.g. `ReceiveBeginPlay`; reuses a matching ghost/existing node rather than stacking a duplicate) · `component_bound_event` `{component, event}` — bind a component's or widget's delegate as a graph event (button `OnClicked`, `NiagaraComponent` `OnSystemFinished`). **Data:** `variable_get` / `variable_set` `{name}` · `make_struct` / `break_struct` `{struct}` · `make_array` · `select` · `self`. **Flow control:** `branch` · `sequence` · `cast` `{class, pure?}` · `switch_enum` `{enum}` · `switch_int` · `switch_string` · `macro` `{name, library?}` — the standard macro library by default, so `ForEachLoop`, `ForLoop`, `WhileLoop`, `DoOnce`, `Gate`, `FlipFlop` and friends are all one op, and a wrong name lists what the library holds · `function_result` (returns the graph's existing return node rather than stacking a second). Plus `graph?, x?, y?, ref?`. |
+| `connect` / `break_links` / `delete_node` | Wiring, with schema rejection reasons on failure. Exec pins are `execute` / `then`; a `sequence` node's outputs are `then_0`, `then_1`, …; a struct node's aggregate pin is named after the struct (`Vector`). A failed connect lists the pins that do exist. |
 | `set_pin_default` | Literal pin values, object-aware. Verified after writing: a value the pin's type will not take is refused rather than silently dropped. |
 | `set_node_property` | Set any property on a **graph node** addressed by guid, with dotted paths into structs — this is how an anim graph node's function binding is set. `{graph, node, property, value, reconstruct?}` |
 | `arrange` | Lay the graph out: dependency columns, straight exec lanes, reroute knots at turns. |
