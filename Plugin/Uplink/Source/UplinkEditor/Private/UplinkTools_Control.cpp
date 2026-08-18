@@ -230,6 +230,11 @@ namespace
 			}
 
 			ActionPtr = Action;
+			// Counted at the moment of injection, not at the end. A hold that
+			// runs across a possession change would otherwise report the new
+			// pawn's bindings and say nothing about the one that was actually
+			// being driven.
+			BoundAtStart = CountActionBindings(Player.PC, Action);
 			Player.Input->StartContinuousInputInjectionForAction(Action, Value, {}, {});
 			EndAt = FPlatformTime::Seconds() + FMath::Clamp(GetNumber(Ctx.Params, TEXT("duration"), 1.0), 0.05, 60.0);
 			return EUplinkToolStep::Pending;
@@ -254,11 +259,16 @@ namespace
 			{
 				Player.Input->StopContinuousInputInjectionForAction(ActionPtr.Get());
 			}
-			Out = FUplinkToolResult::Ok(nullptr, TEXT("hold finished and released"));
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetNumberField(TEXT("boundHandlers"), BoundAtStart);
+			Out = FUplinkToolResult::Ok(Data, BoundAtStart == 0
+				? TEXT("hold finished and released - but nothing was bound to this action, so it had no effect")
+				: TEXT("hold finished and released"));
 			return EUplinkToolStep::Done;
 		}
 
 	private:
+		int32 BoundAtStart = 0;
 		TWeakObjectPtr<const UInputAction> ActionPtr;
 		double EndAt = 0.0;
 	};
@@ -488,8 +498,14 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 
 					if (Mode == TEXT("release"))
 					{
+						// Reported here too, so every mode answers the same
+						// question. A release is the one call where a zero is
+						// unremarkable rather than a warning - the hold that
+						// preceded it is what should have complained.
+						TSharedRef<FJsonObject> ReleaseData = MakeShared<FJsonObject>();
+						ReleaseData->SetNumberField(TEXT("boundHandlers"), CountActionBindings(Player.PC, Action));
 						Player.Input->StopContinuousInputInjectionForAction(Action);
-						Out = FUplinkToolResult::Ok(nullptr, TEXT("released"));
+						Out = FUplinkToolResult::Ok(ReleaseData, TEXT("released"));
 						return EUplinkToolStep::Done;
 					}
 
@@ -522,7 +538,8 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 					else if (Mode == TEXT("update"))
 					{
 						Player.Input->UpdateValueOfContinuousInputInjectionForAction(Action, Value);
-						Out = FUplinkToolResult::Ok(nullptr, TEXT("held value updated"));
+						Out = FUplinkToolResult::Ok(InjectData,
+							FString::Printf(TEXT("held value updated%s"), *Unbound));
 					}
 					else
 					{

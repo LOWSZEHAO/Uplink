@@ -60,7 +60,7 @@ own Blueprint events.
 
 | Tool | What it does |
 |---|---|
-| `input_action` | Enhanced Input injection at the action level — works with zero physical devices. `{action: <UInputAction path>, value: bool\|number\|{x,y,z}, mode: pulse\|hold\|update\|release, duration?}`. `hold`+`duration` auto-releases. The reply carries `boundHandlers`: injection succeeds identically whether or not the game listens, so a zero there explains a "nothing happened". |
+| `input_action` | Enhanced Input injection at the action level — works with zero physical devices. `{action: <UInputAction path>, value: bool\|number\|{x,y,z}, mode: pulse\|hold\|update\|release, duration?}`. `hold`+`duration` auto-releases. Every mode replies with `boundHandlers`: injection succeeds identically whether or not the game listens, so a zero there explains a "nothing happened". A timed `hold` reports the count taken when the hold *started*, since a hold that outlives a possession change would otherwise describe the wrong pawn. |
 | `input_key` | Raw key in the running game. `{key, event: tap\|pressed\|released\|axis, route?: game\|ui\|both, amount?, duration?}`. **`route` decides who receives it**: `game` (default) goes to the player controller, which is what gameplay input binds to; `ui` sends a real Slate key event to the focused widget, which is the **only** thing a UMG menu overriding `OnKeyDown` will ever see — if a title screen ignores every key you send, this is why; `both` does each, like a real keypress. The reply reports whether anything handled it. |
 | `possess` | Switch the player controller to another pawn. `{pawn}` — failure names the pawns that are actually in the running game. |
 | `player_teleport` | Physics-safe pawn teleport + optional facing. `{location, rotation?}` |
