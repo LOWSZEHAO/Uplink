@@ -416,7 +416,34 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 				}
 			}
 
-			Object->ProcessEvent(Function, ParamFrame.GetStructMemory());
+			// An actor sitting in the editor world will not run a function
+			// without this, and it will not say so either.
+			//
+			// AActor::GetFunctionCallspace answers Absorbed for an actor whose
+			// world is not a game world, and ProcessEvent's reaction to a
+			// callspace without the Local bit is a bare `return`. Nothing is
+			// logged and no error surfaces, so the call came back "successful"
+			// carrying the parameter frame exactly as it went in - which reads
+			// as a real return value. K2_GetActorLocation on an actor at
+			// z=12345 answered (0,0,0): not the actor's location, just the
+			// zeroed frame handed back untouched.
+			//
+			// GAllowActorScriptExecutionInEditor is the engine's own switch for
+			// this, and its comment says what it is for: "only true when we know
+			// it's being called on an editor-placed object". The editor sets it
+			// the same way to run Blueprint functions on placed actors.
+			//
+			// Only for non-game worlds. Inside PIE the callspace logic is doing
+			// real work - deciding what is absorbed on a client and what goes
+			// over the wire - and forcing Local there would quietly change what
+			// a networked test is actually testing.
+			{
+				const UWorld* ObjectWorld = Object->GetWorld();
+				const bool bGameWorld = ObjectWorld && ObjectWorld->IsGameWorld();
+				TGuardValue<bool> EditorExecutionGuard(
+					GAllowActorScriptExecutionInEditor, bGameWorld ? GAllowActorScriptExecutionInEditor : true);
+				Object->ProcessEvent(Function, ParamFrame.GetStructMemory());
+			}
 
 			// Export the same frame: out-params + the literal 'ReturnValue'.
 			// CheckFlags must be 0, not CPF_Parm: the frame only ever contains
