@@ -54,23 +54,6 @@ namespace
 		Respond(OnComplete, Envelope);
 	}
 
-	bool IsOriginAllowed(const FHttpServerRequest& Request)
-	{
-		const TArray<FString>* Origins = Request.Headers.Find(TEXT("Origin"));
-		if (!Origins || Origins->Num() == 0)
-		{
-			return true; // non-browser clients typically send no Origin
-		}
-		for (const FString& Origin : *Origins)
-		{
-			if (!Origin.StartsWith(TEXT("http://localhost")) && !Origin.StartsWith(TEXT("http://127.0.0.1")))
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
 	TSharedRef<FJsonObject> TextContent(const FString& Text)
 	{
 		TSharedRef<FJsonObject> Block = MakeShared<FJsonObject>();
@@ -78,6 +61,66 @@ namespace
 		Block->SetStringField(TEXT("text"), Text);
 		return Block;
 	}
+}
+
+UplinkDispatch::FDispatchOutcome UplinkDispatch::Begin(
+	FUplinkToolRegistry& Registry,
+	FUplinkTaskManager& Tasks,
+	const FString& ToolName,
+	const TSharedPtr<FJsonObject>& Params)
+{
+	FDispatchOutcome Outcome;
+
+	const FUplinkToolDef* Def = Registry.Find(ToolName);
+	if (!Def)
+	{
+		Outcome.RefusalMessage = FString::Printf(TEXT("unknown tool '%s'"), *ToolName);
+		return Outcome;
+	}
+
+	FUplinkToolContext Context;
+	Context.Params = Params;
+	if (!Context.Params.IsValid())
+	{
+		// A tool reads its parameters without checking, so hand it an empty
+		// object rather than nothing when a transport had none to give.
+		Context.Params = MakeShared<FJsonObject>();
+	}
+	Context.Params->TryGetStringField(FStringView(TEXT("world")), Context.WorldSpec);
+
+	if (FString ParamError; !FUplinkToolRegistry::ValidateParams(Def->Info, Context.Params, ParamError))
+	{
+		Outcome.RefusalMessage = ParamError;
+		return Outcome;
+	}
+
+	// A caller can extend a tool's deadline when a project legitimately needs
+	// longer - loading a heavy streaming level, for instance, where the tool
+	// failing on time looks like a broken tool rather than a slow map.
+	double ToolTimeout = Def->Info.TimeoutSeconds;
+	{
+		double Override = 0.0;
+		if (Context.Params->TryGetNumberField(FStringView(TEXT("timeout_s")), Override) && Override > 0.0)
+		{
+			ToolTimeout = FMath::Clamp(Override, 1.0, 3600.0);
+		}
+	}
+
+	// wait_ms bounds how long the caller waits for an answer, not how long the
+	// tool may run: past it the reply is a task_id to poll, and the work carries
+	// on. The ceiling keeps the response inside a client's own request timeout.
+	double WaitMs = 25000.0;
+	Context.Params->TryGetNumberField(FStringView(TEXT("wait_ms")), WaitMs);
+	const double RequestedWait = FMath::Clamp(WaitMs / 1000.0, 0.0, 55.0);
+
+	// Waiting past the tool's own deadline buys nothing - the task manager has
+	// ended it by then - so the shorter of the two wins.
+	Outcome.WaitSeconds = FMath::Min(RequestedWait, ToolTimeout + 1.0);
+
+	Outcome.TaskId = Tasks.Submit(
+		ToolName, Def->Factory(), MoveTemp(Context), ToolTimeout, Def->Info.bReadOnly, Def->Info.bTransactional);
+	Outcome.bAccepted = true;
+	return Outcome;
 }
 
 TSharedRef<FJsonObject> UplinkMcp::BuildTaskJson(const FUplinkTask& Task, bool bStillRunning)
@@ -114,12 +157,6 @@ bool UplinkMcp::Handle(
 	FUplinkToolRegistry& Registry,
 	FUplinkTaskManager& Tasks)
 {
-	if (!IsOriginAllowed(Request))
-	{
-		OnComplete(FHttpServerResponse::Error(EHttpServerResponseCodes::Denied, TEXT("forbidden"), TEXT("Origin not allowed")));
-		return true;
-	}
-
 	if (Request.Body.Num() > 2 * 1024 * 1024)
 	{
 		RpcError(OnComplete, nullptr, -32600, TEXT("request exceeds 2 MB"));
@@ -203,50 +240,28 @@ bool UplinkMcp::Handle(
 		FString ToolName;
 		(*Params)->TryGetStringField(FStringView(TEXT("name")), ToolName);
 
-		const FUplinkToolDef* Def = Registry.Find(ToolName);
-		if (!Def)
+		TSharedPtr<FJsonObject> Arguments;
+		const TSharedPtr<FJsonObject>* Found = nullptr;
+		if ((*Params)->TryGetObjectField(FStringView(TEXT("arguments")), Found) && Found->IsValid())
 		{
-			RpcError(OnComplete, Id, -32602, FString::Printf(TEXT("unknown tool '%s'"), *ToolName));
-			return true;
-		}
-
-		FUplinkToolContext Context;
-		const TSharedPtr<FJsonObject>* Arguments = nullptr;
-		if ((*Params)->TryGetObjectField(FStringView(TEXT("arguments")), Arguments) && Arguments->IsValid())
-		{
-			Context.Params = *Arguments;
+			Arguments = *Found;
 		}
 		else
 		{
-			Context.Params = MakeShared<FJsonObject>();
+			Arguments = MakeShared<FJsonObject>();
 		}
-		Context.Params->TryGetStringField(FStringView(TEXT("world")), Context.WorldSpec);
 
-		if (FString ParamError; !FUplinkToolRegistry::ValidateParams(Def->Info, Context.Params, ParamError))
+		const UplinkDispatch::FDispatchOutcome Outcome =
+			UplinkDispatch::Begin(Registry, Tasks, ToolName, Arguments);
+		if (!Outcome.bAccepted)
 		{
-			RpcError(OnComplete, Id, -32602, ParamError);
+			RpcError(OnComplete, Id, -32602, Outcome.RefusalMessage);
 			return true;
 		}
 
-		// A caller can extend a tool's deadline when a project legitimately needs
-		// longer - loading a heavy streaming level, for instance, where the tool
-		// failing on time looks like a broken tool rather than a slow map.
-		double ToolTimeout = Def->Info.TimeoutSeconds;
-		{
-			double Override = 0.0;
-			if (Context.Params->TryGetNumberField(FStringView(TEXT("timeout_s")), Override) && Override > 0.0)
-			{
-				ToolTimeout = FMath::Clamp(Override, 1.0, 3600.0);
-			}
-		}
-
-		const FGuid TaskId = Tasks.Submit(
-			ToolName, Def->Factory(), MoveTemp(Context), ToolTimeout, Def->Info.bReadOnly, Def->Info.bTransactional);
-
-		// Hold the HTTP response until the task finishes or ~25s pass; never
-		// blocks the game thread (the waiter fires from the task ticker).
-		const double MaxWait = FMath::Min(25.0, Def->Info.TimeoutSeconds + 1.0);
-		Tasks.Await(TaskId, MaxWait,
+		// Hold the HTTP response until the task finishes or the wait budget runs
+		// out; never blocks the game thread (the waiter fires from the task ticker).
+		Tasks.Await(Outcome.TaskId, Outcome.WaitSeconds,
 			[OnComplete, Id](const FUplinkTask& Task, bool bStillRunning)
 			{
 				TArray<TSharedPtr<FJsonValue>> Content;

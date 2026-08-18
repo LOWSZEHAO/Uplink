@@ -25,6 +25,12 @@ const UPLINK_URL = process.env.UPLINK_URL ?? "http://127.0.0.1:3777";
 const REQUEST_TIMEOUT_MS = Number(process.env.UPLINK_TIMEOUT_MS ?? 30000);
 const TOOL_CACHE_TTL_MS = Number(process.env.UPLINK_TOOL_CACHE_MS ?? 15000);
 
+// The editor refuses every request when it was launched with UPLINK_AUTH_TOKEN
+// set. The bridge is a separate process and does not inherit that automatically
+// from the editor, so it reads the same variable from its own environment: set
+// it in both places, or in neither.
+const AUTH_TOKEN = process.env.UPLINK_AUTH_TOKEN ?? "";
+
 const log = (...args) => console.error("[uplink-bridge]", ...args);
 
 async function fetchJson(path, options = {}) {
@@ -34,8 +40,19 @@ async function fetchJson(path, options = {}) {
     const res = await fetch(`${UPLINK_URL}${path}`, {
       ...options,
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}),
+        ...(options.headers ?? {}),
+      },
     });
+    if (res.status === 401) {
+      log(
+        AUTH_TOKEN
+          ? "401 from the editor: UPLINK_AUTH_TOKEN does not match the one the editor was launched with."
+          : "401 from the editor: it requires UPLINK_AUTH_TOKEN, but this bridge has none set."
+      );
+    }
     const text = await res.text();
     let json;
     try {
