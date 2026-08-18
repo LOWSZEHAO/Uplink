@@ -11,7 +11,7 @@
 param(
     [string] $Filter = "",
     [string] $Endpoint = "http://127.0.0.1:3777",
-    [int]    $TimeoutSeconds = 180
+    [int]    $TimeoutSeconds = 900
 )
 
 $ErrorActionPreference = "Stop"
