@@ -33,7 +33,7 @@ Verifying a change in a running game is one request:
 
 ## Why
 
-An agent editing your project is only useful if you can trust what it did. Most of this codebase is not new capability — it is making the capability honest: every mutating tool runs inside its own named editor transaction so you can undo it by hand, an object path that resolves to nothing is refused rather than written as null, unknown parameters come back with a suggestion instead of being ignored, and lists say when they were truncated.
+An agent editing your project is only useful if you can trust what it did. Most of this codebase is not new capability — it is making the capability honest: a tool that writes is dispatched inside its own named editor transaction so you can undo it by hand, an object path that resolves to nothing is refused rather than written as null, unknown parameters come back with a suggestion instead of being ignored, and lists say when they were truncated.
 
 The second half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or your project, so systems without a dedicated tool are still reachable, and `get_property` / `set_property` walk dotted paths through structs and object references. That is why 104 tools cover as much as far larger tool counts elsewhere.
 
@@ -41,7 +41,7 @@ PIE control, input injection, event watching and assertions exist for one purpos
 
 ## Status
 
-**v0.26.0 — 104 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every capability is verified against a live editor and a running game before it ships. Pre-1.0: the API may still change, and what it most needs is mileage on more real projects.
+**v0.26.0 — 104 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every tool has been exercised against a live editor, and the scenario suite runs clean on the third-person template for both engines. That is not the same as being sure: an audit this month turned up five authoring calls that reported success while doing the wrong thing, all of them shipped. Pre-1.0 — the API may still change, and what it most needs is mileage on projects that are not mine.
 
 Recent work has been trustworthiness (see *Why*) and the tools for reading an unfamiliar project — that is where an agent burns the most time, guessing at things it could have looked up.
 
