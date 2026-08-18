@@ -6,17 +6,9 @@ Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcon
 
 > The point is not how many tools it has. It is that every one of them tells you the truth: edits are undoable, a bad path is refused instead of silently written, a misspelt parameter is rejected instead of ignored, and nothing reports success for work it did not do.
 
-## What it has actually done
+## Prove it against your own editor
 
-All of the following happened over plain MCP calls, with no human at the keyboard:
-
-- **Authored a working Blueprint from nothing** — created an Actor Blueprint, added a variable, placed and wired `ReceiveBeginPlay` → `PrintString`, compiled with zero errors, then spawned it in a running game: the variable read back correctly and its print appeared in the log. Whole event graphs build in one batched call, and `arrange` lays them out the way a person would.
-- **Authored a landscape material node-by-node** — decoded public-domain elevation tiles into a 16 km landscape with the Grand Canyon's true 1.8 km relief, imported CC0 PBR sets, built a slope-blended material through `call_function`, lit it with `lighting_setup`, and checked the result from a rim the elevation data said was there.
-- **Bound a function to an anim graph node** — created a thread-safe function graph with const-reference parameters to match a prototype-validated signature, then set the node's member reference so the compiler accepted it. Neither step is reachable from Blueprint.
-- **Upgraded a real UE 5.6 game to 5.8** — found the moved header, the dead include-order macro, the incompatible render plugin, and a latent `%%i` format-string bug the new compile-time validation caught.
-- **Read live state out of a running game** — started play, watched all 16 delegates on an actor, resolved an asynchronous `wait_until` in 0.33 s, and moved a real character 690 units through its own Enhanced Input mappings.
-
-You do not have to take any of that on trust: [`scenarios/`](scenarios) holds a suite of executable `run_scenario` files, and one command runs them against your own editor.
+Capability claims are cheap, so this repo ships its proof as something you run rather than read: [`scenarios/`](scenarios) is a suite of executable `run_scenario` files — authoring, asset creation, graph flow control, failure behaviour, a full start-play-verify-shutdown pass — and one command executes them against your own project.
 
 ```powershell
 .\scripts\run_scenarios.ps1
