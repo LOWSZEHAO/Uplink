@@ -11,15 +11,16 @@
 [CmdletBinding()]
 param(
     [string] $Filter = "",
+    [string] $Directory = "scenarios",
     [string] $Endpoint = "http://127.0.0.1:3777",
     [int]    $TimeoutSeconds = 900
 )
 
 $ErrorActionPreference = "Stop"
-$scenarioDir = Join-Path (Split-Path -Parent $PSScriptRoot) "scenarios"
+$scenarioDir = Join-Path (Split-Path -Parent $PSScriptRoot) $Directory
 
 if (-not (Test-Path $scenarioDir)) {
-    Write-Host "no scenarios directory at $scenarioDir" -ForegroundColor Red
+    Write-Host "no scenario directory at $scenarioDir" -ForegroundColor Red
     exit 1
 }
 
@@ -44,8 +45,13 @@ foreach ($file in $files) {
     $doc = Get-Content $file.FullName -Raw | ConvertFrom-Json
 
     # Keys beginning with _ are notes for the reader, not part of the request.
+    # Everything else a scenario declares has to be forwarded: a phase this
+    # script quietly drops does not fail, it just never runs, and a teardown
+    # that never runs leaves the next scenario a dirty world to start in.
     $request = @{ steps = $doc.steps }
-    if ($null -ne $doc.stop_on_failure) { $request.stop_on_failure = $doc.stop_on_failure }
+    foreach ($key in @("setup", "teardown", "artifacts", "budget_seconds", "stop_on_failure")) {
+        if ($null -ne $doc.$key) { $request.$key = $doc.$key }
+    }
     $body = $request | ConvertTo-Json -Depth 20
 
     $name = if ($doc._name) { $doc._name } else { $file.BaseName }
@@ -61,16 +67,25 @@ foreach ($file in $files) {
         $failed++; $failedNames += $name; continue
     }
 
-    foreach ($step in $result.data.steps) {
-        $ok = [bool] $step.success
-        if ($ok) { $mark = "PASS"; $colour = "Green" } else { $mark = "FAIL"; $colour = "Red" }
-        $secs = ""
-        if ($null -ne $step.seconds) { $secs = " ({0:N2}s)" -f $step.seconds }
-        Write-Host ("  [{0}] {1}{2}" -f $mark, $step.tool, $secs) -ForegroundColor $colour
-        if (-not $ok -and $step.message) {
-            Write-Host ("         {0}" -f $step.message) -ForegroundColor DarkYellow
+    function Show-Phase($label, $rows) {
+        if (-not $rows) { return }
+        if ($label) { Write-Host "  -- $label --" -ForegroundColor DarkGray }
+        foreach ($step in $rows) {
+            $ok = [bool] $step.success
+            if ($ok) { $mark = "PASS"; $colour = "Green" } else { $mark = "FAIL"; $colour = "Red" }
+            $secs = ""
+            if ($null -ne $step.seconds) { $secs = " ({0:N2}s)" -f $step.seconds }
+            Write-Host ("  [{0}] {1}{2}" -f $mark, $step.tool, $secs) -ForegroundColor $colour
+            $why = if ($step.fail_reason) { $step.fail_reason } else { $step.message }
+            if (-not $ok -and $why) {
+                Write-Host ("         {0}" -f $why) -ForegroundColor DarkYellow
+            }
         }
     }
+
+    Show-Phase "setup" $result.data.setup
+    Show-Phase $null   $result.data.steps
+    Show-Phase "teardown" $result.data.teardown
 
     # 04 inverts the usual reading: every step there is meant to be refused.
     $inverted    = $file.Name -like "*refuses*"

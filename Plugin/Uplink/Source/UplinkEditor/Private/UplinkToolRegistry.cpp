@@ -3,6 +3,7 @@
 #include "UplinkToolRegistry.h"
 #include "UplinkCompat.h"
 #include "UplinkEditorModule.h"
+#include "UplinkToolProvider.h"
 #include "Editor.h"
 #include "Serialization/JsonSerializer.h"
 
@@ -68,6 +69,18 @@ namespace
 	private:
 		TFunction<FUplinkToolResult(const FUplinkToolContext&)> Fn;
 	};
+
+	/** "Uplink 0.26.0", "MyPlugin", "an unknown provider" - for a log line. */
+	FString UplinkProvenanceToText(const FUplinkToolProvenance& Origin)
+	{
+		if (Origin.Name.IsEmpty())
+		{
+			return TEXT("an unknown provider");
+		}
+		return Origin.Version.IsEmpty()
+			? Origin.Name
+			: FString::Printf(TEXT("%s %s"), *Origin.Name, *Origin.Version);
+	}
 }
 
 void FUplinkToolRegistry::Register(FUplinkToolInfo Info, TFunction<TSharedRef<IUplinkInvocation>()> Factory)
@@ -94,8 +107,28 @@ void FUplinkToolRegistry::Register(FUplinkToolInfo Info, TFunction<TSharedRef<IU
 
 	if (Tools.Contains(Name))
 	{
-		UE_LOG(LogUplink, Warning, TEXT("Tool '%s' registered twice; replacing"), *Name);
+		const FUplinkToolProvenance* Previous = ToolProvenance.Find(Name);
+
+		FUplinkToolCollision Collision;
+		Collision.ToolName = Name;
+		Collision.Replaced = Previous ? *Previous : FUplinkToolProvenance();
+		Collision.Winner = ActiveProvider;
+		ToolCollisions.Add(Collision);
+
+		// The later registration still wins, because reversing that would
+		// change which tool answers a call in every install that already has
+		// one. What is new is that the clash is attributable: both sides are
+		// named here, and the pair is kept in Collisions() for a report,
+		// because otherwise the choice is made by plugin load order and stated
+		// nowhere at all.
+		UE_LOG(LogUplink, Warning,
+			TEXT("Tool '%s' registered twice: %s replaces %s. The later registration wins, so which one ")
+			TEXT("answers depends on plugin load order - rename one of them."),
+			*Name,
+			*UplinkProvenanceToText(Collision.Winner),
+			*UplinkProvenanceToText(Collision.Replaced));
 	}
+	ToolProvenance.Add(Name, ActiveProvider);
 	Tools.Add(Name, FUplinkToolDef{ MoveTemp(Info), MoveTemp(Factory) });
 }
 
@@ -123,9 +156,35 @@ void FUplinkToolRegistry::RegisterQuick(
 	});
 }
 
+void FUplinkToolRegistry::RegisterFrom(IUplinkToolProvider& Provider)
+{
+	FUplinkToolProvenance Identity;
+	Identity.Name = Provider.GetUplinkProviderName();
+	Identity.Version = Provider.GetUplinkProviderVersion();
+	if (Identity.Name.IsEmpty())
+	{
+		// A provider that will not name itself is still not Uplink, and saying
+		// that much beats an empty string a reader takes for a built-in.
+		Identity.Name = TEXT("unknown provider");
+	}
+
+	// Restored rather than cleared: a provider that reaches the registry from
+	// inside another provider's call must not silently reattribute the rest of
+	// that call to itself.
+	const FUplinkToolProvenance Outer = ActiveProvider;
+	ActiveProvider = Identity;
+	Provider.RegisterUplinkTools(*this);
+	ActiveProvider = Outer;
+}
+
 const FUplinkToolDef* FUplinkToolRegistry::Find(const FString& Name) const
 {
 	return Tools.Find(Name);
+}
+
+const FUplinkToolProvenance* FUplinkToolRegistry::FindProvenance(const FString& Name) const
+{
+	return ToolProvenance.Find(Name);
 }
 
 TArray<TSharedPtr<FJsonValue>> FUplinkToolRegistry::BuildMcpToolList() const
@@ -159,6 +218,15 @@ TArray<TSharedPtr<FJsonValue>> FUplinkToolRegistry::BuildMcpToolList() const
 		if (Info.bLongRunning)
 		{
 			Annotations->SetBoolField(TEXT("longRunningHint"), true);
+		}
+		// Built-ins say nothing: a hundred entries all claiming Uplink is noise
+		// in a list a client re-reads on every connect. A tool from anywhere
+		// else names its plugin, because there is nowhere else to find that out
+		// once the tool is sitting in the list next to the built-in ones.
+		const FUplinkToolProvenance* Origin = ToolProvenance.Find(Info.Name);
+		if (Origin && !Origin->bBuiltIn)
+		{
+			Annotations->SetStringField(TEXT("provider"), Origin->Name);
 		}
 		Tool->SetObjectField(TEXT("annotations"), Annotations);
 		Out.Add(MakeShared<FJsonValueObject>(Tool));

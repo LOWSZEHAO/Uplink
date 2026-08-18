@@ -120,12 +120,40 @@ namespace
 		Obj->SetBoolField(TEXT("overlapping_player"), Overlapping.Contains(Actor));
 		Obj->SetBoolField(TEXT("hidden"), Actor->IsHidden());
 
-		if (const UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(Actor->GetRootComponent()))
+		// Not necessarily the root. A Blueprint actor's root is usually
+		// DefaultSceneRoot, a bare USceneComponent with no collision at all, and
+		// the mesh or trigger that decides how the actor behaves hangs under it.
+		// Reading only the root reported nothing for every Blueprint actor -
+		// which is most of the ones worth asking about.
+		const UPrimitiveComponent* Collider = Cast<UPrimitiveComponent>(Actor->GetRootComponent());
+		if (!Collider)
 		{
-			Obj->SetStringField(TEXT("collision_profile"), Root->GetCollisionProfileName().ToString());
+			TArray<UPrimitiveComponent*> Primitives;
+			Actor->GetComponents<UPrimitiveComponent>(Primitives);
+			for (const UPrimitiveComponent* Candidate : Primitives)
+			{
+				// Prefer one that actually collides over the first one found.
+				if (Candidate && Candidate->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+				{
+					Collider = Candidate;
+					break;
+				}
+				if (!Collider)
+				{
+					Collider = Candidate;
+				}
+			}
+		}
+		if (Collider)
+		{
+			Obj->SetStringField(TEXT("collision_profile"), Collider->GetCollisionProfileName().ToString());
 			Obj->SetStringField(TEXT("collision_enabled"),
-				Root->GetCollisionEnabled() == ECollisionEnabled::NoCollision ? TEXT("none") : TEXT("some"));
-			Obj->SetBoolField(TEXT("simulates_physics"), Root->IsSimulatingPhysics());
+				Collider->GetCollisionEnabled() == ECollisionEnabled::NoCollision ? TEXT("none") : TEXT("some"));
+			Obj->SetBoolField(TEXT("simulates_physics"), Collider->IsSimulatingPhysics());
+			if (Collider != Actor->GetRootComponent())
+			{
+				Obj->SetStringField(TEXT("collision_component"), Collider->GetName());
+			}
 		}
 
 		TArray<FString> Tags;
