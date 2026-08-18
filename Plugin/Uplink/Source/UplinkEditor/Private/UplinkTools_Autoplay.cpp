@@ -133,7 +133,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	// ------------------------------------------------------------------
 	InRegistry.RegisterQuick(
 		TEXT("ui_live"),
-		TEXT("What UMG is on screen right now: every widget in every live UserWidget, with its class, any text it displays, screen rect, visibility, and whether it is interactive. This is how you find a menu without reading its Blueprint - the names here are what click_widget takes. A widget with a zero rect exists but is not laid out, which usually means the screen it belongs to has not been shown yet. PIE only."),
+		TEXT("What UMG is on screen right now: every widget in every live UserWidget, with its class, any text it displays, screen rect, visibility, and whether it is interactive. This is how you find a menu without reading its Blueprint - the names here are what click_widget takes. Each row also carries 'object_path' for the element and 'screen_path' for the UserWidget owning it, and both are what get_property, set_property and call_function accept - so a menu you can see is also one you can read a variable off or call a function on, which matters when a widget swallows input and no key or click will advance it. A widget with a zero rect exists but is not laid out, which usually means the screen it belongs to has not been shown yet. PIE only."),
 		TEXT(R"json({"type":"object","properties":{"contains":{"type":"string","description":"Only widgets whose name, class or text contains this"},"interactive_only":{"type":"boolean","default":false,"description":"Only widgets that accept a click"},"on_screen_only":{"type":"boolean","default":true,"description":"Skip widgets with no laid-out geometry"},"max":{"type":"number","default":80},"world":{"type":"string","enum":["editor","pie"]}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -165,6 +165,11 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 					continue;
 				}
 				const FString ScreenName = Root->GetName();
+				// The UserWidget itself, which is what carries the Blueprint's own
+				// variables and functions - a page index, a Next handler. The row's
+				// object_path reaches the individual element; this reaches the
+				// screen it belongs to, and they are rarely the one you want twice.
+				const FString ScreenPath = Root->GetPathName();
 				Root->WidgetTree->ForEachWidget([&](UWidget* Widget)
 				{
 					if (!Widget)
@@ -214,6 +219,14 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 					Row->SetStringField(TEXT("name"), Name);
 					Row->SetStringField(TEXT("class"), ClassName);
 					Row->SetStringField(TEXT("screen"), ScreenName);
+					Row->SetStringField(TEXT("screen_path"), ScreenPath);
+					// The path get_property, set_property and call_function take.
+					// Without it this tool could show you a menu it gave you no way
+					// to reach: a runtime UserWidget is outered to the transient
+					// package under a generated name, so there is nothing a caller
+					// could reasonably guess. Seeing a widget and being able to ask
+					// it a question should not be two separate problems.
+					Row->SetStringField(TEXT("object_path"), Widget->GetPathName());
 					if (!Text.IsEmpty())
 					{
 						Row->SetStringField(TEXT("text"), Text);

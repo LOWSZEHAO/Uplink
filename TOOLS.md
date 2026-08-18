@@ -30,6 +30,13 @@ cost real time driving a real game.
 | `frame_strip` | What changed over the last few seconds — N frames at a fixed interval returned as ONE contact sheet. Use it for transitions, fades, animations, whether a door actually opened: a single screenshot is one instant, and everything between calls is invisible. Includes the UI layer during play. `{frames?, interval_ms?, columns?, scale?}` |
 | `dialog_state` | Is a modal window blocking the editor, and what does it say? Every tool runs on the game thread, so a modal freezes all of them — calls simply hang with no diagnostic. Ask this first when Uplink starts answering again. `dismiss:true` closes it, which answers any question it was asking, so read the title first. `{dismiss?}` |
 
+**A modal during startup is the one case this cannot reach.** The server only exists once the plugin has loaded, so anything that blocks before then leaves nothing listening and the editor looks simply dead. Two that bite in practice, both worth knowing because an agent-driven workflow causes them:
+
+- **"Restore Packages"** — force-killing the editor to rebuild leaves auto-save recovery data, and the next launch opens a modal asking what to do with it. Delete `Saved/Autosaves` in the project, or shut the editor down cleanly.
+- **"The '&lt;Plugin&gt;' plugin was designed for build X. Attempt to load it anyway?"** — a plugin whose `.uplugin` declares an older `EngineVersion` than the project. Fix the descriptor rather than clicking through it every launch.
+
+If the editor is running and the port is not answering, check the process's main window title before assuming a crash — it names the dialog.
+
 > **The pattern that works on an unfamiliar game:** `project_entry` to find the real
 > entry map → `pie_start` on that map → `ui_live` to see what is on screen →
 > `input_map` for the controls → drive it → `streaming_status` to confirm the world
