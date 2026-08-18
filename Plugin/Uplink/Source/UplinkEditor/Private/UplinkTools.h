@@ -40,4 +40,5 @@ namespace UplinkTools
 	void RegisterAI(FUplinkToolRegistry& Registry);
 	void RegisterAutoplay(FUplinkToolRegistry& Registry);
 	void RegisterRepair(FUplinkToolRegistry& Registry);
+	void RegisterReferences(FUplinkToolRegistry& Registry);
 }

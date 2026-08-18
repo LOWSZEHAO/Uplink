@@ -40,11 +40,17 @@
 #include "K2Node_SwitchEnum.h"
 #include "K2Node_SwitchInteger.h"
 #include "K2Node_SwitchString.h"
+#include "K2Node_AddDelegate.h"
+#include "K2Node_CallDelegate.h"
+#include "K2Node_CallParentFunction.h"
+#include "K2Node_ClearDelegate.h"
+#include "K2Node_RemoveDelegate.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "UObject/Interface.h"
 #include "UObject/Package.h"
 
 using namespace UplinkToolUtil;
@@ -935,6 +941,285 @@ namespace
 
 			Data->SetStringField(TEXT("variable"), VarName.ToString());
 		}
+		else if (Op == TEXT("implement_interface") || Op == TEXT("remove_interface"))
+		{
+			const FString InterfaceSpec = GetString(OpParams, TEXT("interface"));
+			UClass* InterfaceClass = StaticLoadClass(UInterface::StaticClass(), nullptr, *InterfaceSpec);
+			if (!InterfaceClass)
+			{
+				// Accept the asset path too - /Game/BPI_Thing rather than its _C class.
+				if (UBlueprint* InterfaceBP = LoadObject<UBlueprint>(nullptr, *InterfaceSpec))
+				{
+					InterfaceClass = InterfaceBP->GeneratedClass;
+				}
+			}
+			if (!InterfaceClass || !InterfaceClass->IsChildOf(UInterface::StaticClass()))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is not an interface (use /Script/Module.IThing, /Game/BPI_Thing or /Game/BPI_Thing.BPI_Thing_C)"),
+					*InterfaceSpec));
+			}
+
+			const bool bAlready = Blueprint->ImplementedInterfaces.ContainsByPredicate(
+				[InterfaceClass](const FBPInterfaceDescription& Desc) { return Desc.Interface == InterfaceClass; });
+
+			if (Op == TEXT("remove_interface"))
+			{
+				// RemoveInterface ensure()s on an interface that is not there.
+				if (!bAlready)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("%s does not implement %s"), *Blueprint->GetName(), *InterfaceClass->GetName()));
+				}
+				bool bPreserve = false;
+				OpParams->TryGetBoolField(FStringView(TEXT("preserve_functions")), bPreserve);
+				FBlueprintEditorUtils::RemoveInterface(Blueprint, InterfaceClass->GetClassPathName(), bPreserve);
+				Data->SetStringField(TEXT("removed"), InterfaceClass->GetPathName());
+				Data->SetBoolField(TEXT("preserved_functions"), bPreserve);
+			}
+			else
+			{
+				// The engine path returns false into a Slate toast nobody sees here.
+				if (bAlready)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("%s already implements %s"), *Blueprint->GetName(), *InterfaceClass->GetName()));
+				}
+				Blueprint->Modify();
+				if (!FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceClass->GetClassPathName()))
+				{
+					return FUplinkToolResult::Error(TEXT(
+						"ImplementNewInterface failed - usually a graph in this blueprint already has an interface function's name"));
+				}
+				// Only functions with outputs get a stub graph. Event-style ones
+				// get nothing at all, and the add_node 'event' kind cannot reach
+				// them because an interface is not in the super chain - so say
+				// which ones still need override_function.
+				TArray<FString> AsGraphs, AsEvents;
+				for (TFieldIterator<UFunction> It(InterfaceClass, EFieldIteratorFlags::IncludeSuper); It; ++It)
+				{
+					if (UEdGraphSchema_K2::FunctionCanBePlacedAsEvent(*It)) { AsEvents.Add(It->GetName()); }
+					else if (UEdGraphSchema_K2::CanKismetOverrideFunction(*It)) { AsGraphs.Add(It->GetName()); }
+				}
+				Data->SetStringField(TEXT("interface"), InterfaceClass->GetPathName());
+				if (AsGraphs.Num())
+				{
+					Data->SetStringField(TEXT("function_graphs_created"), FString::Join(AsGraphs, TEXT(", ")));
+				}
+				if (AsEvents.Num())
+				{
+					Data->SetStringField(TEXT("event_style_use_override_function"), FString::Join(AsEvents, TEXT(", ")));
+				}
+			}
+		}
+		else if (Op == TEXT("override_function"))
+		{
+			const FName FuncName(*GetString(OpParams, TEXT("name")));
+			if (!Blueprint->SkeletonGeneratedClass)
+			{
+				return FUplinkToolResult::Error(TEXT("blueprint has no skeleton class - compile it once first"));
+			}
+			FBlueprintEditorUtils::ConformImplementedInterfaces(Blueprint);
+
+			UFunction* OverrideFunc = nullptr;
+			UClass* const OverrideFuncClass =
+				FBlueprintEditorUtils::GetOverrideFunctionClass(Blueprint, FuncName, &OverrideFunc);
+			if (!OverrideFunc)
+			{
+				TArray<FString> Candidates;
+				for (TFieldIterator<UFunction> It(Blueprint->SkeletonGeneratedClass, EFieldIteratorFlags::IncludeSuper);
+					It && Candidates.Num() < 60; ++It)
+				{
+					if (UEdGraphSchema_K2::CanKismetOverrideFunction(*It))
+					{
+						Candidates.AddUnique(It->GetName());
+					}
+				}
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is not overridable here. Overridable: %s"),
+					*FuncName.ToString(), *FString::Join(Candidates, TEXT(", "))));
+			}
+
+			bool bAsFunction = false;
+			OpParams->TryGetBoolField(FStringView(TEXT("as_function")), bAsFunction);
+			if (!bAsFunction)
+			{
+				// Editor parity: if a parent BLUEPRINT declared this as a function
+				// graph, the override must be a function graph too, not an event.
+				TSet<FName> GraphNames;
+				FBlueprintEditorUtils::GetAllGraphNames(Blueprint, GraphNames);
+				bAsFunction = GraphNames.Contains(FuncName);
+			}
+			UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+
+			bool bPlacedAsEvent = false;
+			if (UEdGraphSchema_K2::FunctionCanBePlacedAsEvent(OverrideFunc) && !bAsFunction && EventGraph)
+			{
+				bPlacedAsEvent = true;
+				UK2Node_Event* EventNode = FBlueprintEditorUtils::FindOverrideForFunction(
+					Blueprint, OverrideFuncClass, OverrideFunc->GetFName());
+				if (!EventNode)
+				{
+					// GetOverrideFunctionClass resolves to the SKELETON class once this
+					// event is implemented, and the engine's lookup demands the node's
+					// parent class be a child of that - so a second call would never
+					// find the node the first call made, and would duplicate it. The
+					// editor's Override menu never hits this, because it hides functions
+					// that are already overridden. Match the way the compiler does when
+					// it reports a duplicate event: by name.
+					TArray<UK2Node_Event*> AllEvents;
+					FBlueprintEditorUtils::GetAllNodesOfClass<UK2Node_Event>(Blueprint, AllEvents);
+					for (UK2Node_Event* Candidate : AllEvents)
+					{
+						if (Candidate && Candidate->bOverrideFunction &&
+							Candidate->EventReference.GetMemberName() == OverrideFunc->GetFName())
+						{
+							EventNode = Candidate;
+							break;
+						}
+					}
+				}
+				if (EventNode)
+				{
+					EventNode->Modify();
+					EventNode->SetEnabledState(ENodeEnabledState::Enabled);
+					Data->SetObjectField(TEXT("node"), NodeToJson(EventNode));
+					Data->SetBoolField(TEXT("reused"), true);
+				}
+				else
+				{
+					UK2Node_Event* Node = NewObject<UK2Node_Event>(EventGraph);
+					// The DECLARING class, not ParentClass - this is what makes an
+					// interface event reachable at all.
+					Node->EventReference.SetExternalMember(OverrideFunc->GetFName(), OverrideFuncClass);
+					Node->bOverrideFunction = true;
+					FinalizeNewNode(EventGraph, Node, OpParams);
+					Data->SetObjectField(TEXT("node"), NodeToJson(Node));
+					EventNode = Node;
+				}
+				// A top-level op never reaches add_node's ref-registration tail.
+				const FString Ref = GetString(OpParams, TEXT("ref"));
+				if (!Ref.IsEmpty() && EventNode)
+				{
+					NodeRefs.Add(Ref, EventNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+				}
+			}
+			else
+			{
+				if (UEdGraph* ExistingGraph = FindObject<UEdGraph>(Blueprint, *FuncName.ToString()))
+				{
+					Data->SetStringField(TEXT("graph"), ExistingGraph->GetName());
+					Data->SetBoolField(TEXT("reused"), true);
+				}
+				else
+				{
+					Blueprint->Modify();
+					UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+						Blueprint, FuncName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+					// bIsUserCreated=false: an override inherits its signature and
+					// must NOT be stamped as a fresh user function.
+					FBlueprintEditorUtils::AddFunctionGraph<UClass>(
+						Blueprint, NewGraph, /*bIsUserCreated=*/false, OverrideFuncClass);
+					Data->SetStringField(TEXT("graph"), NewGraph->GetName());
+				}
+			}
+			Data->SetStringField(TEXT("declaring_class"), OverrideFuncClass->GetPathName());
+			Data->SetBoolField(TEXT("as_event"), bPlacedAsEvent);
+		}
+		else if (Op == TEXT("add_dispatcher"))
+		{
+			// An event dispatcher is two halves the compiler joins BY NAME: a
+			// member variable of multicast-delegate type, and a signature graph
+			// carrying the identical FName. Mirrors FBlueprintEditor::OnAddNewDelegate.
+			const FName DispatcherName(*GetString(OpParams, TEXT("name")));
+			if (DispatcherName.IsNone())
+			{
+				return FUplinkToolResult::Error(TEXT("add_dispatcher needs 'name'"));
+			}
+			if (FBlueprintEditorUtils::GetDelegateSignatureGraphByName(Blueprint, DispatcherName))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is already a dispatcher on this blueprint"), *DispatcherName.ToString()));
+			}
+			if (OpParams->HasField(FStringView(TEXT("outputs"))))
+			{
+				// Silently dropping these would be the worse failure: the caller
+				// gets a dispatcher that looks right and returns nothing.
+				return FUplinkToolResult::Error(TEXT("a dispatcher signature cannot have return values - it is a broadcast. Use 'inputs'."));
+			}
+
+			FEdGraphPinType DelegateType;
+			DelegateType.PinCategory = UEdGraphSchema_K2::PC_MCDelegate;
+			if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, DispatcherName, DelegateType))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("could not add '%s' (name already taken?)"), *DispatcherName.ToString()));
+			}
+
+			UEdGraph* SignatureGraph = FBlueprintEditorUtils::CreateNewGraph(
+				Blueprint, DispatcherName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+			if (!SignatureGraph)
+			{
+				FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, DispatcherName);
+				return FUplinkToolResult::Error(TEXT("could not create the dispatcher's signature graph"));
+			}
+			SignatureGraph->bEditable = false;
+
+			const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
+			K2Schema->CreateDefaultNodesForGraph(*SignatureGraph);
+			// Null class: entry node only. A dispatcher has no result node.
+			K2Schema->CreateFunctionGraphTerminators(*SignatureGraph, static_cast<UClass*>(nullptr));
+			K2Schema->AddExtraFunctionFlags(SignatureGraph,
+				FUNC_BlueprintCallable | FUNC_BlueprintEvent | FUNC_Public);
+			K2Schema->MarkFunctionEntryAsEditable(SignatureGraph, true);
+			Blueprint->DelegateSignatureGraphs.Add(SignatureGraph);
+
+			TArray<FString> AddedParams;
+			const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
+			if (OpParams->TryGetArrayField(FStringView(TEXT("inputs")), Inputs))
+			{
+				UK2Node_FunctionEntry* Entry = nullptr;
+				for (UEdGraphNode* GraphNode : SignatureGraph->Nodes)
+				{
+					if (UK2Node_FunctionEntry* AsEntry = Cast<UK2Node_FunctionEntry>(GraphNode))
+					{
+						Entry = AsEntry;
+						break;
+					}
+				}
+				if (Entry)
+				{
+					for (const TSharedPtr<FJsonValue>& Value : *Inputs)
+					{
+						const TSharedPtr<FJsonObject>* Obj = nullptr;
+						if (!Value->TryGetObject(Obj) || !Obj->IsValid())
+						{
+							continue;
+						}
+						const FString ParamName = GetString(*Obj, TEXT("name"));
+						FEdGraphPinType ParamType;
+						if (!MakePinType(GetString(*Obj, TEXT("type"), TEXT("float")), ParamType, Error))
+						{
+							return FUplinkToolResult::Error(FString::Printf(TEXT("input '%s': %s"), *ParamName, *Error));
+						}
+						Entry->CreateUserDefinedPin(FName(*ParamName), ParamType, EGPD_Output);
+						AddedParams.Add(ParamName);
+					}
+				}
+			}
+
+			// Compile the skeleton NOW, not at the end of the batch. Bind and
+			// call nodes read the generated signature when their pins are
+			// allocated; with a stale skeleton they come out param-less and
+			// every later connect in the same batch fails on a missing pin.
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+			Data->SetStringField(TEXT("dispatcher"), DispatcherName.ToString());
+			if (AddedParams.Num())
+			{
+				Data->SetStringField(TEXT("inputs"), FString::Join(AddedParams, TEXT(", ")));
+			}
+		}
 		else if (Op == TEXT("remove_variable"))
 		{
 			// Removing a name that was never there is not success - it usually
@@ -1289,6 +1574,34 @@ namespace
 				// common events; reuse (and enable) a matching one instead of
 				// stacking a duplicate on top of it.
 				const FName EventName(*GetString(OpParams, TEXT("name")));
+				// Without this, a missing or misspelt 'name' built a nameless event
+				// node that compiles to nothing and reads as broken in the editor.
+				if (EventName.IsNone())
+				{
+					return FUplinkToolResult::Error(
+						TEXT("add_node kind 'event' needs 'name' (the function being overridden, ")
+						TEXT("e.g. ReceiveBeginPlay). For a new event of your own, use kind 'custom_event'."));
+				}
+				{
+					UClass* SearchClass = Blueprint->SkeletonGeneratedClass
+						? Blueprint->SkeletonGeneratedClass.Get()
+						: Blueprint->ParentClass.Get();
+					if (SearchClass && !SearchClass->FindFunctionByName(EventName))
+					{
+						TArray<FString> Candidates;
+						for (TFieldIterator<UFunction> It(SearchClass, EFieldIteratorFlags::IncludeSuper);
+							It && Candidates.Num() < 40; ++It)
+						{
+							if (UEdGraphSchema_K2::FunctionCanBePlacedAsEvent(*It))
+							{
+								Candidates.AddUnique(It->GetName());
+							}
+						}
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("no event '%s' on %s. Available: %s"),
+							*EventName.ToString(), *SearchClass->GetName(), *FString::Join(Candidates, TEXT(", "))));
+					}
+				}
 				UK2Node_Event* Existing = nullptr;
 				for (UEdGraphNode* GraphNode : Graph->Nodes)
 				{
@@ -1379,6 +1692,85 @@ namespace
 					Node->VariableReference.SetSelfMember(VarName);
 					NewNode = Node;
 				}
+			}
+			else if (Kind == TEXT("call_parent"))
+			{
+				const FName FuncName(*GetString(OpParams, TEXT("function")));
+				UClass* SelfClass = Blueprint->SkeletonGeneratedClass
+					? Blueprint->SkeletonGeneratedClass.Get() : Blueprint->ParentClass.Get();
+				UFunction* FnInSelf = SelfClass ? SelfClass->FindFunctionByName(FuncName) : nullptr;
+				if (!FnInSelf)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("function '%s' not found on %s or its parents"),
+						*FuncName.ToString(), SelfClass ? *SelfClass->GetName() : TEXT("null")));
+				}
+				// If this blueprint owns the override, step up to the super's
+				// version; if the function only exists on a parent, that IS the
+				// parent implementation already.
+				UFunction* ParentFn = (FnInSelf->GetOwnerClass() == SelfClass)
+					? UEdGraphSchema_K2::GetCallableParentFunction(FnInSelf)
+					: FnInSelf;
+				if (!ParentFn)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' has no parent implementation to call"), *FuncName.ToString()));
+				}
+				UK2Node_CallParentFunction* Node = NewObject<UK2Node_CallParentFunction>(Graph);
+				Node->SetFromFunction(ParentFn);
+				NewNode = Node;
+			}
+			// --- event dispatchers --------------------------------------------
+			else if (Kind == TEXT("bind_dispatcher") || Kind == TEXT("unbind_dispatcher")
+				|| Kind == TEXT("call_dispatcher") || Kind == TEXT("clear_dispatcher"))
+			{
+				const FString DispatcherName = GetString(OpParams, TEXT("name"));
+				// A dispatcher on another object needs its class; on this
+				// blueprint, self-context stores no class at all, which is what
+				// lets the node survive a rename or a duplicate of the asset.
+				const FString TargetSpec = GetString(OpParams, TEXT("target"));
+				UClass* OwnerClass = nullptr;
+				bool bSelfContext = true;
+				if (TargetSpec.IsEmpty())
+				{
+					OwnerClass = Blueprint->SkeletonGeneratedClass
+						? Blueprint->SkeletonGeneratedClass.Get()
+						: (Blueprint->GeneratedClass ? Blueprint->GeneratedClass.Get() : Blueprint->ParentClass.Get());
+				}
+				else
+				{
+					bSelfContext = false;
+					OwnerClass = StaticLoadClass(UObject::StaticClass(), nullptr, *TargetSpec);
+					if (!OwnerClass)
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("target class not found: '%s'. A Blueprint's class needs the _C suffix, e.g. /Game/BP_Door.BP_Door_C"),
+							*TargetSpec));
+					}
+				}
+
+				FMulticastDelegateProperty* DelegateProperty =
+					FindFProperty<FMulticastDelegateProperty>(OwnerClass, *DispatcherName);
+				if (!DelegateProperty)
+				{
+					TArray<FString> Names;
+					for (TFieldIterator<FMulticastDelegateProperty> It(OwnerClass); It; ++It)
+					{
+						Names.Add(It->GetName());
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no dispatcher '%s' on %s. Dispatchers: %s"),
+						*DispatcherName, *OwnerClass->GetName(),
+						Names.Num() ? *FString::Join(Names, TEXT(", ")) : TEXT("(none)")));
+				}
+
+				UK2Node_BaseMCDelegate* Node = nullptr;
+				if (Kind == TEXT("bind_dispatcher")) { Node = NewObject<UK2Node_AddDelegate>(Graph); }
+				else if (Kind == TEXT("unbind_dispatcher")) { Node = NewObject<UK2Node_RemoveDelegate>(Graph); }
+				else if (Kind == TEXT("call_dispatcher")) { Node = NewObject<UK2Node_CallDelegate>(Graph); }
+				else { Node = NewObject<UK2Node_ClearDelegate>(Graph); }
+				Node->SetFromProperty(DelegateProperty, bSelfContext, DelegateProperty->GetOwnerClass());
+				NewNode = Node;
 			}
 			// --- flow control -------------------------------------------------
 			else if (Kind == TEXT("branch"))
@@ -1523,7 +1915,8 @@ namespace
 				return FUplinkToolResult::Error(TEXT(
 					"unknown 'kind'. Events and calls: call_function, custom_event, event, component_bound_event. "
 					"Data: variable_get, variable_set, make_struct, break_struct, make_array, select, self. "
-					"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result."));
+					"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result. "
+					"Dispatchers: bind_dispatcher, unbind_dispatcher, call_dispatcher, clear_dispatcher {name, target?}. Parent: call_parent {function}."));
 			}
 
 			if (NewNode)
@@ -1658,7 +2051,7 @@ namespace
 		}
 		else
 		{
-			return FUplinkToolResult::Error(TEXT("unknown op (add_variable, remove_variable, add_function, remove_function, add_node, arrange, connect, break_links, delete_node, set_pin_default, set_node_property)"));
+			return FUplinkToolResult::Error(TEXT("unknown op (add_variable, set_variable, remove_variable, add_dispatcher, implement_interface, remove_interface, override_function, add_function, remove_function, add_node, arrange, connect, break_links, delete_node, set_pin_default, set_node_property)"));
 		}
 		return FUplinkToolResult::Ok();
 	}
@@ -1842,8 +2235,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?,instance_editable?,expose_on_spawn?,read_only?,replicated?,category?,tooltip?} | set_variable {name, same options} - configure an existing variable | remove_variable {name} | add_function {name, inputs?, outputs?, pure?, thread_safe?, category?} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","set_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"instance_editable":{"type":"boolean","description":"add/set_variable: editable on placed instances"},"expose_on_spawn":{"type":"boolean","description":"add/set_variable: show as a SpawnActor pin"},"read_only":{"type":"boolean","description":"add/set_variable: blueprint-read-only"},"replicated":{"type":"boolean","description":"add/set_variable: replicate this property"},"tooltip":{"type":"string","description":"add/set_variable"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function / add_variable / set_variable: category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"outputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type}] return values - creates the Result node, wired to the entry"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
+		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?,instance_editable?,expose_on_spawn?,read_only?,replicated?,category?,tooltip?} | set_variable {name, same options} - configure an existing variable | remove_variable {name} | add_dispatcher {name, inputs?} - declare an event dispatcher | implement_interface {interface} / remove_interface {interface, preserve_functions?} | override_function {name, as_function?} - override a parent or interface function | add_function {name, inputs?, outputs?, pure?, thread_safe?, category?} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result | bind_dispatcher/unbind_dispatcher/call_dispatcher/clear_dispatcher {name, target?} - pins are 'Delegate' (shown as Event) and 'self' (shown as Target), graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","set_variable","remove_variable","add_dispatcher","implement_interface","remove_interface","override_function","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"instance_editable":{"type":"boolean","description":"add/set_variable: editable on placed instances"},"expose_on_spawn":{"type":"boolean","description":"add/set_variable: show as a SpawnActor pin"},"read_only":{"type":"boolean","description":"add/set_variable: blueprint-read-only"},"replicated":{"type":"boolean","description":"add/set_variable: replicate this property"},"tooltip":{"type":"string","description":"add/set_variable"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result","call_parent","bind_dispatcher","unbind_dispatcher","call_dispatcher","clear_dispatcher"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"target":{"type":"string","description":"dispatcher kinds: class owning the dispatcher, e.g. /Game/BP_Door.BP_Door_C. Omit for one on this blueprint"},"interface":{"type":"string","description":"implement_interface/remove_interface: /Script/Module.IThing or /Game/BPI_Thing"},"preserve_functions":{"type":"boolean","description":"remove_interface: keep the implementations as normal functions"},"as_function":{"type":"boolean","description":"override_function: force the function-graph form instead of an event node"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function / add_variable / set_variable: category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"outputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type}] return values - creates the Result node, wired to the entry"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
