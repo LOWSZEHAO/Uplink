@@ -2,48 +2,23 @@
 
 **A direct data link between an AI agent and a running Unreal Engine editor.**
 
-Uplink is an Unreal Engine editor plugin plus an optional [MCP](https://modelcontextprotocol.io) bridge. It gives an AI assistant the whole editor — assets, Blueprints, actors, materials, animation, every reflected UFUNCTION in your project — and it can verify its own edits against a running Play-In-Editor session.
-
-> Tool count is the boring number. The work went into making the tools honest about what they did and did not do — see *Why* below.
-
-## Prove it against your own editor
-
-Capability claims are cheap, so this repo ships its proof as something you run rather than read: [`scenarios/`](scenarios) is a suite of executable `run_scenario` files — authoring, asset creation, graph flow control, failure behaviour, a full start-play-verify-shutdown pass — and one command executes them against your own project.
-
-```powershell
-.\scripts\run_scenarios.ps1
-```
-
-Verifying a change in a running game is one request:
-
-```json
-{ "steps": [
-    { "tool": "pie_start",       "params": { "mode": "viewport" } },
-    { "tool": "player_teleport", "params": { "location": { "x": 0, "y": 0, "z": 0 } } },
-    { "tool": "input_action",    "params": { "action": "/Game/Input/IA_Move.IA_Move",
-                                             "value": { "x": 0, "y": 1 },
-                                             "mode": "hold", "duration": 1.0 } },
-    { "tool": "wait_until",      "params": { "condition": { "type": "property_equals",
-                                             "actor": "MyPawn", "property": "bIsResting",
-                                             "value": false } } },
-    { "tool": "viewport_screenshot" },
-    { "tool": "pie_stop" }
-] }
-```
+Uplink is a C++ editor plugin that speaks [MCP](https://modelcontextprotocol.io), plus an optional Node bridge. It hands an AI assistant the editor itself: assets, Blueprints, actors, materials, animation, and every reflected UFUNCTION in your project. It can also start Play-In-Editor and check its own work while the game runs.
 
 ## Why
 
-An agent editing your project is only useful if you can trust what it did. Most of this codebase is not new capability — it is making the capability honest: a tool that writes is dispatched inside its own named editor transaction so you can undo it by hand, an object path that resolves to nothing is refused rather than written as null, unknown parameters come back with a suggestion instead of being ignored, and lists say when they were truncated.
+An agent editing your project is only useful if you can trust what it did. Most of the work here went into that rather than into new features. A tool that writes runs inside its own named editor transaction, so you can undo it by hand. An object path that resolves to nothing is refused instead of quietly written as null. A misspelt parameter comes back with a suggestion instead of being ignored. Lists say when they were cut short.
 
-The second half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or your project, so systems without a dedicated tool are still reachable, and `get_property` / `set_property` walk dotted paths through structs and object references. That is why 104 tools cover as much as far larger tool counts elsewhere.
+The other half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or in your project, and `get_property` / `set_property` walk dotted paths through structs and object references. Systems with no dedicated tool are still reachable.
 
-PIE control, input injection, event watching and assertions exist for one purpose: letting the agent check its own work in a running game before telling you it is done.
+PIE control, input injection, event watching and assertions are there so the agent can check its own work in a running game before it tells you it is done.
 
 ## Status
 
-**v0.26.0 — 104 tools, one codebase compiling against both UE 5.7 and 5.8 (Win64, editor builds).** Every tool has been exercised against a live editor, and the scenario suite runs clean on the third-person template for both engines. That is not the same as being sure: an audit this month turned up five authoring calls that reported success while doing the wrong thing, all of them shipped. Pre-1.0 — the API may still change, and what it most needs is mileage on projects that are not mine.
+**v0.26.0 — 104 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
-Recent work has been trustworthiness (see *Why*) and the tools for reading an unfamiliar project — that is where an agent burns the most time, guessing at things it could have looked up.
+That is not the same as being sure. An audit this month found five authoring calls that reported success while doing the wrong thing, all of them already shipped. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
+
+Recent work has been trustworthiness, and the tools for reading an unfamiliar project. That is where an agent burns the most time: guessing at things it could have looked up.
 
 ## Quickstart
 
@@ -93,17 +68,17 @@ claude mcp add uplink -- node "<repo>\bridge\index.js"
 
 ## What it can do to your project
 
-Worth understanding before you point an agent at real work.
+Worth reading before you point an agent at real work.
 
 - **There is no authentication.** Any process on your machine can call the server while the editor is running. It binds loopback only (`127.0.0.1`, never reachable from the network), validates browser `Origin` headers, caps bodies at 2 MB, and refuses to start if the port is taken or the engine's HTTP listener has been pointed at a non-loopback address — but on your own machine it is open by design.
-- **`call_function` calls arbitrary UFUNCTIONs, deliberately.** That is what makes most of the engine reachable without a tool per feature. It also means the blast radius is "anything Blueprint could do", plus editor scripting libraries.
-- **Mutations are undoable, with exceptions.** A tool that writes is dispatched inside its own named editor transaction, so an agent's edits roll back with Ctrl+Z or `edit_history` like a hand edit. Nothing transacts while a PIE session is live — the engine does not record changes to a play world, and wrapping them would only leave empty undo entries behind. Tools that drive the session rather than edit assets opt out on purpose: `pie_*`, `input_action`, `input_key`, `navigate_to`, `run_scenario`, `input_replay`, and `live_compile` / `run_tests` / `edit_history` itself.
-- **Nothing is saved unless asked.** Authoring leaves work dirty in memory; `save` writes it. That cuts both ways: unsaved mistakes vanish on restart, and so does unsaved good work.
+- **`call_function` calls arbitrary UFUNCTIONs, deliberately.** It is what makes most of the engine reachable without a tool per feature. It also means the blast radius is anything Blueprint could do, plus the editor scripting libraries.
+- **Mutations are undoable, with exceptions.** A tool that writes runs in its own named editor transaction, so its edits roll back with Ctrl+Z or `edit_history` like a hand edit. Nothing transacts while a PIE session is live, because the engine does not record changes to a play world. Tools that drive the session rather than edit assets opt out on purpose: `pie_*`, `input_action`, `input_key`, `navigate_to`, `run_scenario`, `input_replay`, plus `live_compile`, `run_tests` and `edit_history` itself.
+- **Nothing is saved unless you ask.** Authoring leaves work dirty in memory and `save` writes it. That cuts both ways: unsaved mistakes vanish on restart, and so does unsaved good work.
 - **Use version control.** The same advice as for any tool that edits your project in bulk.
 
 ## The toolset
 
-104 tools. Full parameters, conventions and worked recipes in **[TOOLS.md](TOOLS.md)**. New to driving an editor from an agent? **[PROMPTING.md](PROMPTING.md)** covers what to say — the few facts it cannot discover on its own, and the habits that stop it guessing.
+104 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|
@@ -124,7 +99,7 @@ Every world-aware tool takes `world: "editor" | "pie"` and defaults to the live 
 
 ## Works with any MCP client
 
-Uplink speaks plain MCP — nothing is Claude-specific. It is developed and tested against Claude Code; other MCP clients (Cursor, Windsurf, Cline, Copilot agent mode, Gemini CLI, Codex CLI) speak the same protocol and should work, though they are not part of the test loop.
+Uplink speaks plain MCP; nothing about it is Claude-specific. It is developed and tested against Claude Code. Other MCP clients (Cursor, Windsurf, Cline, Copilot agent mode, Gemini CLI, Codex CLI) speak the same protocol and should work, but they are not part of the test loop.
 
 - Clients supporting **HTTP ("streamable HTTP") servers** → point them at `http://127.0.0.1:3777/mcp`:
 
@@ -155,11 +130,11 @@ AI agent (MCP client) ──┤   (native MCP — no Node needed)   ├── Pl
 - **`Plugin/Uplink`** — a C++ editor plugin serving MCP natively over a loopback HTTP endpoint. One codebase compiles against **UE 5.7 and 5.8**; all version divergence lives in [`UplinkCompat.h`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkCompat.h).
 - **`bridge/`** — an optional Node stdio MCP server for clients that cannot speak HTTP. It stays alive when the editor is closed, so `status` answers "not connected" instead of the MCP server dying.
 
-Every tool declares whether it only reads. Anything that writes is dispatched inside its own editor transaction unless it opted out — that is what makes an agent's edits undoable by hand afterwards — and its parameters are checked against its own published schema before it runs.
+Every tool declares whether it only reads. Anything that writes runs in its own editor transaction unless it opted out, which is what makes its edits undoable by hand afterwards, and its parameters are checked against its published schema before it runs.
 
 ## Extending Uplink with your own tools
 
-Other plugins can contribute project-specific tools without forking Uplink: implement [`IUplinkToolProvider`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkToolProvider.h), register it as a modular feature, and your tools appear alongside the built-ins (late-loading plugins included). See the header for a complete example.
+Other plugins can add project-specific tools without forking Uplink. Implement [`IUplinkToolProvider`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkToolProvider.h), register it as a modular feature, and your tools appear alongside the built-ins, late-loading plugins included. The header has a complete example.
 
 ## Repository layout
 
