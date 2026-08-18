@@ -1,6 +1,6 @@
 {
   "_name": "Graph flow control",
-  "_purpose": "The node kinds a real gameplay graph is made of, authored in one batched bp_modify call: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch on Int, Select and Self - exec-wired off BeginPlay, arranged, and compiled clean. If this passes, an agent can author graphs that make decisions, not just call functions.",
+  "_purpose": "The node kinds a real gameplay graph is made of, authored in one batched bp_modify call: Branch, Sequence, Cast, a ForLoop macro, MakeVector/BreakVector, Switch on Int, Select and Self - exec-wired off BeginPlay, arranged, and compiled clean. If this passes, an agent can author graphs that make decisions, not just call functions. The last two steps are the other half: a generic Make/Break Struct node on a struct that ships a native make function is refused, because the compiler would reject it with a message naming neither the cause nor the fix.",
   "steps": [
     {
       "_note": "Housekeeping: clear debris from an aborted earlier run.",
@@ -79,15 +79,18 @@
             "ref": "loop"
           },
           {
+            "_note": "A real graph uses MakeVector, not a generic Make Struct node: FVector ships a native make function, so the editor palette never offers the generic form and bp_modify now refuses it.",
             "op": "add_node",
-            "kind": "make_struct",
-            "struct": "/Script/CoreUObject.Vector",
+            "kind": "call_function",
+            "class": "/Script/Engine.KismetMathLibrary",
+            "function": "MakeVector",
             "ref": "vec"
           },
           {
             "op": "add_node",
-            "kind": "break_struct",
-            "struct": "/Script/CoreUObject.Vector",
+            "kind": "call_function",
+            "class": "/Script/Engine.KismetMathLibrary",
+            "function": "BreakVector",
             "ref": "brk"
           },
           {
@@ -163,9 +166,9 @@
           {
             "op": "connect",
             "from_node": "@vec",
-            "from_pin": "Vector",
+            "from_pin": "ReturnValue",
             "to_node": "@brk",
-            "to_pin": "Vector"
+            "to_pin": "InVec"
           },
           {
             "op": "set_pin_default",
@@ -179,6 +182,28 @@
         ],
         "compile": true
       }
+    },
+    {
+      "_note": "REGRESSION: a struct with a native make function cannot use the generic node - the compiler rejects it with a message that names neither the cause nor the fix, so this is refused up front instead.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_FlowScenario",
+        "op": "add_node",
+        "kind": "make_struct",
+        "struct": "/Script/CoreUObject.Vector"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Same for break. FRotator and FHitResult behave the same way; a struct with no native make, like FTimerHandle, is still allowed through.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_FlowScenario",
+        "op": "add_node",
+        "kind": "break_struct",
+        "struct": "/Script/CoreUObject.Vector"
+      },
+      "expect_failure": true
     },
     {
       "tool": "bp_query",
