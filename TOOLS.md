@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 105 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 106 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
