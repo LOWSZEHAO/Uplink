@@ -20,13 +20,20 @@ public:
 	/**
 	 * Register a quick tool from a lambda; SchemaJson is a JSON Schema object
 	 * as a string literal (parsed once here).
+	 *
+	 * bTransactional=false is for tools that write but do not make an undoable
+	 * edit - undo/redo itself, a compile, a test run. Without it, the only way
+	 * to keep such a tool out of a transaction was to declare it read-only,
+	 * which then goes out to clients as readOnlyHint and invites them to
+	 * auto-approve it.
 	 */
 	void RegisterQuick(
 		const FString& Name,
 		const FString& Description,
 		const FString& SchemaJson,
 		bool bReadOnly,
-		TFunction<FUplinkToolResult(const FUplinkToolContext&)> Fn);
+		TFunction<FUplinkToolResult(const FUplinkToolContext&)> Fn,
+		bool bTransactional = true);
 
 	const FUplinkToolDef* Find(const FString& Name) const;
 	const TMap<FString, FUplinkToolDef>& All() const { return Tools; }

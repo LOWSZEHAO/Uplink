@@ -1,6 +1,6 @@
 {
   "_name": "Refuses bad input",
-  "_purpose": "The failure behaviour, which matters more than the happy path: a mistyped parameter and an asset path that resolves to nothing are both refused rather than quietly ignored. Every step here is EXPECTED TO FAIL - that is the pass condition, so this scenario runs with stop_on_failure off and is read by eye.",
+  "_purpose": "The failure behaviour, which matters more than the happy path: three things that should be refused rather than quietly ignored - a mistyped parameter name, an asset path that resolves to nothing, and a tool that does not exist. Every step here is EXPECTED TO FAIL - that is the pass condition, so this scenario runs with stop_on_failure off and is read by eye.",
   "_reading": "A correct run reports all three steps FAILED. A step that passes is the bug.",
   "stop_on_failure": false,
   "steps": [
@@ -19,8 +19,9 @@
       }
     },
     {
-      "tool": "xr_simulate",
-      "params": { "action": "status", "mode": "holodeck" }
+      "_note": "Deliberately not a real tool. An unknown name must be refused by the registry, not silently skipped.",
+      "tool": "no_such_tool",
+      "params": {}
     }
   ]
 }

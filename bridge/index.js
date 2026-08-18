@@ -4,12 +4,22 @@
 // "not connected" status instead of the MCP server dying).
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+
+// Read from package.json rather than repeating the number here — a bridge that
+// reports a version it no longer is makes every "which version are you on?"
+// answer wrong, and nothing about a second copy makes it stay in step.
+const VERSION = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8")
+).version;
 
 const UPLINK_URL = process.env.UPLINK_URL ?? "http://127.0.0.1:3777";
 const REQUEST_TIMEOUT_MS = Number(process.env.UPLINK_TIMEOUT_MS ?? 30000);
@@ -95,7 +105,7 @@ async function listTools() {
 // --- server ----------------------------------------------------------------
 
 const server = new Server(
-  { name: "uplink", version: "0.19.0" },
+  { name: "uplink", version: VERSION },
   { capabilities: { tools: {} } }
 );
 

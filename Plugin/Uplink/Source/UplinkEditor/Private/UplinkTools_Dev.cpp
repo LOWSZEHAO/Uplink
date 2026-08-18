@@ -116,6 +116,10 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 	Info.Description = TEXT("Trigger a Live Coding compile and patch the RUNNING editor with changed C++ - no editor restart. Function-body edits apply in seconds; structural changes (new classes, members, virtuals) still need a real build. Resolves when the compiler goes idle: 'patched' true means new code is live.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"));
 	Info.bReadOnly = false;
+	// A Live Coding compile is exactly when the user keeps working in the
+	// editor; an open transaction would swallow their hand edits and let one
+	// Ctrl+Z roll them back under an Uplink name.
+	Info.bTransactional = false;
 	Info.TimeoutSeconds = 600.0;
 #if WITH_LIVE_CODING
 	Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
@@ -181,6 +185,7 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetArrayField(TEXT("plugins"), Rows);
 			Data->SetNumberField(TEXT("total_matching"), Total);
+			Data->SetBoolField(TEXT("truncated"), Total > Rows.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 
@@ -188,7 +193,7 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 		TEXT("edit_history"),
 		TEXT("Inspect and walk the editor's undo stack. Every mutating Uplink tool runs inside its own transaction named 'Uplink: <tool>', so an agent's edit can be undone exactly like a hand edit. 'action': 'list' (default) shows what undo/redo would do, 'undo' or 'redo' walk 'steps' entries. Does not apply to PIE-world edits, which the engine does not transact."),
 		TEXT(R"json({"type":"object","properties":{"action":{"type":"string","enum":["list","undo","redo"],"default":"list"},"steps":{"type":"number","default":1,"description":"how many transactions to walk (undo/redo)"}}})json"),
-		/*bReadOnly=*/true, // its own edits must not be wrapped in a transaction
+		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			if (!GEditor || !GEditor->Trans)
@@ -260,7 +265,12 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 			return FUplinkToolResult::Ok(Data, Walked.Num() == 0
 				? FString::Printf(TEXT("nothing to %s"), *Action)
 				: FString::Printf(TEXT("%s %d transaction(s)"), bUndo ? TEXT("undid") : TEXT("redid"), Walked.Num()));
-		});
+		},
+		// Walking the undo stack is not itself an undoable edit - wrapping it in
+		// a transaction would fight the buffer it is driving. It is emphatically
+		// not read-only either: this tool reverses the user's last change, and
+		// readOnlyHint is what a client checks before auto-approving a call.
+		/*bTransactional=*/false);
 
 	Registry.RegisterQuick(
 		TEXT("plugin_enable"),

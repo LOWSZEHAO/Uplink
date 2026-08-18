@@ -1,7 +1,7 @@
 # Uplink dual-engine build gate: compiles the plugin standalone against every
 # engine listed below (no host project needed - uses UAT BuildPlugin).
 # Run before committing any C++ change. PowerShell 5.1 compatible.
-# Copyright (c) 2026 Low Sze Hao. MIT License.
+# Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 param(
     [string[]]$Engines = @(

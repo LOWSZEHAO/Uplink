@@ -41,7 +41,13 @@ namespace
 	 * structs refuse to serialise as a whole (FPoseSearchBlueprintResult exports
 	 * as an empty object), but their individual members read back fine.
 	 */
-	FProperty* ResolvePropertyPath(UObject* Object, const FString& Path, void*& OutContainer, FString& OutError)
+	FProperty* ResolvePropertyPath(
+		UObject* Object,
+		const FString& Path,
+		void*& OutContainer,
+		FString& OutError,
+		UObject** OutOwningObject = nullptr,
+		FProperty** OutMemberProperty = nullptr)
 	{
 		TArray<FString> Segments;
 		Path.ParseIntoArray(Segments, TEXT("."), true);
@@ -53,6 +59,17 @@ namespace
 
 		void* Container = Object;
 		UStruct* Owner = Object->GetClass();
+
+		// The object that actually holds the value, which is NOT the target
+		// whenever the path crosses an object reference, and the outermost
+		// property on it. Both matter after the write: Modify() has to record
+		// the owner or the edit is not in the transaction and Ctrl+Z will not
+		// bring it back, and PostEditChangeProperty has to name the member or
+		// handlers keyed on it - every USceneComponent transform field - never
+		// run, so the viewport does not move.
+		UObject* OwningObject = Object;
+		FProperty* MemberProperty = nullptr;
+
 		for (int32 i = 0; i < Segments.Num(); ++i)
 		{
 			FProperty* Found = Owner->FindPropertyByName(FName(*Segments[i]));
@@ -62,9 +79,21 @@ namespace
 					*Segments[i], *Owner->GetName(), *Path);
 				return nullptr;
 			}
+			if (!MemberProperty)
+			{
+				MemberProperty = Found;
+			}
 			if (i == Segments.Num() - 1)
 			{
 				OutContainer = Found->ContainerPtrToValuePtr<void>(Container);
+				if (OutOwningObject)
+				{
+					*OutOwningObject = OwningObject;
+				}
+				if (OutMemberProperty)
+				{
+					*OutMemberProperty = MemberProperty;
+				}
 				return Found;
 			}
 			if (FStructProperty* AsStruct = CastField<FStructProperty>(Found))
@@ -88,6 +117,10 @@ namespace
 				}
 				Container = Next;
 				Owner = Next->GetClass();
+				// Everything from here belongs to Next, including the member
+				// that PostEditChangeProperty will be told about.
+				OwningObject = Next;
+				MemberProperty = nullptr;
 				continue;
 			}
 			OutError = FString::Printf(
@@ -150,7 +183,11 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 			// Same dotted-path walk get_property uses, so a value that can be
 			// read can also be written rather than only half the pair working.
 			void* ValueAddr = nullptr;
-			FProperty* Property = ResolvePropertyPath(Object, GetString(Ctx.Params, TEXT("property")), ValueAddr, Error);
+			UObject* OwningObject = Object;
+			FProperty* MemberProperty = nullptr;
+			FProperty* Property = ResolvePropertyPath(
+				Object, GetString(Ctx.Params, TEXT("property")), ValueAddr, Error,
+				&OwningObject, &MemberProperty);
 			if (!Property)
 			{
 				return FUplinkToolResult::Error(Error);
@@ -166,7 +203,10 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 #if WITH_EDITOR
 			if (bEditorObject)
 			{
-				Object->Modify();
+				// The owner, not the target: a path like RootComponent.RelativeLocation.X
+				// writes into the component, and a transaction only restores what
+				// was told to Modify().
+				OwningObject->Modify();
 			}
 #endif
 			if (!FJsonObjectConverter::JsonValueToUProperty(Value, Property, ValueAddr))
@@ -185,14 +225,34 @@ void UplinkTools::RegisterObject(FUplinkToolRegistry& Registry)
 #if WITH_EDITOR
 			if (bEditorObject)
 			{
-				FPropertyChangedEvent ChangeEvent(Property);
-				Object->PostEditChangeProperty(ChangeEvent);
-				Object->MarkPackageDirty();
+				// Named after the outermost member, not the leaf. USceneComponent
+				// gates its transform update on the member name, so an event that
+				// says only "X" moves nothing: the value changes and the viewport
+				// does not follow.
+				FPropertyChangedEvent ChangeEvent(Property, EPropertyChangeType::ValueSet);
+				if (MemberProperty)
+				{
+					ChangeEvent.SetActiveMemberProperty(MemberProperty);
+				}
+				OwningObject->PostEditChangeProperty(ChangeEvent);
+				OwningObject->MarkPackageDirty();
 			}
 #endif
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
-			Data->SetStringField(TEXT("object"), Object->GetPathName());
+			// The object the value actually landed on, which is the component
+			// rather than the actor whenever the path crossed a reference.
+			Data->SetStringField(TEXT("object"), OwningObject->GetPathName());
 			Data->SetField(TEXT("value"), ObjectReferenceOrJson(Property, ValueAddr));
+
+			// Writing a CDO or a component template succeeds and changes nothing
+			// anyone is looking at, because instances already in the level keep
+			// their own copy. Say so rather than let it read as a no-op edit.
+			if (OwningObject->HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject))
+			{
+				Data->SetBoolField(TEXT("archetype"), true);
+				return FUplinkToolResult::Ok(Data,
+					TEXT("written to a template - actors already placed in a level keep their own value, so respawn them to see it"));
+			}
 			return FUplinkToolResult::Ok(Data);
 		});
 

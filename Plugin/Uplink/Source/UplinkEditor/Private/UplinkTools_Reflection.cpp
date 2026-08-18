@@ -102,6 +102,8 @@ void UplinkTools::RegisterReflection(FUplinkToolRegistry& Registry)
 
 			TArray<TSharedPtr<FJsonValue>> Properties;
 			TArray<TSharedPtr<FJsonValue>> Delegates;
+			int32 TotalProperties = 0;
+			int32 TotalDelegates = 0;
 			for (TFieldIterator<FProperty> It(Class, SuperFlags); It; ++It)
 			{
 				if (!Filter.IsEmpty() && !It->GetName().Contains(Filter))
@@ -110,6 +112,7 @@ void UplinkTools::RegisterReflection(FUplinkToolRegistry& Registry)
 				}
 				if (const FMulticastDelegateProperty* Delegate = CastField<FMulticastDelegateProperty>(*It))
 				{
+					++TotalDelegates;
 					if (Delegates.Num() >= Max)
 					{
 						continue;
@@ -121,6 +124,7 @@ void UplinkTools::RegisterReflection(FUplinkToolRegistry& Registry)
 					Delegates.Add(MakeShared<FJsonValueObject>(Row));
 					continue;
 				}
+				++TotalProperties;
 				if (Properties.Num() >= Max)
 				{
 					continue;
@@ -132,13 +136,20 @@ void UplinkTools::RegisterReflection(FUplinkToolRegistry& Registry)
 			}
 
 			TArray<TSharedPtr<FJsonValue>> Functions;
-			for (TFieldIterator<UFunction> It(Class, SuperFlags); It && Functions.Num() < Max; ++It)
+			int32 TotalFunctions = 0;
+			for (TFieldIterator<UFunction> It(Class, SuperFlags); It; ++It)
 			{
 				if (!Filter.IsEmpty() && !It->GetName().Contains(Filter))
 				{
 					continue;
 				}
+				++TotalFunctions;
+				if (Functions.Num() >= Max)
+				{
+					continue;
+				}
 				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("name"), It->GetName());
 				Row->SetStringField(TEXT("signature"), BuildSignature(*It));
 				Row->SetStringField(TEXT("flags"), DescribeFunctionFlags(*It));
 				AddCallHint(Row, Class, *It);
@@ -148,6 +159,16 @@ void UplinkTools::RegisterReflection(FUplinkToolRegistry& Registry)
 			Data->SetArrayField(TEXT("properties"), Properties);
 			Data->SetArrayField(TEXT("functions"), Functions);
 			Data->SetArrayField(TEXT("delegates"), Delegates);
+			// AActor alone carries more than 150 of each, so the default cap is
+			// reached constantly. Without these an agent reads a capped list as
+			// the whole class and concludes a function does not exist.
+			Data->SetNumberField(TEXT("total_properties"), TotalProperties);
+			Data->SetNumberField(TEXT("total_functions"), TotalFunctions);
+			Data->SetNumberField(TEXT("total_delegates"), TotalDelegates);
+			Data->SetBoolField(TEXT("truncated"),
+				TotalProperties > Properties.Num()
+				|| TotalFunctions > Functions.Num()
+				|| TotalDelegates > Delegates.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 

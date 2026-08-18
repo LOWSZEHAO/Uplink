@@ -135,12 +135,19 @@ void UplinkTools::RegisterRepair(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("bp_find_broken"),
 		TEXT("Find every Blueprint in the project that does not compile, GROUPED BY WHAT BROKE IT. This is the tool for a project that stopped working after a C++ change: one renamed function can break a dozen assets and produce hundreds of error lines that all say the same thing. The grouping is the point - it turns an unreadable list into 'these twelve assets are broken by this one node'. Compiling is real work, so raise 'max' deliberately on a large project. Pair with bp_repair, which fixes the mechanical cases."),
-		TEXT(R"json({"type":"object","properties":{"path_prefix":{"type":"string","default":"/Game"},"max":{"type":"number","default":300,"description":"How many Blueprints to compile-check"},"max_assets_per_cause":{"type":"number","default":12},"include_warnings":{"type":"boolean","default":false}}})json"),
-		/*bReadOnly=*/true,
+		TEXT(R"json({"type":"object","properties":{"path_prefix":{"type":"string","default":"/Game"},"max":{"type":"number","default":120,"description":"How many Blueprints to compile-check"},"max_assets_per_cause":{"type":"number","default":12},"include_warnings":{"type":"boolean","default":false}}})json"),
+		// Not read-only: it loads and compiles every Blueprint it checks. A client
+		// deciding what to auto-approve should be told that is real work.
+		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			const FString PathPrefix = GetString(Ctx.Params, TEXT("path_prefix"), TEXT("/Game"));
-			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 300.0)), 1, 5000);
+			// Each one is a synchronous package load plus a real compile, and the
+			// whole sweep runs inside a single tool call, so the default has to be
+			// a number the editor can chew through without looking hung. The
+			// description tells you to raise it deliberately; 300 did not match
+			// that advice.
+			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 120.0)), 1, 5000);
 			const int32 MaxPerCause = FMath::Clamp(
 				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max_assets_per_cause"), 12.0)), 1, 200);
 			bool bIncludeWarnings = false;
@@ -392,8 +399,7 @@ void UplinkTools::RegisterRepair(FUplinkToolRegistry& Registry)
 			if (bSave && ToSave.Num() > 0)
 			{
 				TArray<UPackage*> Failed;
-				FEditorFileUtils::PromptForCheckoutAndSave(
-					ToSave, /*bCheckDirty=*/false, /*bPromptToSave=*/false, &Failed);
+				SavePackagesUnattended(ToSave, /*bCheckDirty=*/false, &Failed);
 				Saved = ToSave.Num() - Failed.Num();
 			}
 

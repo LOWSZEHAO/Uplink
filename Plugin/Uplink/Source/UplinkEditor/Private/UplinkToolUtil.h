@@ -6,6 +6,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "FileHelpers.h"
 #include "Editor/EditorEngine.h"
 #include "EditorSubsystem.h"
 #include "Engine/Engine.h"
@@ -23,6 +24,31 @@
 /** Small param/lookup helpers shared by the tool implementations. */
 namespace UplinkToolUtil
 {
+	/**
+	 * Save packages without any chance of a dialog.
+	 *
+	 * bPromptToSave=false only suppresses the "save these?" list. On a project
+	 * under source control, or with a read-only .uasset on disk,
+	 * PromptForCheckoutAndSave still opens a blocking checkout dialog - and a
+	 * blocking dialog on the game thread stops every other tool too, including
+	 * the one you would ask what went wrong. FileHelpers has exactly one
+	 * dialog-free path and this flag is the way in.
+	 *
+	 * Returns true when every package was written.
+	 */
+	inline bool SavePackagesUnattended(const TArray<UPackage*>& Packages, bool bCheckDirty, TArray<UPackage*>* OutFailed = nullptr)
+	{
+		TArray<UPackage*> Failed;
+		TGuardValue<bool> UnattendedGuard(GIsRunningUnattendedScript, true);
+		const FEditorFileUtils::EPromptReturnCode Result = FEditorFileUtils::PromptForCheckoutAndSave(
+			Packages, bCheckDirty, /*bPromptToSave=*/false, &Failed);
+		if (OutFailed)
+		{
+			*OutFailed = Failed;
+		}
+		return Result == FEditorFileUtils::PR_Success && Failed.Num() == 0;
+	}
+
 	/**
 	 * The JSON converter resolves an object path it cannot find to null and
 	 * reports success, so a typo'd asset path used to sail through and only

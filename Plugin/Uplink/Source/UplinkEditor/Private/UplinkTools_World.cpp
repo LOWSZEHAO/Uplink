@@ -337,10 +337,18 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 						const FString MaterialPath = GetString(*Spec, TEXT("material"));
 						if (!MaterialPath.IsEmpty())
 						{
-							if (UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath))
+							UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+							if (!Material)
 							{
-								MeshComponent->SetMaterial(0, Material);
+								// Same policy as the mesh above. Skipping this
+								// quietly produced a batch of default-grey actors
+								// reported as spawned, which is exactly the kind
+								// of success-for-work-not-done this refuses to do.
+								return FUplinkToolResult::Error(FString::Printf(
+									TEXT("actors[%d]: material not found: %s (%d spawned before the failure)"),
+									Index, *MaterialPath, Spawned.Num()));
 							}
+							MeshComponent->SetMaterial(0, Material);
 						}
 					}
 				}

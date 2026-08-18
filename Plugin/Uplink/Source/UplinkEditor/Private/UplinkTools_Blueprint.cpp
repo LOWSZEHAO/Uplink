@@ -1495,10 +1495,7 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 				}
 				UPackage* Package = Blueprint->GetOutermost();
 				TArray<UPackage*> ToSave{ Package };
-				TArray<UPackage*> Failed;
-				FEditorFileUtils::PromptForCheckoutAndSave(
-					ToSave, /*bCheckDirty=*/false, /*bPromptToSave=*/false, &Failed);
-				Data->SetBoolField(TEXT("saved"), Failed.Num() == 0);
+				Data->SetBoolField(TEXT("saved"), SavePackagesUnattended(ToSave, /*bCheckDirty=*/false));
 			};
 
 			bool bCompile = false;

@@ -181,6 +181,9 @@ void UplinkTools::RegisterTests(FUplinkToolRegistry& Registry)
 	Info.Description = TEXT("Run engine/project automation tests whose name contains 'filter' and report per-test pass/fail with errors and durations. Runs up to 'max' matches sequentially; only one run_tests at a time. Be specific with the filter - some editor tests open maps or take minutes.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"filter":{"type":"string"},"max":{"type":"number","default":20}},"required":["filter"]})json"));
 	Info.bReadOnly = false;
+	// Twenty minutes is far too long to hold the undo buffer open, and a test
+	// run is not an edit the user would ever want to undo.
+	Info.bTransactional = false;
 	Info.TimeoutSeconds = 1200.0;
 	Registry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
 	{

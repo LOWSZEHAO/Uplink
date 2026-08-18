@@ -3,12 +3,48 @@
   "_purpose": "Make the assets bp_create cannot: a Widget Blueprint compiled far enough that its generated class resolves and accepts a root widget, and a Material Instance whose parent was set through the factory and reads back. Names the factory it expects, so a different pick is a failure rather than a surprise. Cleans up after itself.",
   "steps": [
     {
+      "_note": "Housekeeping: clear debris from an aborted earlier run. Deleting something that is not there still succeeds, so this is safe on a clean project.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/MI_ScenarioChild"
+        }
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run. Deleting something that is not there still succeeds, so this is safe on a clean project.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/M_ScenarioBase"
+        }
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run. Deleting something that is not there still succeeds, so this is safe on a clean project.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/WBP_ScenarioPanel"
+        }
+      }
+    },
+    {
       "tool": "asset_create",
       "params": {
         "path": "/Game/UplinkScenarios/WBP_ScenarioPanel",
         "class": "WidgetBlueprint"
       },
-      "expect": { "factory": "WidgetBlueprintFactory", "generated_class": "/Game/UplinkScenarios/WBP_ScenarioPanel.WBP_ScenarioPanel_C" }
+      "expect": {
+        "factory": "WidgetBlueprintFactory",
+        "generated_class": "/Game/UplinkScenarios/WBP_ScenarioPanel.WBP_ScenarioPanel_C"
+      }
     },
     {
       "tool": "widget_add",
@@ -20,8 +56,12 @@
     },
     {
       "tool": "widget_tree",
-      "params": { "blueprint": "/Game/UplinkScenarios/WBP_ScenarioPanel" },
-      "expect": { "total": 1 }
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/WBP_ScenarioPanel"
+      },
+      "expect": {
+        "total": 1
+      }
     },
     {
       "tool": "asset_create",
@@ -29,16 +69,22 @@
         "path": "/Game/UplinkScenarios/M_ScenarioBase",
         "class": "Material"
       },
-      "expect": { "factory": "MaterialFactoryNew" }
+      "expect": {
+        "factory": "MaterialFactoryNew"
+      }
     },
     {
       "tool": "asset_create",
       "params": {
         "path": "/Game/UplinkScenarios/MI_ScenarioChild",
         "class": "MaterialInstanceConstant",
-        "properties": { "InitialParent": "/Game/UplinkScenarios/M_ScenarioBase.M_ScenarioBase" }
+        "properties": {
+          "InitialParent": "/Game/UplinkScenarios/M_ScenarioBase.M_ScenarioBase"
+        }
       },
-      "expect": { "factory": "MaterialInstanceConstantFactoryNew" }
+      "expect": {
+        "factory": "MaterialInstanceConstantFactoryNew"
+      }
     },
     {
       "tool": "get_property",
@@ -46,14 +92,8 @@
         "object_path": "/Game/UplinkScenarios/MI_ScenarioChild.MI_ScenarioChild",
         "property": "Parent"
       },
-      "expect": { "value": "/Game/UplinkScenarios/M_ScenarioBase.M_ScenarioBase" }
-    },
-    {
-      "tool": "call_function",
-      "params": {
-        "object_path": "subsystem:EditorAssetSubsystem",
-        "function": "DeleteAsset",
-        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/MI_ScenarioChild" }
+      "expect": {
+        "value": "/Game/UplinkScenarios/M_ScenarioBase.M_ScenarioBase"
       }
     },
     {
@@ -61,7 +101,9 @@
       "params": {
         "object_path": "subsystem:EditorAssetSubsystem",
         "function": "DeleteAsset",
-        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/M_ScenarioBase" }
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/MI_ScenarioChild"
+        }
       }
     },
     {
@@ -69,7 +111,19 @@
       "params": {
         "object_path": "subsystem:EditorAssetSubsystem",
         "function": "DeleteAsset",
-        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/WBP_ScenarioPanel" }
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/M_ScenarioBase"
+        }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/WBP_ScenarioPanel"
+        }
       }
     }
   ]

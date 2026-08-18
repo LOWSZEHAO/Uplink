@@ -303,7 +303,8 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 50)), 1, 500);
 
 			TArray<TSharedPtr<FJsonValue>> Rows;
-			for (TActorIterator<AActor> It(World); It && Rows.Num() < Max; ++It)
+			int32 Total = 0;
+			for (TActorIterator<AActor> It(World); It; ++It)
 			{
 				AActor* Actor = *It;
 				const FString ClassName = Actor->GetClass()->GetPathName();
@@ -312,6 +313,15 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 					continue;
 				}
 				if (!NameFilter.IsEmpty() && !Actor->GetName().Contains(NameFilter))
+				{
+					continue;
+				}
+
+				// Counted before the cap, so a capped reply can say so. A world
+				// summary that silently stops at 50 actors reads as "there are
+				// 50 actors", which is the wrong conclusion to hand an agent.
+				++Total;
+				if (Rows.Num() >= Max)
 				{
 					continue;
 				}
@@ -333,6 +343,8 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetArrayField(TEXT("actors"), Rows);
+			Data->SetNumberField(TEXT("total_matching"), Total);
+			Data->SetBoolField(TEXT("truncated"), Total > Rows.Num());
 			return FUplinkToolResult::Ok(Data);
 		});
 

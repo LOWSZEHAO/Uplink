@@ -2,7 +2,7 @@
 # A junction means there is only ever ONE copy of the plugin source - edits in
 # the repo are immediately visible to every linked project (no copy drift).
 # PowerShell 5.1 compatible; junctions need no admin rights.
-# Copyright (c) 2026 Low Sze Hao. MIT License.
+# Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 param(
     [Parameter(Mandatory = $true)]

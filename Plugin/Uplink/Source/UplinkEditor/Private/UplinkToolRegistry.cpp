@@ -85,13 +85,15 @@ void FUplinkToolRegistry::RegisterQuick(
 	const FString& Description,
 	const FString& SchemaJson,
 	bool bReadOnly,
-	TFunction<FUplinkToolResult(const FUplinkToolContext&)> Fn)
+	TFunction<FUplinkToolResult(const FUplinkToolContext&)> Fn,
+	bool bTransactional)
 {
 	FUplinkToolInfo Info;
 	Info.Name = Name;
 	Info.Description = Description;
 	Info.InputSchema = ParseSchema(SchemaJson);
 	Info.bReadOnly = bReadOnly;
+	Info.bTransactional = bTransactional;
 
 	TSharedRef<TFunction<FUplinkToolResult(const FUplinkToolContext&)>> Shared =
 		MakeShared<TFunction<FUplinkToolResult(const FUplinkToolContext&)>>(MoveTemp(Fn));

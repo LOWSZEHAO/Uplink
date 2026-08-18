@@ -271,9 +271,18 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 					TEXT("'%s' is not a valid asset path. It must be a content path including the asset name, e.g. /Game/UI/WBP_Panel."),
 					*Path));
 			}
-			if (FPackageName::DoesPackageExist(Path) || FindPackage(nullptr, *Path))
+			// On disk and in memory are different answers, and saying which one
+			// it hit matters: an asset created earlier this session and never
+			// saved leaves nothing on disk, so "an asset already exists" next to
+			// an empty Content folder reads as a bug in the tool.
+			const bool bOnDisk = FPackageName::DoesPackageExist(Path);
+			const bool bInMemory = StaticFindObject(UObject::StaticClass(), nullptr, *Path) != nullptr;
+			if (bOnDisk || bInMemory)
 			{
-				return FUplinkToolResult::Error(FString::Printf(TEXT("an asset already exists at %s"), *Path));
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("an asset already exists at %s (%s). Delete it first, or pick another path."),
+					*Path,
+					bOnDisk ? TEXT("on disk") : TEXT("created earlier this session and not yet saved")));
 			}
 
 			const FString ClassSpec = GetString(Ctx.Params, TEXT("class"));
@@ -435,10 +444,7 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			{
 				TArray<UPackage*> Packages;
 				Packages.Add(Created->GetOutermost());
-				TArray<UPackage*> Failed;
-				FEditorFileUtils::PromptForCheckoutAndSave(
-					Packages, /*bCheckDirty=*/false, /*bPromptToSave=*/false, &Failed);
-				bSave = Failed.Num() == 0;
+				bSave = SavePackagesUnattended(Packages, /*bCheckDirty=*/false);
 			}
 			Data->SetBoolField(TEXT("saved"), bSave);
 
@@ -542,44 +548,47 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 				FEditorFileUtils::GetDirtyContentPackages(Packages);
 			}
 
-			TArray<TSharedPtr<FJsonValue>> Names;
-			for (const UPackage* Package : Packages)
-			{
-				Names.Add(MakeShared<FJsonValueString>(Package->GetName()));
-			}
-
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
-			Data->SetArrayField(bListOnly ? TEXT("unsaved") : TEXT("saved"), Names);
 			Data->SetNumberField(TEXT("count"), Packages.Num());
 
 			if (bListOnly || Packages.Num() == 0)
 			{
+				TArray<TSharedPtr<FJsonValue>> Names;
+				for (const UPackage* Package : Packages)
+				{
+					Names.Add(MakeShared<FJsonValueString>(Package->GetName()));
+				}
+				Data->SetArrayField(bListOnly ? TEXT("unsaved") : TEXT("saved"), Names);
 				return FUplinkToolResult::Ok(Data, Packages.Num() == 0
 					? TEXT("nothing to save") : FString());
 			}
 
-			// bPromptToSave=false: this runs unattended, a dialog would hang the
-			// editor waiting for a click nobody is there to give.
+			// Runs unattended: a dialog would hang the editor waiting for a click
+			// nobody is there to give, and take every other tool down with it.
 			TArray<UPackage*> Failed;
-			const FEditorFileUtils::EPromptReturnCode Result = FEditorFileUtils::PromptForCheckoutAndSave(
-				Packages, /*bCheckDirty=*/AssetPath.IsEmpty(), /*bPromptToSave=*/false, &Failed);
+			const bool bAllSaved = SavePackagesUnattended(Packages, /*bCheckDirty=*/AssetPath.IsEmpty(), &Failed);
 
-			if (Failed.Num() > 0)
+			// 'saved' is built AFTER the attempt and excludes the failures, so a
+			// package can no longer appear in both lists at once.
+			TArray<TSharedPtr<FJsonValue>> SavedNames;
+			TArray<TSharedPtr<FJsonValue>> FailedNames;
+			for (UPackage* Package : Packages)
 			{
-				TArray<TSharedPtr<FJsonValue>> FailedNames;
-				for (const UPackage* Package : Failed)
-				{
-					FailedNames.Add(MakeShared<FJsonValueString>(Package->GetName()));
-				}
+				const TSharedRef<FJsonValueString> Name = MakeShared<FJsonValueString>(Package->GetName());
+				(Failed.Contains(Package) ? FailedNames : SavedNames).Add(Name);
+			}
+			Data->SetArrayField(TEXT("saved"), SavedNames);
+			if (FailedNames.Num() > 0)
+			{
 				Data->SetArrayField(TEXT("failed"), FailedNames);
 			}
 
-			if (Result != FEditorFileUtils::PR_Success)
+			if (!bAllSaved)
 			{
 				return FUplinkToolResult::Error(FString::Printf(
 					TEXT("save did not complete (%d of %d package(s) failed) - a read-only file or source control checkout is the usual cause"),
 					Failed.Num(), Packages.Num()));
 			}
-			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("saved %d package(s)"), Packages.Num()));
+			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("saved %d package(s)"), SavedNames.Num()));
 		});
 }
