@@ -1,0 +1,113 @@
+{
+  "_name": "Batch failure semantics",
+  "_purpose": "What a bp_modify batch does when an op in the middle of it fails: it stops there, reports which op failed and how many had been applied, and leaves those earlier ops in place. There is no rollback - a batch is a convenience for round trips, not a transaction - and this file pins that down by proving both halves separately. Half-applied and honest about it beats half-applied and silent.",
+  "_reading": "One step carries expect_failure:true and passes by being refused. The steps around it are the real assertions: the variables from before the failure are addressable, and the one after it is not.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_BatchScenario"
+        }
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_BatchScenario",
+        "parent_class": "/Script/Engine.Actor"
+      }
+    },
+    {
+      "_note": "Four ops with a misspelt event name third. The batch cannot get past it: an event that is not on the class is refused rather than built as a nameless node, which is the refusal 09 pins. The response names the failing index and the count applied before it - here that is two.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_BatchScenario.BP_BatchScenario",
+        "ops": [
+          {
+            "op": "add_variable",
+            "name": "BatchProbeApplied",
+            "type": "int"
+          },
+          {
+            "op": "add_variable",
+            "name": "BatchProbeAlsoApplied",
+            "type": "bool"
+          },
+          {
+            "op": "add_node",
+            "kind": "event",
+            "name": "ReceiveBeginPlayy"
+          },
+          {
+            "op": "add_variable",
+            "name": "BatchProbeNeverRuns",
+            "type": "float"
+          }
+        ],
+        "compile": true
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The first op survived the failure. set_variable refuses a name the blueprint does not have, so a success here is the variable really being there.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_BatchScenario.BP_BatchScenario",
+        "op": "set_variable",
+        "name": "BatchProbeApplied",
+        "category": "Uplink"
+      },
+      "expect": {
+        "variable": "BatchProbeApplied"
+      }
+    },
+    {
+      "_note": "And the op immediately before the failure, which is the one an 'it rolled back' reading would expect to be gone.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_BatchScenario.BP_BatchScenario",
+        "op": "set_variable",
+        "name": "BatchProbeAlsoApplied",
+        "category": "Uplink"
+      },
+      "expect": {
+        "variable": "BatchProbeAlsoApplied"
+      }
+    },
+    {
+      "_note": "The other half: nothing after the failing op ran. This is the same tool, the same call shape, and a different answer - which is what makes the two steps above evidence.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_BatchScenario.BP_BatchScenario",
+        "op": "set_variable",
+        "name": "BatchProbeNeverRuns",
+        "category": "Uplink"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "A stopped batch leaves a blueprint that is half-edited, not a broken one. It never got its compile - the failure skips it - so compile it here and read the count.",
+      "tool": "bp_compile",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_BatchScenario.BP_BatchScenario"
+      },
+      "expect": {
+        "errors": 0
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_BatchScenario"
+        }
+      }
+    }
+  ]
+}

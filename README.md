@@ -10,6 +10,20 @@ An agent editing your project is only useful if you can trust what it did. Most 
 
 The other half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTION in the engine or in your project, and `get_property` / `set_property` walk dotted paths through structs and object references. Systems with no dedicated tool are still reachable.
 
+## The loop
+
+Individually these are just tools. What they add up to is a development loop that closes without leaving the conversation:
+
+```
+understand  →  author  →  run  →  observe  →  assert  →  repair
+     ↑                                                      │
+     └──────────────────────────────────────────────────────┘
+```
+
+Read an unfamiliar project (`project_entry`, `class_info`, `input_map`), change it (`bp_modify`, `asset_create`, `set_property`), start it (`pie_start`), watch what happens (`watch_events`, `get_world_state`), decide whether that was right (`wait_until`, `run_scenario` expectations), and fix what was not (`bp_find_broken`, `bp_repair`). Then do it again.
+
+Two honest limits on that picture. Every step is one round trip, so the loop is scripted rather than autonomous — you or the agent decide each move, and `run_scenario` is how a decided sequence gets replayed without a human in it. And nothing here plays your game: an agent can drive a character and read the result, but working out what a player would do next is a different problem than this plugin solves.
+
 ## Status
 
 **v0.27.0 — 105 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
@@ -47,7 +61,7 @@ Recent work has been trustworthiness, and the tools for reading an unfamiliar pr
    .\scripts\build_all.ps1
    ```
 
-   The link is a junction, so one clone serves every project you point it at — but the plugin's `Binaries/` and `Intermediate/` are shared along with the source. Link the same clone into a 5.7 project *and* a 5.8 one and whichever you built last wins; the other opens with "modules are missing or built with a different engine version". Delete `Plugin/Uplink/Binaries` and `Plugin/Uplink/Intermediate` and rebuild when you switch, or keep a clone per engine.
+   The link shares the plugin's *source* and gives each project its own `Binaries/` and `Intermediate/`, so one clone can serve a 5.7 project and a 5.8 one at the same time without either clobbering the other's build. (Before v0.27 the whole folder was one junction and you had to delete both by hand when switching engines; if you linked with an older script, re-run it with `-Remove` first.)
 
 4. **Register with Claude Code — no Node required.** The plugin speaks MCP natively over HTTP:
 
@@ -68,7 +82,8 @@ claude mcp add uplink -- node "<repo>\bridge\index.js"
 
 Worth reading before you point an agent at real work.
 
-- **There is no authentication.** Any process on your machine can call the server while the editor is running. It binds loopback only (`127.0.0.1`, never reachable from the network), validates browser `Origin` headers, caps bodies at 2 MB, and refuses to start if the port is taken or the engine's HTTP listener has been pointed at a non-loopback address — but on your own machine it is open by design.
+- **There is no authentication unless you ask for one.** By default any process on your machine can call the server while the editor is running. It binds loopback only (`127.0.0.1`, never reachable from the network), parses and checks browser `Origin` headers, caps bodies at 2 MB, and refuses to start if the port is taken or the engine's HTTP listener has been pointed at a non-loopback address — but on your own machine it is open by design. Launch the editor with `UPLINK_AUTH_TOKEN` set and every request must then present that bearer token instead.
+- **Tools say what they can do.** Alongside the standard `readOnlyHint` and `destructiveHint`, Uplink publishes which tools run caller-named code (`call_function`, `console_command`), which need a live play session, and which routinely take a while — so a client can weigh a call before making it.
 - **`call_function` calls arbitrary UFUNCTIONs, deliberately.** It is what makes most of the engine reachable without a tool per feature. It also means the blast radius is anything Blueprint could do, plus the editor scripting libraries.
 - **Mutations are undoable, with exceptions.** A tool that writes runs in its own named editor transaction, so its edits roll back with Ctrl+Z or `edit_history` like a hand edit. Nothing transacts while a PIE session is live, because the engine does not record changes to a play world. Tools that drive the session rather than edit assets opt out on purpose: `pie_*`, `input_action`, `input_key`, `navigate_to`, `run_scenario`, `input_replay`, plus `live_compile`, `run_tests` and `edit_history` itself.
 - **Nothing is saved unless you ask.** Authoring leaves work dirty in memory and `save` writes it. That cuts both ways: unsaved mistakes vanish on restart, and so does unsaved good work.

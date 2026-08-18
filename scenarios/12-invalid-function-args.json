@@ -1,0 +1,143 @@
+{
+  "_name": "Invalid function arguments",
+  "_purpose": "call_function reaches every BlueprintCallable function in a project by reflection, so the way it handles a wrong argument decides whether a mistake is reported or acted on. An argument name that matches no parameter is refused with the real parameter list, and a value of the wrong shape is refused before the function runs. An argument that is simply absent is NOT refused - the parameter frame starts zeroed - and the last few steps prove that rather than pretend otherwise.",
+  "_reading": "Two steps carry expect_failure:true and pass by being refused; the rest pass normally, so the whole scenario reads green.",
+  "steps": [
+    {
+      "_why": "Clear the probe an aborted earlier run may have left behind. Deleting nothing is not an error.",
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkArgProbe"
+        ],
+        "world": "editor"
+      }
+    },
+    {
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.StaticMeshActor",
+        "location": {
+          "x": 0,
+          "y": 0,
+          "z": 12345
+        },
+        "label": "UplinkArgProbe",
+        "world": "editor"
+      }
+    },
+    {
+      "_note": "The starting value, so the assertions further down are readings rather than assumptions.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "property": "bActorEnableCollision",
+        "world": "editor"
+      },
+      "expect": {
+        "value": true
+      }
+    },
+    {
+      "_note": "A plausible-looking argument name that is not the parameter's name. Left alone this becomes a zero-default with no complaint, so the caller sees a success and no effect - the exact shape of failure this project refuses to produce. The error names the parameters that do exist.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "function": "SetActorEnableCollision",
+        "args": {
+          "bEnabled": false
+        },
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Refused means refused: the call never ran, so the value is untouched.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "property": "bActorEnableCollision",
+        "world": "editor"
+      },
+      "expect": {
+        "value": true
+      }
+    },
+    {
+      "_note": "Right name, wrong shape: a number where a Vector is expected. The conversion fails and the function is never entered, so the actor does not move to some half-built location.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "function": "K2_SetActorLocation",
+        "args": {
+          "NewLocation": 500
+        },
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Now the honest part. A missing argument is NOT refused - it becomes the parameter's C++ default if the engine recorded one, and zero if it did not. SetActorEnableCollision has no declared default, so omitting it means false. Naming this here rather than leaving it to be discovered.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "function": "SetActorEnableCollision",
+        "args": {},
+        "world": "editor"
+      },
+      "expect": {
+        "function": "SetActorEnableCollision"
+      }
+    },
+    {
+      "_note": "The zero-fill, read back off the actor: collision is now off, from a call that named nothing.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "property": "bActorEnableCollision",
+        "world": "editor"
+      },
+      "expect": {
+        "value": false
+      }
+    },
+    {
+      "_note": "The same call written correctly, to show the parameter is reachable and it was only the omission that turned it off.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "function": "SetActorEnableCollision",
+        "args": {
+          "bNewActorEnableCollision": true
+        },
+        "world": "editor"
+      },
+      "expect": {
+        "function": "SetActorEnableCollision"
+      }
+    },
+    {
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "property": "bActorEnableCollision",
+        "world": "editor"
+      },
+      "expect": {
+        "value": true
+      }
+    },
+    {
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkArgProbe"
+        ],
+        "world": "editor"
+      },
+      "expect": {
+        "destroyed": 1
+      }
+    }
+  ]
+}

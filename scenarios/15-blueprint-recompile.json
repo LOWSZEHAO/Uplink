@@ -1,0 +1,161 @@
+{
+  "_name": "Recompiling across a dependency",
+  "_purpose": "Two Blueprints where one inherits from the other and calls a function it declares. Editing the base and recompiling must leave the child compiling clean; taking that function away must leave the child REPORTED broken rather than quietly stale. The second half is the one worth having - a compile result that only ever says 'compiled' is not a compile result, and a dependent that reads fine while its parent no longer offers what it calls is the bug an agent cannot see.",
+  "_note": "Deletion order matters both ways round: the child holds a reference to the base, so it goes first at both ends of the file.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run, child before base.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_LinkUser"
+        }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_LinkBase"
+        }
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_LinkBase",
+        "parent_class": "/Script/Engine.Actor"
+      }
+    },
+    {
+      "_note": "The thing the child will depend on. It has to exist and be compiled before the child is created, or the child's skeleton never inherits it.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkBase.BP_LinkBase",
+        "op": "add_function",
+        "name": "GetScenarioLabel",
+        "outputs": [
+          {
+            "name": "Label",
+            "type": "string"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "Parented off the class the previous create returned, rather than a path retyped by hand.",
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_LinkUser",
+        "parent_class": "$steps[2].generated_class"
+      }
+    },
+    {
+      "_note": "The dependency, made real: BeginPlay into a call of the inherited function. class 'self' resolves against this blueprint's own skeleton, which is where an inherited function lives.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkUser.BP_LinkUser",
+        "ops": [
+          {
+            "op": "add_node",
+            "kind": "event",
+            "name": "ReceiveBeginPlay",
+            "ref": "begin"
+          },
+          {
+            "op": "add_node",
+            "kind": "call_function",
+            "class": "self",
+            "function": "GetScenarioLabel",
+            "ref": "call"
+          },
+          {
+            "op": "connect",
+            "from_node": "@begin",
+            "from_pin": "then",
+            "to_node": "@call",
+            "to_pin": "execute"
+          },
+          {
+            "op": "arrange"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "tool": "bp_query",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkUser.BP_LinkUser"
+      },
+      "expect": {
+        "status": "up_to_date"
+      }
+    },
+    {
+      "_note": "A change to the base that does not touch what the child uses.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkBase.BP_LinkBase",
+        "op": "add_variable",
+        "name": "AddedAfterTheChildExisted",
+        "type": "int",
+        "compile": true
+      }
+    },
+    {
+      "_note": "The child still compiles - recompiling a base does not invalidate a dependent that was not relying on anything that moved.",
+      "tool": "bp_compile",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkUser.BP_LinkUser"
+      },
+      "expect": {
+        "errors": 0
+      }
+    },
+    {
+      "_note": "Now take the function away. The base itself is fine - nothing in it referred to the function - so this step succeeds.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkBase.BP_LinkBase",
+        "op": "remove_function",
+        "name": "GetScenarioLabel",
+        "compile": true
+      }
+    },
+    {
+      "_note": "And the child is reported broken. bp_compile fails on a blueprint with errors rather than returning a clean report with an error count buried in it, which is why this is expect_failure rather than an expect of errors:1.",
+      "tool": "bp_compile",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_LinkUser.BP_LinkUser"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The blueprint is left broken on purpose and then deleted. Restoring the function and recompiling would be a second claim - whether a dangling call heals when its target comes back - and it is not the one this file is making.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_LinkUser"
+        }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_LinkBase"
+        }
+      }
+    }
+  ]
+}

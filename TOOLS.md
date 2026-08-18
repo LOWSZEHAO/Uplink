@@ -71,6 +71,7 @@ own Blueprint events.
 
 | Tool | What it does |
 |---|---|
+| `observe` | One snapshot of the running game from the **player's** position: pawn location/velocity/movement mode, what is under the crosshair, and the nearest actors ordered by distance — each with its collision profile, whether it is overlapping the player right now, and the names of the events it can fire (feed one straight to `watch_events`). Reports facts only: there is deliberately no `interactable: true` field, because that is a guess wearing an observation's clothes. Pair it with `viewport_screenshot` when the agent needs to see as well as know. `{radius?, max?, class_contains?, world?}` |
 | `watch_events` | Record broadcasts of any dynamic multicast delegate (BlueprintAssignable events), with decoded parameter payloads. `{actor/object_path/component, delegate: <name>\|"*", world?}` → `watch_id`. Watches stop automatically when PIE ends. |
 | `drain_events` | Read captured events oldest-first. `{since_seq?, watch_id?, max?}` → events + `next_seq`. |
 | `unwatch` | `{watch_id}` or `{all:true}`. |
@@ -84,7 +85,18 @@ own Blueprint events.
 
 | Tool | What it does |
 |---|---|
-| `run_scenario` | Ordered tool steps executed as one task with a structured pass/fail report. `{steps:[{tool, params?, expect?, expect_failure?, timeout?}], stop_on_failure?}`. `expect` matches fields of the step's result data; `expect_failure: true` asserts a **refusal** — that step passes when the tool errors and fails when it succeeds, so one scenario can mix ordinary steps with rejection tests; a `wait_until` step whose condition times out fails the scenario unless explicitly expected. |
+| `run_scenario` | Ordered tool steps executed as one task with a structured pass/fail report. `{steps:[{tool, params?, expect?, expect_failure?, timeout?}], setup?, teardown?, artifacts?, budget_seconds?, stop_on_failure?}`. `expect` matches fields of the step's result data; `expect_failure: true` asserts a **refusal** — that step passes when the tool errors and fails when it succeeds, so one scenario can mix ordinary steps with rejection tests; a `wait_until` step whose condition times out fails the scenario unless explicitly expected. |
+
+A scenario runs in phases, and the phases exist for reasons worth knowing:
+
+| Phase | Behaviour |
+|---|---|
+| `setup` | Builds the fixture. If a setup step fails the main steps are **skipped entirely** — assertions against a fixture that was never built fail for the wrong reason and send you chasing the wrong bug. Results are addressable as `"$setup[N].field"`, the same way `"$steps[N].field"` works. |
+| `steps` | The test itself. `stop_on_failure` (default true) ends this phase early. |
+| `artifacts` | `{screenshot_on_failure: true}` captures the viewport when a step failed, so there is a picture of the moment it went wrong rather than only a field name. |
+| `teardown` | **Always runs** — after a pass, after a failure, and after `stop_on_failure` aborted the run. That last case is the whole point: the run that fails is the one that leaves debris, and the next run's count assertions then quietly mean something else. Every step gets its chance; teardown does not stop at the first failure, and a failed teardown is reported separately from a failed test. |
+
+`budget_seconds` fails a scenario that passed every assertion but took longer than it should. Without it a performance regression hides inside a green suite.
 
 ## Record & replay
 
@@ -325,3 +337,9 @@ Expression object paths come back from each create call; set their fields (e.g. 
 ## Security model
 
 The HTTP server binds loopback only (never network-reachable), refuses to start if the engine's HTTP listener has been reconfigured to a non-loopback address or the port is taken by another process, validates browser `Origin` headers on every route, and caps request bodies at 2 MB.
+
+`Origin` is parsed into scheme, host and port and compared structurally, rather than prefix-matched. That distinction matters: `http://localhost.example.com` *starts with* `http://localhost` and used to be accepted.
+
+**Optional authentication.** Launch the editor with `UPLINK_AUTH_TOKEN` set and every request must then carry `Authorization: Bearer <token>`; anything else gets a 401. Leave the variable unset and there is no authentication, which is the default and is what a single-user local tool normally wants. The token is compared in constant time. If you use the Node bridge, set the same variable in the bridge's environment too — it is a separate process and does not inherit the editor's.
+
+**Risk annotations.** Every tool publishes what it can do, so a client can decide before calling rather than after: `readOnlyHint` and `destructiveHint` (both standard MCP annotations), plus `arbitraryExecutionHint` for the tools that run a caller-named function rather than a fixed operation (`call_function`, `console_command` — their blast radius is the engine, not their parameters), `requiresPieHint`, and `longRunningHint`. These come from one table in `UplinkToolTraits.cpp` rather than from the registration sites, so the list of everything dangerous is a single page you can read.

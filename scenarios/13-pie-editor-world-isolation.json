@@ -1,0 +1,150 @@
+{
+  "_name": "PIE and editor world isolation",
+  "_purpose": "world:\"editor\" and world:\"pie\" really are two different worlds. Play duplicates the level, so anything spawned after that point exists in exactly one of them: an actor put in the editor world while the game runs is invisible to the game, and one spawned into the running game is invisible to the editor and gone when play ends. Getting this wrong is how an agent 'fixes' a level during a playtest and finds the change was never there afterwards.",
+  "_requires": "A project whose default map has a playable pawn (any template will do), and no TargetPoint actors of its own - the counts below use that class as the marker.",
+  "_note": "The order is the whole point. Both probes are spawned AFTER play begins, because an actor placed before pie_start is copied into the PIE world along with the rest of the level and would prove nothing.",
+  "steps": [
+    {
+      "_why": "Clear the editor-world probe an aborted earlier run may have left behind. Deleting nothing is not an error.",
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkIsolationEditorProbe"
+        ],
+        "world": "editor"
+      }
+    },
+    {
+      "_note": "Baseline. If this is not zero the marker class is not a marker in this project, and every count below would mean something else.",
+      "tool": "level_actors",
+      "params": {
+        "class_contains": "TargetPoint",
+        "world": "editor",
+        "max": 5
+      },
+      "expect": {
+        "total_matching": 0
+      }
+    },
+    {
+      "tool": "pie_start",
+      "params": {
+        "mode": "viewport"
+      },
+      "timeout": 90
+    },
+    {
+      "tool": "pie_status",
+      "expect": {
+        "state": "running"
+      }
+    },
+    {
+      "_note": "Into the running game only.",
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.TargetPoint",
+        "location": {
+          "x": 0,
+          "y": 0,
+          "z": 500
+        },
+        "world": "pie"
+      }
+    },
+    {
+      "_note": "Into the level being edited only. A label is an editor concept, so this one carries a name the game world could never have.",
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.TargetPoint",
+        "location": {
+          "x": 0,
+          "y": 0,
+          "z": 900
+        },
+        "label": "UplinkIsolationEditorProbe",
+        "world": "editor"
+      }
+    },
+    {
+      "_note": "Two actors exist, and each world sees exactly one of them. If the worlds were the same object, or the world parameter were being ignored, both counts would read two.",
+      "tool": "level_actors",
+      "params": {
+        "class_contains": "TargetPoint",
+        "world": "pie",
+        "max": 5
+      },
+      "expect": {
+        "total_matching": 1
+      }
+    },
+    {
+      "tool": "level_actors",
+      "params": {
+        "class_contains": "TargetPoint",
+        "world": "editor",
+        "max": 5
+      },
+      "expect": {
+        "total_matching": 1
+      }
+    },
+    {
+      "_note": "Named rather than counted: the editor-world probe is not reachable from the game by the label it was given.",
+      "tool": "level_actors",
+      "params": {
+        "name_contains": "UplinkIsolationEditorProbe",
+        "world": "pie",
+        "max": 5
+      },
+      "expect": {
+        "total_matching": 0
+      }
+    },
+    {
+      "tool": "pie_stop",
+      "timeout": 60
+    },
+    {
+      "tool": "pie_status",
+      "expect": {
+        "state": "none"
+      }
+    },
+    {
+      "_note": "The PIE world was thrown away with the session and took its probe with it. The editor one survived, which is the other half of the same claim.",
+      "tool": "level_actors",
+      "params": {
+        "class_contains": "TargetPoint",
+        "world": "editor",
+        "max": 5
+      },
+      "expect": {
+        "total_matching": 1
+      }
+    },
+    {
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkIsolationEditorProbe"
+        ],
+        "world": "editor"
+      },
+      "expect": {
+        "destroyed": 1
+      }
+    },
+    {
+      "tool": "level_actors",
+      "params": {
+        "class_contains": "TargetPoint",
+        "world": "editor",
+        "max": 5
+      },
+      "expect": {
+        "total_matching": 0
+      }
+    }
+  ]
+}

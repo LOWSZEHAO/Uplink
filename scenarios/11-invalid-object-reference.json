@@ -1,0 +1,141 @@
+{
+  "_name": "Invalid object references",
+  "_purpose": "A path that names nothing is refused, not accepted as null. Spawning a class that does not exist, reading a property off an asset that does not exist, writing an object reference from a bad path, and passing one as a function argument are all rejected with the path quoted back. The failure this guards against is the quiet one: the reference resolves to nothing, the call reports success, and the damage shows up somewhere else entirely - a material instance with no parent rendering black with nothing in the log.",
+  "_reading": "Every rejection here carries expect_failure:true, so a correct run reads green. A step that is allowed through is the bug.",
+  "steps": [
+    {
+      "_why": "Clear the probe an aborted earlier run may have left behind. Deleting nothing is not an error.",
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkRefProbe"
+        ],
+        "world": "editor"
+      }
+    },
+    {
+      "_note": "A Blueprint class path no asset backs. This must not spawn an empty actor and call it done.",
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Game/UplinkScenarios/BP_NoSuchClass.BP_NoSuchClass_C",
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The same failure from a different source: a native class path with a typo in it.",
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.StaticMeshActorr",
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.StaticMeshActor",
+        "location": {
+          "x": 0,
+          "y": 0,
+          "z": 12345
+        },
+        "label": "UplinkRefProbe",
+        "world": "editor"
+      }
+    },
+    {
+      "_note": "The target itself does not resolve - nothing to read a property from.",
+      "tool": "get_property",
+      "params": {
+        "object_path": "/Game/UplinkScenarios/NoSuchAsset.NoSuchAsset",
+        "property": "Owner",
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The target resolves and the property does not. The error names the class it looked on, which is the half a caller cannot guess.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkRefProbe",
+        "property": "NoSuchPropertyHere",
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Owner is a real object reference on this actor and it is currently empty - an unset reference reads back as an empty path, not as an invented one. That makes the refusal below a statement about the path rather than about the property.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkRefProbe",
+        "property": "Owner",
+        "world": "editor"
+      },
+      "expect": {
+        "value": ""
+      }
+    },
+    {
+      "_note": "The one that matters: an object-typed property handed a path that resolves to nothing. The engine's own text import accepts this, stores null and reports success - set_property checks the result and refuses instead.",
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkRefProbe",
+        "property": "Owner",
+        "value": "/Game/UplinkScenarios/NoSuchActor.NoSuchActor",
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The same guard on the argument side. Passing a silently-null asset into a function is how a wrong result gets blamed on the function instead of on the path that was typed.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkRefProbe",
+        "function": "SetOwner",
+        "args": {
+          "NewOwner": "/Game/UplinkScenarios/NoSuchActor.NoSuchActor"
+        },
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "An actor name that matches nothing. The error lists what is actually in the world, because the usual cause is a label/name mismatch or the wrong world.",
+      "tool": "move_actor",
+      "params": {
+        "actor": "UplinkNotInThisLevel",
+        "location": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "And the asset-shaped version of the same mistake: an edit aimed at a Blueprint that is not there.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_NoSuchBlueprint",
+        "op": "add_variable",
+        "name": "ShouldNeverExist",
+        "type": "int"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkRefProbe"
+        ],
+        "world": "editor"
+      },
+      "expect": {
+        "destroyed": 1
+      }
+    }
+  ]
+}
