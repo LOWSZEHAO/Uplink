@@ -12,7 +12,7 @@ The other half is reach. `call_function` invokes any `BlueprintCallable` UFUNCTI
 
 ## Status
 
-**v0.26.0 — 104 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.27.0 — 105 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. An audit this month found five authoring calls that reported success while doing the wrong thing, all of them already shipped. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -76,7 +76,7 @@ Worth reading before you point an agent at real work.
 
 ## The toolset
 
-104 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
+105 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|
@@ -87,7 +87,7 @@ Worth reading before you point an agent at real work.
 | **Record & replay** | `input_record` (passive tap on a real play session) · `input_replay` (a regression test from a human run) |
 | **Ask the world** | `trace` (line/sphere/box/capsule, by channel or collision profile) · `ai_query` (behaviour tree **active node** and blackboard) · `material_query` (expressions, connections, **compile errors**) |
 | **Blueprint repair** | `bp_find_broken` (every Blueprint that will not compile, grouped by the C++ change that broke it) · `bp_repair` (bulk *Refresh Node* + recompile, reporting what healed and what needs a decision) |
-| **Blueprints** | `bp_create` · `bp_query` · `bp_add_component` · `bp_modify` (variables, function graphs, nodes, wiring, node properties — a whole event graph in one batched call, including Branch, Sequence, Cast, Switch, Select, Make/Break Struct and the standard macros: ForEachLoop, WhileLoop, Gate, FlipFlop…) · `bp_compile` |
+| **Blueprints** | `bp_create` · `bp_query` · `bp_add_component` · `bp_modify` (variables, function graphs, nodes, wiring, node properties — a whole event graph in one batched call, including Branch, Sequence, Cast, Switch, Select, Make/Break Struct and the standard macros: ForEachLoop, WhileLoop, Gate, FlipFlop…) · the declarative half too: event dispatchers, interfaces, and parent overrides · `bp_references` (what calls this function, reads this variable, binds this dispatcher — before you rename it) · `bp_compile` |
 | **Content** | widgets · animation & cinematics · motion matching (GASP) · Niagara · PCG · landscape, lighting and foliage |
 | **Editor & world** | actors (`level_actors`, `spawn_actor`, `spawn_batch` up to 1000, `delete_actors`, `move_actor`) · screenshots and camera · `edit_history` (undo stack) · `ui_tree` / `capture_widget` (any editor panel, even occluded) · `live_compile` |
 | **Reflection** | `get_property` / `set_property` (dotted paths through structs *and* object references) · **`call_function`** (any UFUNCTION) · `class_info` · `find_functions` |

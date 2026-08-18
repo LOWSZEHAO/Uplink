@@ -30,6 +30,7 @@ step if you want one.
 | `06-asset-creation` | The assets `bp_create` cannot make: a Widget Blueprint whose generated class resolves and takes a root widget, and a Material Instance parented through its factory. Names the factory it expects. |
 | `07-graph-flow-control` | A gameplay graph with decisions in it: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch, Select and Self, built in one batched call and compiled clean. |
 | `08-authoring-traps` | Five authoring calls that used to succeed while doing the wrong thing — array node class, function return values, widget-blueprint parent, duplicate event binding, single-child panel overfill. |
+| `09-interfaces-and-dispatchers` | The parts of a Blueprint that are not nodes: a typed event dispatcher, an interface implemented from a second asset, a parent event overridden and called through, and `bp_references` answering "what uses this?". Two steps are regressions — overriding twice used to duplicate the event node, and a variable read in its own graph used to report nothing. |
 
 Everything here runs against any project. `05-playtest` needs a default map with
 a playable pawn, which every template has.

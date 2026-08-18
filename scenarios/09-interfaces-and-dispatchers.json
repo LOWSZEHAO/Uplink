@@ -1,0 +1,270 @@
+{
+  "_name": "Interfaces, dispatchers and overrides",
+  "_purpose": "The declarative half of a Blueprint - the parts that are not nodes: an event dispatcher with typed parameters, an interface implemented from a second asset, a parent event overridden and called through, and a reference search that answers 'what uses this?'. Two of these steps are regression tests for bugs that shipped: overriding twice used to stack a duplicate event node, and a variable used in its own graph used to report zero references.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run. The implementing blueprint goes first - it holds a reference to the interface.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_ContractScenario"
+        }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BPI_ContractScenario"
+        }
+      }
+    },
+    {
+      "_note": "A Blueprint Interface is not something bp_create can make - it needs its own factory.",
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BPI_ContractScenario",
+        "class": "Blueprint",
+        "factory": "/Script/UnrealEd.BlueprintInterfaceFactory"
+      }
+    },
+    {
+      "_note": "An interface function with both an input and a return value.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BPI_ContractScenario",
+        "op": "add_function",
+        "name": "ApplyDamage",
+        "inputs": [
+          {
+            "name": "Amount",
+            "type": "float"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "Survived",
+            "type": "bool"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_ContractScenario",
+        "parent_class": "/Script/Engine.Actor"
+      }
+    },
+    {
+      "_note": "Implementing the interface must create the stub graph, not just list the interface.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario",
+        "op": "implement_interface",
+        "interface": "/Game/UplinkScenarios/BPI_ContractScenario",
+        "compile": true
+      },
+      "expect": {
+        "function_graphs_created": "ApplyDamage"
+      }
+    },
+    {
+      "_note": "A dispatcher and a node that broadcasts it, in ONE batch. This only works if declaring the dispatcher publishes its signature immediately - otherwise the call node is created before the signature exists and comes out with no parameter pins, silently dropping both arguments.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario",
+        "ops": [
+          {
+            "op": "add_variable",
+            "name": "Owner",
+            "type": "object:/Script/Engine.Actor"
+          },
+          {
+            "op": "add_dispatcher",
+            "name": "OnHealthChanged",
+            "inputs": [
+              {
+                "name": "NewHealth",
+                "type": "float"
+              },
+              {
+                "name": "WasCritical",
+                "type": "bool"
+              }
+            ]
+          },
+          {
+            "op": "add_node",
+            "kind": "event",
+            "name": "ReceiveBeginPlay",
+            "ref": "begin"
+          },
+          {
+            "op": "add_node",
+            "kind": "call_dispatcher",
+            "name": "OnHealthChanged",
+            "ref": "broadcast"
+          },
+          {
+            "op": "add_node",
+            "kind": "variable_get",
+            "name": "Owner",
+            "ref": "own"
+          },
+          {
+            "op": "connect",
+            "from_node": "@begin",
+            "from_pin": "then",
+            "to_node": "@broadcast",
+            "to_pin": "execute"
+          },
+          {
+            "_note": "Setting this pin proves it exists. If the signature had not been published, there would be no NewHealth pin and this op would fail.",
+            "op": "set_pin_default",
+            "node": "@broadcast",
+            "pin": "NewHealth",
+            "value": "42.0"
+          },
+          {
+            "op": "arrange"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "REGRESSION: overriding a parent event reuses the disabled ghost placeholder a new actor ships with, rather than stacking a second node on top of it.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario",
+        "op": "override_function",
+        "name": "ReceiveActorBeginOverlap",
+        "compile": true
+      },
+      "expect": {
+        "reused": true
+      }
+    },
+    {
+      "_note": "REGRESSION: the same override again. This used to report reused=false and duplicate the node: once the event is implemented, the engine resolves its declaring class to the SKELETON class, and the engine's own override lookup then cannot match the node it just made. An agent that retries a step, or a batch that mentions the same event twice, silently corrupted the graph.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario",
+        "op": "override_function",
+        "name": "ReceiveActorBeginOverlap",
+        "compile": true
+      },
+      "expect": {
+        "reused": true
+      }
+    },
+    {
+      "_note": "Calling through to the parent implementation of that same event.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario",
+        "ops": [
+          {
+            "op": "override_function",
+            "name": "ReceiveActorBeginOverlap",
+            "ref": "overlap"
+          },
+          {
+            "op": "add_node",
+            "kind": "call_parent",
+            "function": "ReceiveActorBeginOverlap",
+            "ref": "super"
+          },
+          {
+            "op": "connect",
+            "from_node": "@overlap",
+            "from_pin": "then",
+            "to_node": "@super",
+            "to_pin": "execute"
+          },
+          {
+            "op": "arrange"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "Everything above compiled clean, and the blueprint agrees.",
+      "tool": "bp_query",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario"
+      },
+      "expect": {
+        "status": "up_to_date"
+      }
+    },
+    {
+      "_note": "An event name that does not exist is refused, with the real ones listed. This used to build a nameless event node that compiled to nothing and read as broken in the editor.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ContractScenario",
+        "op": "add_node",
+        "kind": "event",
+        "name": "ReceiveBeginPlayy"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "REGRESSION: 'what reads this variable?' where the only reader is the variable's own graph - the commonest form of the question, and the one that used to answer zero. A blueprint has two live classes, SKEL_Foo_C and Foo_C, and they are siblings rather than parent and child, so the class comparison failed on a self-context reference.",
+      "tool": "bp_references",
+      "params": {
+        "kind": "variable",
+        "class": "/Game/UplinkScenarios/BP_ContractScenario.BP_ContractScenario_C",
+        "name": "Owner",
+        "path_prefix": "/Game/UplinkScenarios"
+      },
+      "expect": {
+        "hit_count": 1,
+        "blueprints_with_hits": 1,
+        "complete": true
+      }
+    },
+    {
+      "_note": "A true negative, so the search above is not just matching everything: nothing calls the interface function.",
+      "tool": "bp_references",
+      "params": {
+        "kind": "function",
+        "class": "/Game/UplinkScenarios/BPI_ContractScenario.BPI_ContractScenario_C",
+        "name": "ApplyDamage",
+        "path_prefix": "/Game/UplinkScenarios"
+      },
+      "expect": {
+        "hit_count": 0,
+        "complete": true
+      }
+    },
+    {
+      "_note": "Housekeeping: implementing blueprint first, then the interface it depends on.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_ContractScenario"
+        }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BPI_ContractScenario"
+        }
+      }
+    }
+  ]
+}
