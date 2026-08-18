@@ -42,6 +42,60 @@ struct FUplinkToolResult
 };
 
 /**
+ * One live world, as the worlds tool reports it and as the world parameter
+ * names it.
+ *
+ * The editor keeps more worlds around than "editor or pie" can say: the level
+ * being edited, one world per PIE instance when playing as several clients,
+ * and a preview world behind every open asset editor. Addressing them by kind
+ * alone means "pie" silently picks whichever instance the editor happens to be
+ * playing in, so each world also gets an Id that names exactly one of them.
+ */
+struct FUplinkWorldEntry
+{
+	/** What to pass as world: "editor", "pie:0", "preview:World_3". */
+	FString Id;
+
+	/** EWorldType spelled for a reader: Editor, PIE, EditorPreview, Game, ... */
+	FString Type;
+
+	/** Standalone, DedicatedServer, ListenServer, Client. */
+	FString NetMode;
+
+	/** Short map name, PIE prefix stripped. */
+	FString Map;
+
+	/** INDEX_NONE unless this is a PIE instance. */
+	int32 PieInstance = INDEX_NONE;
+
+	/** The world an omitted world parameter resolves to right now. */
+	bool bDefault = false;
+
+	/**
+	 * A world the game is running in rather than one being edited. Decides
+	 * whether a write is wrapped in an editor transaction: the engine discards
+	 * a transaction that only touched play objects, so opening one there buys
+	 * nothing and confuses the undo stack.
+	 */
+	bool bPlayWorld = false;
+
+	/** Simulate-In-Editor rather than Play: a PIE world with no player pawn. */
+	bool bSimulating = false;
+
+	UWorld* World = nullptr;
+};
+
+namespace UplinkWorlds
+{
+	/**
+	 * Every live world, editor first, then PIE instances in order, then
+	 * previews. Rebuilt per call for the same reason contexts do not cache a
+	 * UWorld*: worlds appear and die between ticks.
+	 */
+	UPLINKEDITOR_API TArray<FUplinkWorldEntry> Enumerate();
+}
+
+/**
  * Per-invocation context. Worlds are resolved fresh on every call because a
  * UWorld* cached across ticks can die (PIE ending) between them.
  */
@@ -49,7 +103,11 @@ struct FUplinkToolContext
 {
 	TSharedPtr<FJsonObject> Params;
 
-	/** "editor", "pie", or empty = PIE if active, else editor. */
+	/**
+	 * "editor", "pie", an id from the worlds tool, or empty = PIE if active,
+	 * else editor. "pie" means whichever world the editor is currently playing
+	 * in; an id like "pie:1" means that instance and no other.
+	 */
 	FString WorldSpec;
 
 	/** Resolve the target world, or null (with OutError set) if unavailable. */

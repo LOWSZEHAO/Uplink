@@ -1,5 +1,6 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
-// World tools: level_actors, spawn_actor, delete_actors, move_actor.
+// World tools: worlds, level_actors, spawn_actor, delete_actors, move_actor,
+// spawn_batch, viewport_camera, trace.
 
 #include "UplinkTools.h"
 #include "UplinkToolRegistry.h"
@@ -44,9 +45,55 @@ namespace
 void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
+		TEXT("worlds"),
+		TEXT("List every live world and the id that addresses it: the level being edited ('editor'), one per PIE instance ('pie:0', 'pie:1' when playing as several clients), and the preview world behind an open asset editor ('preview:World_3'). Pass an id as the 'world' parameter of any world tool to hit exactly that one - 'pie' on its own only ever means the instance currently in play. 'is_default' marks the world an omitted 'world' goes to right now."),
+		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			TArray<TSharedPtr<FJsonValue>> Rows;
+			FString DefaultId;
+			for (const FUplinkWorldEntry& Entry : UplinkWorlds::Enumerate())
+			{
+				// Counted the same way level_actors lists them, so the two
+				// tools cannot disagree about what is in a world.
+				int32 ActorCount = 0;
+				for (TActorIterator<AActor> It(Entry.World); It; ++It)
+				{
+					++ActorCount;
+				}
+
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("id"), Entry.Id);
+				Row->SetStringField(TEXT("type"), Entry.Type);
+				Row->SetStringField(TEXT("net_mode"), Entry.NetMode);
+				Row->SetStringField(TEXT("map"), Entry.Map);
+				if (Entry.PieInstance != INDEX_NONE)
+				{
+					Row->SetNumberField(TEXT("pie_instance"), Entry.PieInstance);
+				}
+				Row->SetBoolField(TEXT("simulating"), Entry.bSimulating);
+				Row->SetBoolField(TEXT("is_default"), Entry.bDefault);
+				Row->SetNumberField(TEXT("actor_count"), ActorCount);
+				Rows.Add(MakeShared<FJsonValueObject>(Row));
+
+				if (Entry.bDefault)
+				{
+					DefaultId = Entry.Id;
+				}
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetArrayField(TEXT("worlds"), Rows);
+			Data->SetNumberField(TEXT("count"), Rows.Num());
+			Data->SetStringField(TEXT("default"), DefaultId);
+			return FUplinkToolResult::Ok(Data);
+		});
+
+	Registry.RegisterQuick(
 		TEXT("level_actors"),
 		TEXT("List actors in the current world (PIE world when a session is active, else the editor world). Supports substring filters."),
-		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","enum":["editor","pie"]},"class_contains":{"type":"string"},"name_contains":{"type":"string","description":"Matches actor name OR editor label"},"max":{"type":"number","default":200}}})json"),
+		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"},"class_contains":{"type":"string"},"name_contains":{"type":"string","description":"Matches actor name OR editor label"},"max":{"type":"number","default":200}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -103,7 +150,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("spawn_actor"),
 		TEXT("Spawn an actor. class_path accepts a native class (/Script/Engine.PointLight) or a Blueprint generated class (/Game/Path/BP_Thing.BP_Thing_C)."),
-		TEXT(R"json({"type":"object","properties":{"class_path":{"type":"string"},"location":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"label":{"type":"string","description":"Editor label (editor world only)"},"world":{"type":"string","enum":["editor","pie"]}},"required":["class_path"]})json"),
+		TEXT(R"json({"type":"object","properties":{"class_path":{"type":"string"},"location":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"label":{"type":"string","description":"Editor label (editor world only)"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["class_path"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -156,7 +203,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("delete_actors"),
 		TEXT("Destroy actors by exact name or editor label."),
-		TEXT(R"json({"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"world":{"type":"string","enum":["editor","pie"]}},"required":["names"]})json"),
+		TEXT(R"json({"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["names"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -210,7 +257,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("move_actor"),
 		TEXT("Set an actor's location / rotation / scale (any subset). Uses physics-safe teleportation in PIE."),
-		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string"},"location":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"scale":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"world":{"type":"string","enum":["editor","pie"]}},"required":["actor"]})json"),
+		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string"},"location":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"rotation":{"type":"object","properties":{"pitch":{"type":"number"},"yaw":{"type":"number"},"roll":{"type":"number"}}},"scale":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["actor"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -257,7 +304,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("spawn_batch"),
 		TEXT("Spawn many actors in one call - the scene-assembly workhorse. Each entry: {mesh: static mesh path (spawns a StaticMeshActor with it) OR class_path, location, rotation?, scale?, label?, material?}. A city block, a prop set, or a whole layout lands in a single request. Returns each spawned actor's name."),
-		TEXT(R"json({"type":"object","properties":{"actors":{"type":"array","items":{"type":"object"}},"world":{"type":"string","enum":["editor","pie"]}},"required":["actors"]})json"),
+		TEXT(R"json({"type":"object","properties":{"actors":{"type":"array","items":{"type":"object"}},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["actors"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -434,7 +481,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("trace"),
 		TEXT("Ask the physics scene what is there. Casts a ray (or a swept sphere/box/capsule with 'radius'/'half_height') and reports what it hit: actor, component, impact point, normal, distance, physical material. 'to' or 'direction'+'distance' set the end point. 'profile' traces by collision profile (e.g. 'Azr_Collision'), otherwise 'channel' names a trace channel ('Visibility', 'Camera', or a project channel). 'multi' returns every hit along the ray instead of the first. Use this instead of guessing geometry - a downward trace is how you find ground height under a point."),
-		TEXT(R"json({"type":"object","properties":{"from":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"to":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"direction":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"distance":{"type":"number","default":10000},"shape":{"type":"string","enum":["line","sphere","box","capsule"],"default":"line"},"radius":{"type":"number","default":50},"half_height":{"type":"number","default":100},"channel":{"type":"string","default":"Visibility"},"profile":{"type":"string"},"multi":{"type":"boolean","default":false},"complex":{"type":"boolean","default":false},"ignore_actors":{"type":"array","items":{"type":"string"}},"draw_seconds":{"type":"number","default":0,"description":"Draw the trace in the world for this many seconds"},"world":{"type":"string","enum":["editor","pie"]}},"required":["from"]})json"),
+		TEXT(R"json({"type":"object","properties":{"from":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"to":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"direction":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"distance":{"type":"number","default":10000},"shape":{"type":"string","enum":["line","sphere","box","capsule"],"default":"line"},"radius":{"type":"number","default":50},"half_height":{"type":"number","default":100},"channel":{"type":"string","default":"Visibility"},"profile":{"type":"string"},"multi":{"type":"boolean","default":false},"complex":{"type":"boolean","default":false},"ignore_actors":{"type":"array","items":{"type":"string"}},"draw_seconds":{"type":"number","default":0,"description":"Draw the trace in the world for this many seconds"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["from"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

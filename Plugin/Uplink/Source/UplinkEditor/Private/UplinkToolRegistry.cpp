@@ -5,14 +5,153 @@
 #include "UplinkEditorModule.h"
 #include "UplinkToolProvider.h"
 #include "Editor.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "Serialization/JsonSerializer.h"
+
+namespace UplinkWorlds
+{
+	/** EWorldType as a word, for a caller reading a list of worlds. */
+	static const TCHAR* TypeName(EWorldType::Type Type)
+	{
+		switch (Type)
+		{
+		case EWorldType::Editor:        return TEXT("Editor");
+		case EWorldType::PIE:           return TEXT("PIE");
+		case EWorldType::EditorPreview: return TEXT("EditorPreview");
+		case EWorldType::GamePreview:   return TEXT("GamePreview");
+		case EWorldType::Game:          return TEXT("Game");
+		case EWorldType::GameRPC:       return TEXT("GameRPC");
+		case EWorldType::Inactive:      return TEXT("Inactive");
+		default:                        return TEXT("None");
+		}
+	}
+
+	/** Id prefix for a world that is neither the editor world nor a PIE instance. */
+	static const TCHAR* KindToken(EWorldType::Type Type)
+	{
+		switch (Type)
+		{
+		case EWorldType::EditorPreview:
+		case EWorldType::GamePreview: return TEXT("preview");
+		case EWorldType::Game:        return TEXT("game");
+		case EWorldType::GameRPC:     return TEXT("rpc");
+		case EWorldType::Inactive:    return TEXT("inactive");
+		default:                      return TEXT("world");
+		}
+	}
+
+	static const TCHAR* NetModeName(ENetMode Mode)
+	{
+		switch (Mode)
+		{
+		case NM_Standalone:      return TEXT("Standalone");
+		case NM_DedicatedServer: return TEXT("DedicatedServer");
+		case NM_ListenServer:    return TEXT("ListenServer");
+		case NM_Client:          return TEXT("Client");
+		default:                 return TEXT("Unknown");
+		}
+	}
+
+	/**
+	 * What an omitted world parameter means, in one place. ResolveWorld and the
+	 * worlds tool both need it, and if they disagreed the tool would mark a row
+	 * as the default that calls do not actually go to.
+	 */
+	static UWorld* DefaultWorld()
+	{
+		if (!GEditor)
+		{
+			return nullptr;
+		}
+		if (UWorld* PieWorld = GEditor->PlayWorld.Get())
+		{
+			return PieWorld;
+		}
+		return GEditor->GetEditorWorldContext().World();
+	}
+
+	TArray<FUplinkWorldEntry> Enumerate()
+	{
+		TArray<FUplinkWorldEntry> Entries;
+		if (!GEngine)
+		{
+			return Entries;
+		}
+
+		const UWorld* Default = DefaultWorld();
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			UWorld* World = Context.World();
+			if (!World)
+			{
+				continue; // a context between maps holds no world yet
+			}
+
+			FUplinkWorldEntry& Entry = Entries.AddDefaulted_GetRef();
+			Entry.World = World;
+			Entry.Type = TypeName(World->WorldType);
+			Entry.NetMode = NetModeName(World->GetNetMode());
+			// GetMapName keeps the UEDPIE_0_ prefix the engine puts on a
+			// duplicated play world. The instance is already reported on its own
+			// field, so leaving it in the name only makes the same level look
+			// like a different one depending on which world you asked about.
+			Entry.Map = UWorld::RemovePIEPrefix(World->GetMapName());
+			Entry.bPlayWorld = World->IsGameWorld();
+			Entry.bDefault = (World == Default);
+
+			if (World->WorldType == EWorldType::Editor)
+			{
+				Entry.Id = TEXT("editor");
+			}
+			else if (World->WorldType == EWorldType::PIE)
+			{
+				// The instance index is the engine's own name for "which
+				// client", so a caller reading a log or a net-mode column can
+				// address the same instance without counting rows.
+				Entry.PieInstance = Context.PIEInstance;
+				Entry.Id = Context.PIEInstance >= 0
+					? FString::Printf(TEXT("pie:%d"), Context.PIEInstance)
+					: TEXT("pie");
+				Entry.bSimulating = GEditor && GEditor->bIsSimulatingInEditor;
+			}
+			else
+			{
+				// A preview world has no map and no instance number, so its id
+				// is keyed on the world object's own name: unique among live
+				// objects and fixed for as long as the world exists.
+				Entry.Id = FString::Printf(TEXT("%s:%s"), KindToken(World->WorldType), *World->GetName());
+			}
+		}
+
+		// Editor, then PIE instances in order, then the rest - the order a
+		// reader scans looking for the world they meant.
+		Entries.StableSort([](const FUplinkWorldEntry& A, const FUplinkWorldEntry& B)
+		{
+			auto Rank = [](const FUplinkWorldEntry& Entry) -> int32
+			{
+				if (Entry.Type == TEXT("Editor"))
+				{
+					return 0;
+				}
+				return Entry.Type == TEXT("PIE") ? 1 : 2;
+			};
+			const int32 RankA = Rank(A);
+			const int32 RankB = Rank(B);
+			return RankA != RankB ? RankA < RankB : A.PieInstance < B.PieInstance;
+		});
+		return Entries;
+	}
+}
 
 UWorld* FUplinkToolContext::ResolveWorld(FString& OutError) const
 {
-	UWorld* PieWorld = GEditor ? GEditor->PlayWorld.Get() : nullptr;
-
+	// "pie" keeps meaning "whichever world the editor is playing in", not a
+	// particular instance. Callers pass it constantly and none of them know or
+	// care how many instances are up.
 	if (WorldSpec == TEXT("pie"))
 	{
+		UWorld* PieWorld = GEditor ? GEditor->PlayWorld.Get() : nullptr;
 		if (!PieWorld)
 		{
 			OutError = TEXT("world='pie' requested but no PIE session is running");
@@ -21,12 +160,18 @@ UWorld* FUplinkToolContext::ResolveWorld(FString& OutError) const
 		return PieWorld;
 	}
 
-	if (WorldSpec == TEXT("editor") || WorldSpec.IsEmpty())
+	if (WorldSpec.IsEmpty())
 	{
-		if (WorldSpec.IsEmpty() && PieWorld)
+		UWorld* Default = UplinkWorlds::DefaultWorld();
+		if (!Default)
 		{
-			return PieWorld; // default: PIE if active
+			OutError = TEXT("no editor world available");
 		}
+		return Default;
+	}
+
+	if (WorldSpec == TEXT("editor"))
+	{
 		UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 		if (!EditorWorld)
 		{
@@ -35,18 +180,55 @@ UWorld* FUplinkToolContext::ResolveWorld(FString& OutError) const
 		return EditorWorld;
 	}
 
-	OutError = FString::Printf(TEXT("unknown world spec '%s' (use 'editor' or 'pie')"), *WorldSpec);
+	// Anything else is an id from the worlds tool - the only way to name the
+	// second PIE instance, or the preview world inside an asset editor.
+	const TArray<FUplinkWorldEntry> Worlds = UplinkWorlds::Enumerate();
+	for (const FUplinkWorldEntry& Entry : Worlds)
+	{
+		if (Entry.Id == WorldSpec)
+		{
+			return Entry.World;
+		}
+	}
+
+	TArray<FString> Ids;
+	for (const FUplinkWorldEntry& Entry : Worlds)
+	{
+		Ids.Add(Entry.Id);
+	}
+	OutError = FString::Printf(
+		TEXT("unknown world '%s'. Worlds now: %s. 'editor' and 'pie' also work, 'pie' meaning the session in play."),
+		*WorldSpec, Ids.Num() ? *FString::Join(Ids, TEXT(", ")) : TEXT("(none)"));
 	return nullptr;
 }
 
 bool FUplinkToolContext::IsPieWorld() const
 {
-	UWorld* PieWorld = GEditor ? GEditor->PlayWorld.Get() : nullptr;
 	if (WorldSpec == TEXT("pie"))
 	{
 		return true;
 	}
-	return WorldSpec.IsEmpty() && PieWorld != nullptr;
+	if (WorldSpec.IsEmpty())
+	{
+		return GEditor && GEditor->PlayWorld != nullptr;
+	}
+	if (WorldSpec == TEXT("editor"))
+	{
+		return false;
+	}
+
+	// An id can name a play world just as well as "pie" can, and this is what
+	// decides whether the task manager opens a transaction around the call.
+	// Answering "editor" for pie:1 would wrap every edit to that instance in an
+	// undo the engine then throws away.
+	for (const FUplinkWorldEntry& Entry : UplinkWorlds::Enumerate())
+	{
+		if (Entry.Id == WorldSpec)
+		{
+			return Entry.bPlayWorld;
+		}
+	}
+	return false;
 }
 
 namespace
