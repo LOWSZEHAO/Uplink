@@ -37,6 +37,7 @@
 #include "K2Node_VariableSet.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/PackageName.h"
 
 using namespace UplinkToolUtil;
 
@@ -402,7 +403,34 @@ namespace UplinkBlueprint
 					TEXT("%s needs 'struct', e.g. /Script/CoreUObject.Vector or /Game/S_Row.S_Row (got '%s')"),
 					*Kind, *GetString(OpParams, TEXT("struct"))));
 			}
-			if (Kind == TEXT("make_struct"))
+			// A struct that ships a native make or break function cannot use the
+			// generic node, and the engine only says so at compile: FVector
+			// errors with "the structure Make Vector is not a BlueprintType",
+			// FRotator and friends warn. Both arrive long after the call that
+			// caused them and neither names the thing to use instead, so this
+			// refuses up front and points at the real function.
+			const bool bMake = Kind == TEXT("make_struct");
+			// The same metadata the engine's own CanBeMade/CanBeBroken test, and
+			// its value is the function path - so the check and the suggestion
+			// come from one place. Tested directly rather than through those
+			// helpers because CanBeBroken is not exported from BlueprintGraph
+			// (CanBeMade is), so it cannot be linked from here.
+			const FName MetaKey = bMake
+				? FBlueprintMetadata::MD_NativeMakeFunction
+				: FBlueprintMetadata::MD_NativeBreakFunction;
+			if (StructType->HasMetaData(MetaKey))
+			{
+				const FString Native = StructType->GetMetaData(MetaKey);
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("%s cannot be used on %s - it has a native %s function, and the generic node is rejected at compile.%s"),
+					*Kind, *StructType->GetName(), bMake ? TEXT("make") : TEXT("break"),
+					Native.IsEmpty()
+						? TEXT(" Use add_node call_function with the struct's own Make/Break function instead.")
+						: *FString::Printf(
+							TEXT(" Use add_node kind 'call_function' with function '%s' instead."),
+							*FPackageName::ObjectPathToObjectName(Native))));
+			}
+			if (bMake)
 			{
 				UK2Node_MakeStruct* Node = NewObject<UK2Node_MakeStruct>(Graph);
 				Node->StructType = StructType;

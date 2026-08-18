@@ -82,6 +82,22 @@ namespace UplinkBlueprint
 					Blueprint->Status == BS_Error ? TEXT("error") :
 					Blueprint->Status == BS_UpToDate ? TEXT("up_to_date") : TEXT("dirty"));
 
+				// bp_modify can add an interface but nothing could report one, so
+				// the only evidence an implement_interface call had worked was a
+				// stub graph appearing among the others - and a graph named after
+				// a function looks the same whoever created it. Reported even when
+				// empty, because "implements nothing" is an answer and a missing
+				// field is not.
+				TArray<TSharedPtr<FJsonValue>> Interfaces;
+				for (const FBPInterfaceDescription& Implemented : Blueprint->ImplementedInterfaces)
+				{
+					if (Implemented.Interface)
+					{
+						Interfaces.Add(MakeShared<FJsonValueString>(Implemented.Interface->GetPathName()));
+					}
+				}
+				Data->SetArrayField(TEXT("interfaces"), Interfaces);
+
 				TArray<TSharedPtr<FJsonValue>> Variables;
 				for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
 				{
