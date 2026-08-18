@@ -123,6 +123,13 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 			}
 			NewWidget->bIsVariable = true;
 
+			// Every source widget must have an entry here or the compiler fires
+			// ensureAlwaysMsgf("Widget [%s] was added but did not get a GUID")
+			// and patches one in for us - once per widget, every compile, with a
+			// crash report each time. The designer registers this when it drops
+			// a widget; constructing one directly has to do it too.
+			WidgetBlueprint->WidgetVariableNameToGuidMap.Add(WidgetName, FGuid::NewGuid());
+
 			const FString ParentName = GetString(Ctx.Params, TEXT("parent"));
 			if (!ParentName.IsEmpty())
 			{
@@ -132,7 +139,18 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 					return FUplinkToolResult::Error(FString::Printf(
 						TEXT("parent '%s' not found or is not a panel widget"), *ParentName));
 				}
-				Parent->AddChild(NewWidget);
+				// AddChild returns null when the panel is full - a Button,
+				// Border or SizeBox holds exactly one child. Reporting success
+				// there leaves an orphan in the tree that only surfaces later as
+				// a compiler complaint nothing appears to explain.
+				if (!Parent->AddChild(NewWidget))
+				{
+					WidgetBlueprint->WidgetTree->RemoveWidget(NewWidget);
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' (%s) cannot take another child - it holds %d and its slot type allows no more. ")
+						TEXT("Single-child panels (Button, Border, SizeBox, ScaleBox...) need a layout panel inside them first."),
+						*ParentName, *Parent->GetClass()->GetName(), Parent->GetChildrenCount()));
+				}
 			}
 			else if (!WidgetBlueprint->WidgetTree->RootWidget)
 			{

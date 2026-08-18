@@ -19,6 +19,10 @@ namespace
 		TSharedPtr<FJsonObject> Params;
 		TSharedPtr<FJsonObject> Expect;
 		double TimeoutSeconds = 60.0;
+		// The step is asserting a refusal: it passes when the tool errors, and
+		// fails if the tool lets it through. Without this the only way to test
+		// rejection was a whole scenario of nothing but rejections.
+		bool bExpectFailure = false;
 	};
 
 	/**
@@ -178,6 +182,7 @@ namespace
 					Spec.Expect = *ExpectObject;
 				}
 				Spec.TimeoutSeconds = FMath::Clamp(GetNumber(*StepObject, TEXT("timeout"), 60.0), 0.5, 300.0);
+				(*StepObject)->TryGetBoolField(FStringView(TEXT("expect_failure")), Spec.bExpectFailure);
 				Steps.Add(MoveTemp(Spec));
 			}
 
@@ -293,8 +298,25 @@ namespace
 				}
 			}
 
+			// Invert last, so an expected refusal that was in fact refused counts
+			// as a pass and the report still carries what it refused with.
+			if (Spec.bExpectFailure)
+			{
+				if (bSuccess)
+				{
+					bSuccess = false;
+					FailReason = TEXT("expected this to be refused, but it succeeded");
+				}
+				else
+				{
+					bSuccess = true;
+					FailReason = FString();
+				}
+			}
+
 			TSharedRef<FJsonObject> Report = MakeShared<FJsonObject>();
 			Report->SetNumberField(TEXT("index"), StepIndex);
+			Report->SetBoolField(TEXT("expected_failure"), Spec.bExpectFailure);
 			Report->SetStringField(TEXT("tool"), Spec.Tool);
 			Report->SetBoolField(TEXT("success"), bSuccess);
 			Report->SetNumberField(TEXT("seconds"), Elapsed);
@@ -378,8 +400,8 @@ void UplinkTools::RegisterScenario(FUplinkToolRegistry& Registry)
 {
 	FUplinkToolInfo Info;
 	Info.Name = TEXT("run_scenario");
-	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step.");
-	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"timeout":{"type":"number","default":60}},"required":["tool"]}},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
+	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step. A step with expect_failure:true is asserting a refusal - it passes when the tool errors, which is how a scenario mixes normal steps with rejection tests.");
+	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"expect_failure":{"type":"boolean","default":false,"description":"This step asserts a refusal: it passes when the tool errors and fails when it succeeds"},"timeout":{"type":"number","default":60}},"required":["tool"]}},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
 	Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
 	Info.TimeoutSeconds = 600.0;

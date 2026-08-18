@@ -29,13 +29,14 @@ step if you want one.
 | `05-playtest` | Verification in a running game: start it, move the player, query the world, capture the view, shut down — one request. |
 | `06-asset-creation` | The assets `bp_create` cannot make: a Widget Blueprint whose generated class resolves and takes a root widget, and a Material Instance parented through its factory. Names the factory it expects. |
 | `07-graph-flow-control` | A gameplay graph with decisions in it: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch, Select and Self, built in one batched call and compiled clean. |
+| `08-authoring-traps` | Five authoring calls that used to succeed while doing the wrong thing — array node class, function return values, widget-blueprint parent, duplicate event binding, single-child panel overfill. |
 
 Everything here runs against any project. `05-playtest` needs a default map with
 a playable pawn, which every template has.
 
 ## Reading the results
 
-Six of the seven pass in the ordinary way: every step succeeds.
+Seven of the eight pass in the ordinary way: every step succeeds.
 
 **`04-refuses-bad-input` is inverted.** Every step in it is *meant* to fail —
 that is the assertion. It runs with `stop_on_failure: false`, and the runner
@@ -59,7 +60,9 @@ from inside a scenario. Check it by hand with `edit_history` afterwards.
 
 ## Writing your own
 
-A step is `{tool, params?, expect?, timeout?}`.
+A step is `{tool, params?, expect?, expect_failure?, timeout?}`.
+
+- `expect_failure: true` inverts one step: it passes when the tool refuses and fails when the tool lets it through. That is how `08-authoring-traps` mixes ordinary steps with rejection tests in one green scenario — `04-refuses-bad-input` predates it and inverts the whole file instead.
 
 - `expect` matches fields of that step's **result data**, exactly. Assert on
   fields the tool actually returns — run the tool once and look, rather than

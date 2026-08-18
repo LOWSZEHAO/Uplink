@@ -84,7 +84,7 @@ own Blueprint events.
 
 | Tool | What it does |
 |---|---|
-| `run_scenario` | Ordered tool steps executed as one task with a structured pass/fail report. `{steps:[{tool, params?, expect?, timeout?}], stop_on_failure?}`. `expect` matches fields of the step's result data; a `wait_until` step whose condition times out fails the scenario unless explicitly expected. |
+| `run_scenario` | Ordered tool steps executed as one task with a structured pass/fail report. `{steps:[{tool, params?, expect?, expect_failure?, timeout?}], stop_on_failure?}`. `expect` matches fields of the step's result data; `expect_failure: true` asserts a **refusal** — that step passes when the tool errors and fails when it succeeds, so one scenario can mix ordinary steps with rejection tests; a `wait_until` step whose condition times out fails the scenario unless explicitly expected. |
 
 ## Record & replay
 

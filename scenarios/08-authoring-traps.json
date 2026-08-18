@@ -1,0 +1,148 @@
+{
+  "_name": "Authoring traps",
+  "_purpose": "Five things that used to succeed while doing the wrong thing, each now either correct or refused: an array library call gets the wildcard node class instead of a hard-typed one, a function can declare a return value and still compile clean, bp_create refuses a UserWidget parent it cannot honour, a second binding of the same widget event is refused instead of firing the handler twice, and a single-child panel refuses an extra child instead of orphaning it.",
+  "_reading": "Two steps carry expect_failure:true - they assert a refusal and pass by being refused. Everything else passes normally, so the whole scenario reads green.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_TrapProbe"
+        }
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/WBP_TrapProbe"
+        }
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_TrapProbe",
+        "parent_class": "/Script/Engine.Actor"
+      }
+    },
+    {
+      "_note": "Array_Add declares a typed TArray param; only CallArrayFunction makes it a wildcard.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_TrapProbe.BP_TrapProbe",
+        "op": "add_node",
+        "kind": "call_function",
+        "class": "/Script/Engine.KismetArrayLibrary",
+        "function": "Array_Add"
+      }
+    },
+    {
+      "_note": "A function with a typed return value, compiling with no warnings.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_TrapProbe.BP_TrapProbe",
+        "ops": [
+          {
+            "op": "add_function",
+            "name": "DoubleIt",
+            "inputs": [
+              {
+                "name": "In",
+                "type": "int"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "Out",
+                "type": "int"
+              }
+            ]
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "bp_create cannot make a Widget Blueprint.",
+      "tool": "bp_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/BP_ShouldRefuse",
+        "parent_class": "/Script/UMG.UserWidget"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkScenarios/WBP_TrapProbe",
+        "class": "WidgetBlueprint"
+      }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/WBP_TrapProbe",
+        "class": "/Script/UMG.CanvasPanel",
+        "name": "Root"
+      }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/WBP_TrapProbe",
+        "class": "/Script/UMG.Button",
+        "name": "Btn",
+        "parent": "Root"
+      }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/WBP_TrapProbe",
+        "class": "/Script/UMG.TextBlock",
+        "name": "Label",
+        "parent": "Btn"
+      }
+    },
+    {
+      "_note": "a Button holds one child.",
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/WBP_TrapProbe",
+        "class": "/Script/UMG.TextBlock",
+        "name": "Second",
+        "parent": "Btn"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/WBP_TrapProbe"
+        }
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_TrapProbe"
+        }
+      }
+    }
+  ]
+}

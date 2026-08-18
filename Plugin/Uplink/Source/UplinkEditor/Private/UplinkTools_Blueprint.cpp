@@ -18,7 +18,10 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/StaticMesh.h"
 #include "JsonObjectConverter.h"
+#include "Blueprint/UserWidget.h"
 #include "K2Node_BreakStruct.h"
+#include "K2Node_CallArrayFunction.h"
+#include "K2Node_CallDataTableFunction.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
@@ -932,6 +935,40 @@ namespace
 				}
 			}
 
+			// Typed outputs. The return value lives on a Result node - its INPUT
+			// pins are the function's outputs - and a graph does not get one
+			// until something asks for a return. FindOrCreateFunctionResultNode
+			// is the editor's own path: it builds the node, wires the exec pin
+			// to the entry, and does not leave the duplicate exec pin a
+			// hand-rolled node acquires when the graph is next reconstructed.
+			TArray<FString> AddedOutputs;
+			const TArray<TSharedPtr<FJsonValue>>* Outputs = nullptr;
+			if (OpParams->TryGetArrayField(FStringView(TEXT("outputs")), Outputs) && Outputs->Num() > 0)
+			{
+				UK2Node_FunctionResult* ResultNode = FBlueprintEditorUtils::FindOrCreateFunctionResultNode(Entry);
+				if (!ResultNode)
+				{
+					return FUplinkToolResult::Error(TEXT("could not create the function's Result node"));
+				}
+				for (const TSharedPtr<FJsonValue>& Value : *Outputs)
+				{
+					const TSharedPtr<FJsonObject>* Obj = nullptr;
+					if (!Value->TryGetObject(Obj) || !Obj->IsValid())
+					{
+						continue;
+					}
+					const FString PinName = GetString(*Obj, TEXT("name"), TEXT("ReturnValue"));
+					FEdGraphPinType PinType;
+					if (!MakePinType(GetString(*Obj, TEXT("type"), TEXT("float")), PinType, Error))
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("output '%s': %s"), *PinName, *Error));
+					}
+					ResultNode->CreateUserDefinedPin(FName(*PinName), PinType, EGPD_Input);
+					AddedOutputs.Add(PinName);
+				}
+			}
+
 			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 			Data->SetStringField(TEXT("function"), FuncName.ToString());
@@ -940,6 +977,10 @@ namespace
 			if (AddedInputs.Num())
 			{
 				Data->SetStringField(TEXT("inputs"), FString::Join(AddedInputs, TEXT(", ")));
+			}
+			if (AddedOutputs.Num())
+			{
+				Data->SetStringField(TEXT("outputs"), FString::Join(AddedOutputs, TEXT(", ")));
 			}
 		}
 		else if (Op == TEXT("set_node_property"))
@@ -1073,7 +1114,23 @@ namespace
 					return FUplinkToolResult::Error(FString::Printf(
 						TEXT("function '%s' not found on %s"), *GetString(OpParams, TEXT("function")), *TargetClass->GetName()));
 				}
-				UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph);
+				// The node class matters, not just the function. Array_Add and
+				// friends declare a typed TArray parameter, and only
+				// UK2Node_CallArrayFunction turns that into a wildcard that
+				// propagates the connected type - on a plain call node the pin is
+				// hard int32, the schema rejects everything else, and nothing
+				// says why. Same story for the DataTable row pin. This mirrors
+				// how the palette picks (BlueprintFunctionNodeSpawner).
+				TSubclassOf<UK2Node_CallFunction> NodeClass = UK2Node_CallFunction::StaticClass();
+				if (Function->HasMetaData(FBlueprintMetadata::MD_DataTablePin))
+				{
+					NodeClass = UK2Node_CallDataTableFunction::StaticClass();
+				}
+				else if (Function->HasMetaData(FBlueprintMetadata::MD_ArrayParam))
+				{
+					NodeClass = UK2Node_CallArrayFunction::StaticClass();
+				}
+				UK2Node_CallFunction* Node = NewObject<UK2Node_CallFunction>(Graph, NodeClass);
 				Node->SetFromFunction(Function);
 				NewNode = Node;
 			}
@@ -1148,6 +1205,17 @@ namespace
 						TEXT("event '%s' not found on %s. Delegates: %s"),
 						*GetString(OpParams, TEXT("event")), *ComponentProperty->PropertyClass->GetName(),
 						*FString::Join(Names, TEXT(", "))));
+				}
+				// One binding per component+event, like the editor's + button. A
+				// second node compiles clean and fires the handler twice at
+				// runtime, which is a miserable thing to debug from inside a game.
+				if (const UK2Node_ComponentBoundEvent* Existing = FKismetEditorUtilities::FindBoundEventForComponent(
+					Blueprint, DelegateProperty->GetFName(), ComponentProperty->GetFName()))
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' on '%s' is already bound (node %s). Wire onto the existing node instead of stacking a second binding."),
+						*DelegateProperty->GetName(), *ComponentProperty->GetName(),
+						*Existing->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens)));
 				}
 				UK2Node_ComponentBoundEvent* Node = NewObject<UK2Node_ComponentBoundEvent>(Graph);
 				Node->InitializeComponentBoundEventParams(ComponentProperty, DelegateProperty);
@@ -1393,7 +1461,11 @@ namespace
 				else // set_pin_default
 				{
 					const FString Value = GetString(OpParams, TEXT("value"));
-					if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object)
+					const FName Category = Pin->PinType.PinCategory;
+					const bool bObjectLike = Category == UEdGraphSchema_K2::PC_Object
+						|| Category == UEdGraphSchema_K2::PC_Class
+						|| Category == UEdGraphSchema_K2::PC_Interface;
+					if (bObjectLike)
 					{
 						UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *Value);
 						if (!Object)
@@ -1408,17 +1480,35 @@ namespace
 					}
 					// The schema silently declines a value the pin's type will
 					// not take, so confirm it landed rather than reporting a
-					// success the graph does not agree with.
-					const FString& Landed = Pin->LinkedTo.Num() > 0 ? Pin->DefaultValue : Pin->DefaultValue;
-					const bool bTookIt = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
-						? Pin->DefaultObject != nullptr
-						: (Landed == Value || (Value.IsEmpty() && Landed.IsEmpty()));
+					// success the graph does not agree with. The check has to
+					// read the slot the schema WRITES for this pin type: text
+					// goes to DefaultTextValue and object-likes to
+					// DefaultObject, and comparing DefaultValue for those
+					// reported failure for values that had in fact landed - in
+					// a batch, killing every op after them.
+					FString Landed;
+					bool bTookIt;
+					if (bObjectLike)
+					{
+						bTookIt = Pin->DefaultObject != nullptr;
+						Landed = Pin->DefaultObject ? Pin->DefaultObject->GetPathName() : FString();
+					}
+					else if (Category == UEdGraphSchema_K2::PC_Text)
+					{
+						Landed = Pin->DefaultTextValue.ToString();
+						bTookIt = Landed == Value || (Value.IsEmpty() && Landed.IsEmpty());
+					}
+					else
+					{
+						Landed = Pin->DefaultValue;
+						bTookIt = Landed == Value || (Value.IsEmpty() && Landed.IsEmpty());
+					}
 					if (!bTookIt)
 					{
 						return FUplinkToolResult::Error(FString::Printf(
 							TEXT("pin '%s' would not take '%s' (it is a %s pin; it still reads '%s')"),
 							*Pin->PinName.ToString(), *Value,
-							*Pin->PinType.PinCategory.ToString(), *Landed));
+							*Category.ToString(), *Landed));
 					}
 				}
 			}
@@ -1455,6 +1545,18 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 			if (!Parent)
 			{
 				return FUplinkToolResult::Error(TEXT("parent_class not found"));
+			}
+
+			// This factory makes plain UBlueprints. A UserWidget parent would
+			// "work" - and produce an asset with no widget tree, no designer tab
+			// and no way to gain either, which reads as everything else being
+			// broken. Refuse, and name the tool that does it properly.
+			if (Parent->IsChildOf(UUserWidget::StaticClass()))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is a UserWidget - bp_create would make a plain Blueprint with no widget tree. ")
+					TEXT("Use asset_create {class:\"WidgetBlueprint\", parent_class:\"%s\"} instead, then widget_add."),
+					*Parent->GetName(), *GetString(Ctx.Params, TEXT("parent_class"))));
 			}
 
 			const FString AssetName = FPackageName::GetShortName(Path);
@@ -1580,8 +1682,8 @@ void UplinkTools::RegisterBlueprint(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("bp_modify"),
-		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
-		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
+		TEXT("Edit a Blueprint - one op, or a whole batch in a single call via 'ops': [{op:..., ...}, ...]. In a batch, give add_node ops a 'ref' name and later ops can address that node as '@ref' (from_node/to_node/node) - an entire event graph builds in ONE request. Ops: add_variable {name,type,default?} | remove_variable {name} | add_function {name, inputs?, outputs?, pure?, thread_safe?, category?} | add_node {kind: call_function {class,function} | custom_event {name} | event {name - e.g. ReceiveBeginPlay/ReceiveTick; reuses a matching ghost/existing event node} | component_bound_event {component, event - e.g. component 'MyButton' event 'OnClicked', or 'NiagaraComp' + 'OnSystemFinished'} | variable_get/variable_set {name} | branch | sequence | cast {class, pure?} | switch_enum {enum} | switch_int | switch_string | macro {name: ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/FlipFlop..., library?} | make_struct/break_struct {struct} | make_array | select | self | function_result, graph?, x?, y?, ref?} | arrange {graph?} - auto-layout: dependency columns, exec chains as straight horizontal lanes, data nodes below, reroute knots at turns; finish a batch with it | connect {graph?, from_node, from_pin, to_node, to_pin} | break_links {graph?, node, pin} | delete_node {graph?, node} | set_pin_default {graph?, node, pin, value}. New nodes never overlap existing ones (positions are nudged to free space; omit x/y for auto-placement). Node handles are guids from bp_query, the add_node response, or '@ref'. A failed batch op stops the batch (earlier ops stay applied). Set compile=true to compile at the end."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string"},"op":{"type":"string","enum":["add_variable","remove_variable","add_function","remove_function","add_node","arrange","connect","break_links","delete_node","set_pin_default","set_node_property"]},"ops":{"type":"array","items":{"type":"object"},"description":"Batch mode: sequence of op objects (same fields as single-op form, plus 'ref' on add_node)"},"name":{"type":"string"},"type":{"type":"string"},"default":{"type":"string"},"kind":{"type":"string","enum":["call_function","custom_event","event","component_bound_event","variable_get","variable_set","branch","sequence","cast","switch_enum","switch_int","switch_string","macro","make_struct","break_struct","make_array","select","self","function_result"]},"class":{"type":"string","description":"add_node call_function: class path or 'self'; add_node cast: the class to cast TO"},"struct":{"type":"string","description":"make_struct/break_struct: script struct path, e.g. /Script/CoreUObject.Vector"},"enum":{"type":"string","description":"switch_enum: enum path, e.g. /Game/E_State.E_State"},"library":{"type":"string","description":"macro: Blueprint holding the macro (default the engine StandardMacros)"},"function":{"type":"string"},"component":{"type":"string","description":"component_bound_event: component/widget variable name"},"event":{"type":"string","description":"component_bound_event: delegate name on the component's class"},"ref":{"type":"string","description":"add_node: name this node for '@ref' handles in later batch ops"},"graph":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"from_node":{"type":"string"},"from_pin":{"type":"string"},"to_node":{"type":"string"},"to_pin":{"type":"string"},"node":{"type":"string"},"pin":{"type":"string"},"value":{"type":"string"},"compile":{"type":"boolean"},"thread_safe":{"type":"boolean","description":"add_function: required for anim-graph node functions, which cannot run on the game thread"},"pure":{"type":"boolean","description":"add_function: no exec pins"},"category":{"type":"string","description":"add_function: Blueprint category"},"inputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type, by_ref?, const?}] - by_ref+const are needed to match prototype-validated signatures such as anim node bindings"},"outputs":{"type":"array","items":{"type":"object"},"description":"add_function: [{name, type}] return values - creates the Result node, wired to the entry"},"property":{"type":"string","description":"set_node_property: property on the node, dotted paths allowed"},"reconstruct":{"type":"boolean","description":"set_node_property: rebuild the node's pins afterwards (default true)"},"save":{"type":"boolean","default":false,"description":"Write the blueprint to disk afterwards. Edits are in memory until saved, so an editor restart discards them. Skipped if compile:true reported errors."}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
