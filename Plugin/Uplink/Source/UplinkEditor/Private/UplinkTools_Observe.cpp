@@ -9,15 +9,49 @@
 
 #include "Editor.h"
 #include "EngineUtils.h"
+#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Actor.h"
 #include "HAL/PlatformMemory.h"
 #include "JsonObjectConverter.h"
 #include "Misc/App.h"
+#include "Editor/EditorPerformanceSettings.h"
 
 extern ENGINE_API float GAverageFPS;
 extern ENGINE_API float GAverageMS;
 
 using namespace UplinkToolUtil;
+
+namespace UplinkPerf
+{
+	/**
+	 * Why a frame-time reading cannot be trusted, or empty when it can.
+	 *
+	 * The editor caps itself hard when its window is not in front - a real
+	 * measurement came back at exactly 333.33ms a frame, which is 3 FPS to the
+	 * decimal and obviously a cap rather than a game. That matters more here
+	 * than in normal editor use: an agent drives the editor through HTTP and
+	 * never brings the window forward, so every number it takes is the
+	 * throttle's, not the project's, and nothing said so.
+	 */
+	FString DescribeThrottle()
+	{
+		const UEditorPerformanceSettings* Settings = GetDefault<UEditorPerformanceSettings>();
+		const bool bThrottleEnabled = Settings && Settings->bThrottleCPUWhenNotForeground;
+		const bool bForeground = FSlateApplication::IsInitialized()
+			&& FSlateApplication::Get().IsActive();
+		if (!bThrottleEnabled || bForeground)
+		{
+			return FString();
+		}
+		return TEXT("the editor window is in the background and 'Use Less CPU when in Background' is on, ")
+			TEXT("so these frame times are the editor's throttle rather than the project's - a capture here reads about 3 fps whatever the project does. ")
+			TEXT("Bringing the window to the front fixes it. Setting bThrottleCPUWhenNotForeground false on ")
+			TEXT("/Script/UnrealEd.Default__EditorPerformanceSettings also works and needs no clicking, but weigh it first: ")
+			TEXT("that throttle is the only thing keeping an unattended editor from rendering a heavy project flat out, ")
+			TEXT("and doing it on a 9 GB project during play took the GPU down with a D3D device removal. ")
+			TEXT("It is a runtime-only change either way - a restart puts it back.");
+	}
+}
 
 namespace
 {
@@ -350,7 +384,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 
 	Registry.RegisterQuick(
 		TEXT("perf_stats"),
-		TEXT("Frame timing and memory: smoothed FPS, average frame ms, last delta seconds, used physical memory."),
+		TEXT("Frame timing and memory: smoothed FPS, average frame ms, last delta seconds, used physical memory. Reports 'throttled' when the editor is capping the frame rate because its window is in the background - the numbers mean nothing then, and an agent never has the window in front."),
 		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -361,7 +395,9 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 			Data->SetNumberField(TEXT("average_frame_ms"), GAverageMS);
 			Data->SetNumberField(TEXT("last_delta_seconds"), FApp::GetDeltaTime());
 			Data->SetNumberField(TEXT("used_physical_mb"), MemoryStats.UsedPhysical / (1024.0 * 1024.0));
-			return FUplinkToolResult::Ok(Data);
+			const FString Throttle = UplinkPerf::DescribeThrottle();
+			Data->SetBoolField(TEXT("throttled"), !Throttle.IsEmpty());
+			return FUplinkToolResult::Ok(Data, Throttle);
 		});
 
 	{
@@ -417,7 +453,9 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 				Data->SetNumberField(TEXT("hitches_over_33ms"), HitchesOver33);
 				Data->SetNumberField(TEXT("hitches_over_100ms"), HitchesOver100);
 				Data->SetBoolField(TEXT("pie_active"), GEditor && GEditor->PlayWorld != nullptr);
-				Out = FUplinkToolResult::Ok(Data);
+				const FString Throttle = UplinkPerf::DescribeThrottle();
+				Data->SetBoolField(TEXT("throttled"), !Throttle.IsEmpty());
+				Out = FUplinkToolResult::Ok(Data, Throttle);
 				return EUplinkToolStep::Done;
 			}
 
