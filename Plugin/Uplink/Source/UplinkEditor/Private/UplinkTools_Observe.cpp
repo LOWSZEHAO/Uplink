@@ -7,14 +7,16 @@
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
+#include "DynamicRHI.h"
 #include "Editor.h"
+#include "Editor/EditorPerformanceSettings.h"
 #include "EngineUtils.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Actor.h"
 #include "HAL/PlatformMemory.h"
 #include "JsonObjectConverter.h"
 #include "Misc/App.h"
-#include "Editor/EditorPerformanceSettings.h"
+#include "RHIStats.h"
 
 extern ENGINE_API float GAverageFPS;
 extern ENGINE_API float GAverageMS;
@@ -23,6 +25,34 @@ using namespace UplinkToolUtil;
 
 namespace UplinkPerf
 {
+	/**
+	 * Graphics memory, and how close it is to the budget.
+	 *
+	 * An agent driving a heavy project unattended has no other way to see
+	 * memory pressure building, and the frame times it already reads are the
+	 * natural place to notice it. Reported for the device rather than the
+	 * process: this is a budget every application on the machine shares.
+	 *
+	 * Not a crash predictor. It was added while chasing D3D12 page faults on a
+	 * 9 GB project that turned out to be compute-shader MMU faults - memory sat
+	 * near budget in those dumps because UE prints these stats with every fault
+	 * report, not because it caused them. Useful, and not evidence.
+	 */
+	void AddGraphicsMemory(const TSharedRef<FJsonObject>& Data)
+	{
+		FTextureMemoryStats Stats;
+		RHIGetTextureMemoryStats(Stats);
+
+		const int64 Budget = Stats.GetTotalDeviceWorkingMemory();
+		if (Budget <= 0)
+		{
+			return; // the RHI reports -1 for anything it does not know
+		}
+		const int64 Used = static_cast<int64>(Stats.StreamingMemorySize + Stats.NonStreamingMemorySize);
+		Data->SetNumberField(TEXT("gpu_budget_mb"), Budget / (1024.0 * 1024.0));
+		Data->SetNumberField(TEXT("gpu_textures_mb"), Used / (1024.0 * 1024.0));
+	}
+
 	/**
 	 * Why a frame-time reading cannot be trusted, or empty when it can.
 	 *
@@ -384,7 +414,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 
 	Registry.RegisterQuick(
 		TEXT("perf_stats"),
-		TEXT("Frame timing and memory: smoothed FPS, average frame ms, last delta seconds, used physical memory. Reports 'throttled' when the editor is capping the frame rate because its window is in the background - the numbers mean nothing then, and an agent never has the window in front."),
+		TEXT("Frame timing and memory: smoothed FPS, average frame ms, last delta seconds, used physical memory, and graphics memory as gpu_textures_mb against gpu_budget_mb. Reports 'throttled' when the editor is capping the frame rate because its window is in the background - the numbers mean nothing then, and an agent never has the window in front. Read gpu_budget_mb as the card's dedicated memory rather than a promise - the driver enforces a smaller runtime budget under pressure, and on one machine this reported 7948 MB where the driver allowed 6995 MB."),
 		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -395,6 +425,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 			Data->SetNumberField(TEXT("average_frame_ms"), GAverageMS);
 			Data->SetNumberField(TEXT("last_delta_seconds"), FApp::GetDeltaTime());
 			Data->SetNumberField(TEXT("used_physical_mb"), MemoryStats.UsedPhysical / (1024.0 * 1024.0));
+			UplinkPerf::AddGraphicsMemory(Data);
 			const FString Throttle = UplinkPerf::DescribeThrottle();
 			Data->SetBoolField(TEXT("throttled"), !Throttle.IsEmpty());
 			return FUplinkToolResult::Ok(Data, Throttle);

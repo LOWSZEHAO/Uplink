@@ -39,6 +39,10 @@ public class UplinkEditor : ModuleRules
 			// navigate_to asks the navigation system whether the pawn is even on
 			// a navmesh before blaming one for a stall.
 			"NavigationSystem",
+			// perf_stats reports how close graphics memory is to its budget,
+			// which needs GDynamicRHI. Engine exposes the RHI headers publicly
+			// but not the globals, so the link has to be declared here.
+			"RHI",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
