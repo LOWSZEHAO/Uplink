@@ -49,6 +49,31 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Absent, the check reports as skipped rather than passed.
 
 ### Fixed
+- **`run_scenario` validates each step's parameters.** `ValidateParams` had one
+  call site - the HTTP/MCP transport - and a scenario step went straight to the
+  tool's factory, so every step in every scenario ran unvalidated. A misspelt
+  parameter was dropped in silence and the step passed having run the tool with
+  its defaults, on the one caller whose entire product is a pass/fail verdict.
+  The same hole made `expect_failure` unsound: a step asserting a refusal the
+  schema layer owns passed for the wrong reason, because no refusal happened.
+  Validation runs after template expansion, since a step's parameters are not
+  known until its `$steps[N]` references resolve.
+
+  This was not hypothetical. `04-refuses-bad-input.json` opened with `bp_create`
+  given `parent` instead of `parent_class`, and its own note read "a step that
+  passes is the bug": called directly the parameter is refused by name, and as a
+  scenario step it created a Blueprint with the default parent and passed.
+
+- **A scenario refused before any step ran is no longer scored as a pass.** The
+  runner read `@($result.data.steps).Count`, and `@($null).Count` is 1 in
+  PowerShell, so a scenario that never executed reported one step that had run
+  and behaved. `04-refuses-bad-input` ended on a step naming a tool that does
+  not exist, which is refused at parse time and aborts the file - so its other
+  assertions had never run at all, under a green line reading "all 1 steps
+  correctly refused". That case now lives in `18-unknown-tool.json`, which
+  declares `_expect_scenario_refused` and asserts on the call; the runner no
+  longer scores any file backwards by its filename.
+
 - `set_property` verifies the value survived and refuses when it did not. A
   Blueprint variable that is not instance editable is put back by the actor's
   construction scripts on the way out of `PostEditChangeProperty`, and the

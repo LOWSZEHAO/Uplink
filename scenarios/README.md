@@ -25,7 +25,7 @@ step if you want one.
 | `01-smoke` | The editor is reachable and the basics answer. Changes nothing. |
 | `02-edits-and-cleanup` | A mutating tool really changes the level, later steps see the change, and the scenario puts the world back. |
 | `03-blueprint-authoring` | A Blueprint can be authored from nothing — variable, function graph, clean compile — and the engine agrees when read back. |
-| `04-refuses-bad-input` | The failure behaviour: a mistyped parameter, an unresolvable asset path, and an unknown tool name are all refused, not quietly ignored. |
+| `04-refuses-bad-input` | The failure behaviour: a mistyped parameter name, a wrongly-typed value, a value outside a declared enum, and an unresolvable asset path are each refused, not quietly ignored. Every step asserts its own refusal, and the teardown proves the first one by looking for the asset it must never have created. |
 | `05-playtest` | Verification in a running game: start it, move the player, query the world, capture the view, shut down — one request. |
 | `06-asset-creation` | The assets `bp_create` cannot make: a Widget Blueprint whose generated class resolves and takes a root widget, and a Material Instance parented through its factory. Names the factory it expects. |
 | `07-graph-flow-control` | A gameplay graph with decisions in it: Branch, Sequence, Cast, a ForLoop macro, Make/Break Struct, Switch, Select and Self, built in one batched call and compiled clean. |
@@ -38,6 +38,7 @@ step if you want one.
 | `15-blueprint-recompile` | A Blueprint that another one inherits from and calls into. A compatible change to the base leaves the dependent compiling clean; removing the function it calls leaves the dependent reported broken instead of quietly stale. |
 | `16-volume-geometry` | A volume spawned through `spawn_volume` has real brush geometry, and a class that is not a volume is refused rather than half-built. `spawn_actor` reaches a volume class and produces one that bounds nothing — correctly named, correctly placed, no shape, no complaint — which is a nav bounds volume that generates no navmesh. |
 | `17-property-path-indexing` | A dotted property path indexes an array element and keeps going through it, because the value worth asserting on is usually inside one entry of a list. Covers both misuses too: an out-of-range index reports the real length rather than "not found", which would read as a wrong property name. |
+| `18-unknown-tool` | A step naming a tool that does not exist is refused before anything runs, and the refusal names the step. The one failure a scenario reports on the call rather than on a step, which is why it has a file to itself — sharing one, it aborted the file and the steps above it never ran. |
 | `20-large-spawn` | Three hundred actors placed in one `spawn_batch`, counted in the world, and deleted again by the names the call returned — the reported count and the actual count are the same number, and the level ends where it started. |
 
 Most of these run against any project. `05-playtest` and `13-pie-editor-world-isolation`
@@ -51,12 +52,18 @@ Every scenario but one passes in the ordinary way: every step succeeds. Some
 files mix in `expect_failure` steps, which pass by being refused and read green
 alongside the rest.
 
-**`04-refuses-bad-input` is inverted.** Every step in it is *meant* to fail —
-that is the assertion. It runs with `stop_on_failure: false`, and the runner
-knows to score it backwards: a step that succeeds there is the bug. Testing that
-bad input is rejected matters as much as testing that good input works, because
-the failure this project cares most about is a call that reports success while
-doing nothing.
+**Refusals are asserted per step, with `expect_failure`.** Testing that bad
+input is rejected matters as much as testing that good input works, because the
+failure this project cares most about is a call that reports success while doing
+nothing. `04-refuses-bad-input` used to be scored backwards by the runner as a
+whole file; it no longer is, because a per-step assertion says which refusal it
+wanted and a whole-file inversion does not.
+
+**`18-unknown-tool` is the exception**, and the only scenario that asserts on
+the call rather than on a step. A tool name that does not resolve is refused at
+parse time, so no step runs at all — there is nothing to attach a per-step
+assertion to. It declares `_expect_scenario_refused` and the runner requires
+the call to come back refused with zero steps reported.
 
 ## Undo does not reach inside a scenario
 
@@ -80,7 +87,7 @@ after a run instead, and do not put an `undo` step in a file.
 
 A step is `{tool, params?, expect?, expect_failure?, timeout?}`.
 
-- `expect_failure: true` inverts one step: it passes when the tool refuses and fails when the tool lets it through. That is how `08-authoring-traps` mixes ordinary steps with rejection tests in one green scenario — `04-refuses-bad-input` predates it and inverts the whole file instead.
+- `expect_failure: true` inverts one step: it passes when the tool refuses and fails when the tool lets it through. That is how `08-authoring-traps` and `04-refuses-bad-input` mix ordinary steps with rejection tests in one green scenario. It covers schema-level refusals too — a mistyped parameter name, a wrong type, a value outside an enum — but only since step params were validated inside `run_scenario`; before that the validator ran on the HTTP path only, so those refusals never happened in a scenario and a step asserting one passed for the wrong reason.
 
 - `expect` matches fields of that step's **result data**, exactly. Assert on
   fields the tool actually returns — run the tool once and look, rather than

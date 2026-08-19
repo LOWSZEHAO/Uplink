@@ -347,6 +347,25 @@ namespace
 					return AdvanceOrFinish(Out);
 				}
 
+				// Validated here, after template expansion, because a step's
+				// params are not known until the $steps[N] references in them
+				// are resolved.
+				//
+				// Every direct call is validated by the transport, which is the
+				// only other place a tool is reached from. A scenario step went
+				// straight to Factory(), so a misspelt parameter was dropped in
+				// silence and the step passed having run the tool with its
+				// defaults - on the one caller whose entire product is a
+				// pass/fail verdict. It also left expect_failure unsound: a
+				// step asserting a refusal that the schema layer owns passed
+				// for the wrong reason, because the refusal never happened.
+				if (FString ParamError;
+					!FUplinkToolRegistry::ValidateParams(Def->Info, *ExpandedParams, ParamError))
+				{
+					RecordStep(FUplinkToolResult::Error(ParamError), 0.0);
+					return AdvanceOrFinish(Out);
+				}
+
 				Child = Def->Factory();
 				bChildStarted = false;
 				ChildContext.Params = *ExpandedParams;

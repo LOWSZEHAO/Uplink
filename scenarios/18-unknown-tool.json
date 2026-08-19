@@ -1,0 +1,18 @@
+{
+  "_name": "Unknown tool refuses the whole scenario",
+  "_purpose": "A step naming a tool that does not exist is refused before anything runs, and the refusal names the step. There is no invocation to build, so this is the one failure a scenario reports on the call rather than on a step - which is exactly why it needs a file of its own.",
+  "_reading": "The run_scenario call itself must come back refused, with zero steps reported. A scenario that runs its other steps and skips this one would be worse than useless: it would leave a typo'd tool name silently doing nothing in the middle of a suite that reported green.",
+  "_history": "This assertion used to sit as the third step of 04-refuses-bad-input.json, where it aborted that file at parse time so the two steps above it never ran - while the harness counted the empty result as one step correctly refused. Alone in its own file, the abort is the assertion.",
+  "_expect_scenario_refused": true,
+  "steps": [
+    {
+      "tool": "level_actors",
+      "params": { "max": 1 }
+    },
+    {
+      "_note": "Deliberately not a real tool.",
+      "tool": "no_such_tool",
+      "params": {}
+    }
+  ]
+}

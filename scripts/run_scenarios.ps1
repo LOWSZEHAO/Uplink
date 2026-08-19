@@ -102,26 +102,40 @@ foreach ($file in $files) {
     Show-Phase $null   $result.data.steps
     Show-Phase "teardown" $result.data.teardown
 
-    # 04 inverts the usual reading: every step there is meant to be refused.
-    $inverted    = $file.Name -like "*refuses*"
-    $stepsPassed = @($result.data.steps | Where-Object { $_.success }).Count
-    $stepsTotal  = @($result.data.steps).Count
+    # Count from a real array. @($null).Count is 1 in PowerShell, not 0, so
+    # reading .steps off an absent .data used to report one step - and a
+    # scenario refused before any step ran therefore read as a step that had
+    # run and behaved. That is how a file whose whole job is proving refusals
+    # sat green while executing nothing.
+    $stepRows = @()
+    if ($null -ne $result.data -and $null -ne $result.data.steps) {
+        $stepRows = @($result.data.steps)
+    }
+    $stepsPassed = @($stepRows | Where-Object { $_.success }).Count
+    $stepsTotal  = $stepRows.Count
 
-    if ($inverted) {
-        $scenarioOk = ($stepsPassed -eq 0) -and ($stepsTotal -gt 0)
-    } else {
-        $scenarioOk = ($result.data.passed -eq $true)
+    # A scenario naming a tool that does not exist is refused as a whole,
+    # because there is no invocation to build - so it asserts on the call
+    # rather than on any step, and says so with _expect_scenario_refused.
+    if ($doc._expect_scenario_refused) {
+        if ($result.success -ne $true -and $stepsTotal -eq 0) {
+            Write-Host ("  => PASSED (the call was refused: {0})" -f $result.message) -ForegroundColor Green
+            $passed++
+        } else {
+            Write-Host "  => FAILED (the call was expected to be refused outright)" -ForegroundColor Red
+            $failed++; $failedNames += $name
+        }
+        Write-Host ""
+        continue
     }
 
-    if ($scenarioOk) {
-        if ($inverted) { $note = "all $stepsTotal steps correctly refused" }
-        else           { $note = "$stepsPassed/$stepsTotal steps" }
-        Write-Host "  => PASSED ($note)" -ForegroundColor Green
+    if ($result.data.passed -eq $true) {
+        Write-Host ("  => PASSED ({0}/{1} steps)" -f $stepsPassed, $stepsTotal) -ForegroundColor Green
         $passed++
     } else {
-        if ($inverted) { $note = "$stepsPassed step(s) succeeded that should have been refused" }
-        else           { $note = "$stepsPassed/$stepsTotal steps" }
-        Write-Host "  => FAILED ($note)" -ForegroundColor Red
+        $note = "{0}/{1} steps" -f $stepsPassed, $stepsTotal
+        if ($stepsTotal -eq 0) { $note = "no steps ran: $($result.message)" }
+        Write-Host ("  => FAILED ({0})" -f $note) -ForegroundColor Red
         $failed++; $failedNames += $name
     }
     Write-Host ""

@@ -321,13 +321,15 @@ Invoke-Check "Every scenario file is valid JSON" {
     }
 }
 
-# A scenario that switches stop_on_failure off is a deliberate refusal test:
-# its steps are meant to be wrong. Steps marked expect_failure are the same
-# case in miniature. Everything else is held to the rules.
+# Steps marked expect_failure are asserting a refusal, so their params are
+# meant to be wrong. A scenario marked _expect_scenario_refused is the same
+# thing one level up: it names a tool that does not exist on purpose, and the
+# refusal of the whole call is the assertion. Everything else is held to the
+# rules.
 function Get-CheckableSteps {
     param($Entry)
     $j = $Entry.Json
-    if ((Test-HasProperty $j "stop_on_failure") -and (-not $j.stop_on_failure)) { return @() }
+    if ((Test-HasProperty $j "_expect_scenario_refused") -and $j._expect_scenario_refused) { return @() }
 
     $out = @()
     foreach ($phase in @("setup", "steps", "teardown")) {

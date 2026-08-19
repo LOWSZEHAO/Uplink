@@ -1,27 +1,46 @@
 {
   "_name": "Refuses bad input",
-  "_purpose": "The failure behaviour, which matters more than the happy path: three things that should be refused rather than quietly ignored - a mistyped parameter name, an asset path that resolves to nothing, and a tool that does not exist. Every step here is EXPECTED TO FAIL - that is the pass condition, so this scenario runs with stop_on_failure off and is read by eye.",
-  "_reading": "A correct run reports all three steps FAILED. A step that passes is the bug.",
-  "stop_on_failure": false,
+  "_purpose": "The failure behaviour, which matters more than the happy path: a mistyped parameter name, a wrongly-typed value, a value outside a declared enum, and an asset path that resolves to nothing are all refused rather than quietly ignored. Each step asserts its own refusal with expect_failure, so the reason is checked per step instead of read by eye.",
+  "_reading": "These steps pass BY being refused. A step that succeeds is the bug: it means the tool ran with a default in place of what was asked for, and reported on work it did not do.",
+  "_history": "Until step params were validated inside run_scenario, none of this was actually tested. The validator had one call site - the HTTP transport - so a scenario step went straight to the tool with whatever it was given: the mistyped 'parent' below was dropped in silence and bp_create made an Actor, and the step passed. The unknown-tool case that used to live here refused the whole file at parse time, so these steps never ran at all; it is now 18-unknown-tool.json.",
   "steps": [
     {
+      "_note": "Mistyped name. The real parameter is parent_class; 'parent' must be refused with the suggestion, not ignored in favour of the default parent.",
       "tool": "bp_create",
       "params": {
         "path": "/Game/UplinkScenarios/ShouldNotExist",
         "parent": "/Script/Engine.Pawn"
-      }
+      },
+      "expect_failure": true
     },
     {
+      "_note": "Wrong type. A number sent as a string must be refused before the tool coerces it and reports confidently on the wrong count.",
+      "tool": "level_actors",
+      "params": { "max": "5" },
+      "expect_failure": true
+    },
+    {
+      "_note": "Outside the declared enum. edit_history accepts list|undo|redo, and anything else must be named as such rather than falling through to a default action.",
+      "tool": "edit_history",
+      "params": { "action": "sideways" },
+      "expect_failure": true
+    },
+    {
+      "_note": "A path that resolves to nothing is refused rather than accepted as null.",
       "tool": "spawn_actor",
       "params": {
         "class_path": "/Game/DoesNotExist.DoesNotExist_C",
         "world": "editor"
-      }
-    },
+      },
+      "expect_failure": true
+    }
+  ],
+  "teardown": [
     {
-      "_note": "Deliberately not a real tool. An unknown name must be refused by the registry, not silently skipped.",
-      "tool": "no_such_tool",
-      "params": {}
+      "_note": "Proves the first step really was refused. If bp_create had run, this would find the asset it should never have made.",
+      "tool": "asset_search",
+      "params": { "path_prefix": "/Game/UplinkScenarios", "max": 5 },
+      "expect": { "total_matching": 0 }
     }
   ]
 }
