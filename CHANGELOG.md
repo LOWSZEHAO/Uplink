@@ -6,6 +6,29 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.30.1
+
+### Fixed
+- **A key sent with `route: "ui"` no longer takes focus away from the widget it
+  is aimed at.** `SendSlateKey` claimed keyboard focus for the game viewport
+  before every send, so a menu that had focused itself lost it a moment before
+  the key arrived; the viewport answered handled and the menu never moved. That
+  is the whole reason the route exists, and it could not work. Focus is now
+  claimed only when it is sitting outside the game — the game layer manager is
+  installed as the viewport widget content, so anything the game focuses is a
+  descendant of the viewport and is left alone. Verified against a commercial
+  title: its "press any key" screen, W/S menu navigation and E to confirm all
+  respond to simulated keys now, and its in-game tutorial pages advance.
+- `click_widget` reports the press and the release separately (`downHandled`,
+  `upHandled`). A UMG Button raises `OnClicked` on the release after capturing
+  the press, so a press swallowed by something else — an editor viewport hosting
+  the session, a panel over the top — leaves the button unfired. Folding both
+  edges into one `handled` reported that as a click. `handled` is unchanged for
+  callers that read it; the message now names which edge was lost.
+- `input_key` with `route: "ui"` reports `focusedWidget`. When a menu ignores a
+  key that came back handled, the widget that was listening is the diagnosis —
+  a viewport there means the key reached the game rather than the UI.
+
 ## 0.30.0
 
 ### Added

@@ -22,6 +22,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Widget.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Widgets/SViewport.h"
 #include "Misc/App.h"
 #include "NavigationSystem.h"
 
@@ -78,6 +79,32 @@ namespace
 	 * because the widget was listening to Slate and the key was going to the
 	 * pawn. Returns whether anything accepted it.
 	 */
+	/** True when the widget holding keyboard focus sits under Root. */
+	bool IsFocusUnder(FSlateApplication& Slate, const TSharedRef<SWidget>& Root)
+	{
+		TSharedPtr<SWidget> Widget = Slate.GetUserFocusedWidget(0);
+		while (Widget.IsValid())
+		{
+			if (Widget == Root)
+			{
+				return true;
+			}
+			Widget = Widget->GetParentWidget();
+		}
+		return false;
+	}
+
+	/** Type of the widget holding keyboard focus, for reporting where a key went. */
+	FString DescribeFocusedWidget()
+	{
+		if (!FSlateApplication::IsInitialized())
+		{
+			return TEXT("none");
+		}
+		const TSharedPtr<SWidget> Widget = FSlateApplication::Get().GetUserFocusedWidget(0);
+		return Widget.IsValid() ? Widget->GetTypeAsString() : TEXT("none");
+	}
+
 	bool SendSlateKey(const FKey& Key, bool bDown, bool bWithCharacter)
 	{
 		if (!FSlateApplication::IsInitialized())
@@ -86,12 +113,23 @@ namespace
 		}
 		FSlateApplication& Slate = FSlateApplication::Get();
 
-		// Focus the game viewport first: a key event goes to whatever has
-		// keyboard focus, and after a tool-driven session that is often the
-		// editor UI rather than the game.
-		if (Slate.GetGameViewport().IsValid())
+		// A key goes to whatever holds keyboard focus, and after a tool-driven
+		// session that is often the editor UI rather than the game - so claim
+		// focus for the viewport when it is sitting outside. Claim it only
+		// then. A menu that focused itself, which is what
+		// OnMouseButtonDown -> SetKeyboardFocus does and what every "press any
+		// key" screen relies on, is the exact case this route exists to serve;
+		// taking focus back would send the key to the viewport instead of the
+		// widget that asked for it, the viewport would answer handled, and the
+		// menu would never move. The game layer manager is installed as the
+		// viewport widget content, so anything the game itself focuses, UMG
+		// included, is a descendant of the viewport.
+		if (const TSharedPtr<SViewport> GameViewport = Slate.GetGameViewport())
 		{
-			Slate.SetAllUserFocusToGameViewport(EFocusCause::SetDirectly);
+			if (!IsFocusUnder(Slate, GameViewport.ToSharedRef()))
+			{
+				Slate.SetAllUserFocusToGameViewport(EFocusCause::SetDirectly);
+			}
 		}
 
 		// Note the order: this fills KeyCode first, then CharCode.
@@ -638,8 +676,13 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 					// any gameplay controller exists at all.
 					if (Route == TEXT("ui"))
 					{
+						const FString Focused = DescribeFocusedWidget();
 						const bool bUiHandled = SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true);
 						TSharedRef<FJsonObject> UiData = MakeShared<FJsonObject>();
+						// Which widget was listening is the whole diagnosis when
+						// a menu ignores a key that came back handled: a viewport
+						// here means the key went to the game, not to the UI.
+						UiData->SetStringField(TEXT("focusedWidget"), Focused);
 						// Same field names as the tap path, so a caller reads one
 						// shape regardless of which event it sent.
 						UiData->SetBoolField(TEXT("handled"), bUiHandled);
@@ -950,11 +993,34 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			// Synthesizing the event always "works"; whether anything accepted
 			// it is the part worth knowing. An unhandled click usually means
 			// something invisible is over the target, or it does not take input.
+			// The two edges are reported apart because they answer different
+			// questions: a UMG Button raises OnClicked on the release, after
+			// capturing the press, so a press swallowed by something else -
+			// an editor viewport hosting the session, a panel over the top -
+			// leaves the release unhandled and the button never fires. Folding
+			// them into one boolean reported that as a click.
 			const bool bHandled = bDownHandled || bUpHandled;
 			Data->SetBoolField(TEXT("handled"), bHandled);
-			return FUplinkToolResult::Ok(Data, bHandled
-				? TEXT("clicked")
-				: TEXT("click was sent but nothing handled it - the widget may be covered, hit-test invisible, or not accept input"));
+			Data->SetBoolField(TEXT("downHandled"), bDownHandled);
+			Data->SetBoolField(TEXT("upHandled"), bUpHandled);
+			FString Message;
+			if (bDownHandled && bUpHandled)
+			{
+				Message = TEXT("clicked");
+			}
+			else if (bDownHandled)
+			{
+				Message = TEXT("the press was accepted but the release was not, so a Button under it never raised OnClicked - something took mouse capture, which is what a session played inside the level viewport does");
+			}
+			else if (bUpHandled)
+			{
+				Message = TEXT("the release was accepted but the press was not - the widget was probably not under the point when the press went out");
+			}
+			else
+			{
+				Message = TEXT("click was sent but nothing handled it - the widget may be covered, hit-test invisible, or not accept input");
+			}
+			return FUplinkToolResult::Ok(Data, Message);
 		});
 
 	{
