@@ -8,7 +8,29 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.31.0
 
+### Added
+- `wait_until` gains a `navmesh_ready {location}` condition: it waits until a
+  complete route can actually be built from the player pawn to that location,
+  which is the question `navigate_to` is about to ask. Runtime navmesh tiles
+  build across frames, so pathing issued straight after `BeginPlay` fails with a
+  message about the goal being off the navmesh, and the usual workaround is
+  sleeping a guessed number of seconds that has to be retuned per level and per
+  machine. It deliberately avoids the two cheaper proxies, both of which
+  answered yes while pathing still failed: the remaining-build-task count reads
+  zero *before* generation starts, and projecting a point onto the mesh succeeds
+  when there is mesh merely near it.
+
 ### Fixed
+- `navigate_to` stops guessing when a pawn stalls on the navmesh. Standing on
+  mesh and motionless was reported as "the path to the goal could not be
+  built", which was an assumption - and on a real project it was the wrong one.
+  A complete route existed the whole time; the game was holding the player still
+  through a scripted intro, and the message sent the investigation into nav
+  volumes and tile generation for hours while the cause sat in the game's own
+  log. It now asks the navigation system for the route before blaming the route,
+  and says which of the two it is: no route, or a route the pawn did not move
+  along. They need completely different things done about them.
+
 - The `evidence_on_failure` bundle re-reads every property the scenario itself
   asserted on or waited for, taken in the failed world before teardown removes
   it. The bundle already said what the frame looked like, what was near the

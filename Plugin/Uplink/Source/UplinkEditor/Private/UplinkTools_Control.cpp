@@ -27,6 +27,7 @@
 #include "Widgets/SViewport.h"
 #include "Misc/App.h"
 #include "NavigationSystem.h"
+#include "NavigationPath.h"
 
 using namespace UplinkToolUtil;
 
@@ -549,16 +550,39 @@ namespace
 					// PathFollowingComponent all present and no path produced.
 					// Projecting the pawn's own position onto the navmesh
 					// answers it in one call.
-					const UNavigationSystemV1* Nav = FNavigationSystem::GetCurrent<UNavigationSystemV1>(Pawn->GetWorld());
+					UNavigationSystemV1* Nav = FNavigationSystem::GetCurrent<UNavigationSystemV1>(Pawn->GetWorld());
 					FNavLocation Projected;
 					const bool bOnNavMesh = Nav && Nav->ProjectPointToNavigation(Position, Projected);
-					Reason = Nav == nullptr
-						? TEXT("stalled - the world has no navigation system, so nothing can path here")
-						: bOnNavMesh
-							? TEXT("stalled - the pawn is standing on the navmesh but never moved, so the path to the goal could not be built. ")
-								TEXT("The goal is most likely off the navmesh, or on a disconnected island from where the pawn stands.")
-							: TEXT("stalled - the pawn is NOT standing on generated navmesh, so no path could start. ")
-								TEXT("A NavMeshBoundsVolume existing is not enough; it has to have built data here. Check its extent and run console 'RebuildNavigation'.");
+					if (Nav == nullptr)
+					{
+						Reason = TEXT("stalled - the world has no navigation system, so nothing can path here");
+					}
+					else if (!bOnNavMesh)
+					{
+						Reason = TEXT("stalled - the pawn is NOT standing on generated navmesh, so no path could start. ")
+							TEXT("A NavMeshBoundsVolume existing is not enough; it has to have built data here. Check its extent and run console 'RebuildNavigation'.");
+					}
+					else
+					{
+						// Standing on navmesh and motionless used to be reported
+						// as "the path could not be built", which was a guess -
+						// and on a real project it was the wrong one. A route
+						// existed the whole time; the game was holding the
+						// player still through a scripted intro, and the
+						// message sent the investigation into nav volumes and
+						// tile generation for hours. Ask for the path instead
+						// of assuming it is missing: the two causes need
+						// completely different things done about them.
+						UNavigationPath* Path = Nav->FindPathToLocationSynchronously(
+							Pawn->GetWorld(), Position, Goal, Pawn);
+						const bool bRouteExists = Path != nullptr && Path->IsValid() && !Path->IsPartial();
+						Reason = bRouteExists
+							? TEXT("stalled - a complete route to the goal EXISTS and the pawn did not move along it, so pathing is not the problem. ")
+								TEXT("Something is holding the player still: a movement lock in the game's own logic, a modal, a scripted sequence, or an input mode that ignores movement. ")
+								TEXT("Check the log for the game's own messages and observe the pawn's movement mode.")
+							: TEXT("stalled - the pawn is standing on the navmesh but no complete route to the goal could be built. ")
+								TEXT("The goal is most likely off the navmesh, or on a disconnected island from where the pawn stands.");
+					}
 				}
 				return Finish(Pawn, false, *Reason, Out);
 			}

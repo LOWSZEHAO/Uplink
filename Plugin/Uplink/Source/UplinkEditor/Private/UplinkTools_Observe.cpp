@@ -4,6 +4,10 @@
 
 #include "UplinkTools.h"
 #include "Object/UplinkObjectPath.h"
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
+#include "NavigationData.h"
+#include "GameFramework/PlayerController.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/TextBlock.h"
@@ -133,10 +137,10 @@ namespace
 
 			static const TSet<FString> KnownTypes = {
 				TEXT("property_equals"), TEXT("actor_exists"), TEXT("actor_gone"),
-				TEXT("event_count"), TEXT("elapsed"), TEXT("ui_visible") };
+				TEXT("event_count"), TEXT("elapsed"), TEXT("ui_visible"), TEXT("navmesh_ready") };
 			if (!KnownTypes.Contains(Type))
 			{
-				Out = FUplinkToolResult::Error(TEXT("condition.type must be property_equals, actor_exists, actor_gone, event_count, elapsed, or ui_visible"));
+				Out = FUplinkToolResult::Error(TEXT("condition.type must be property_equals, actor_exists, actor_gone, event_count, elapsed, ui_visible, or navmesh_ready"));
 				return EUplinkToolStep::Done;
 			}
 			if (Type == TEXT("event_count") &&
@@ -209,6 +213,55 @@ namespace
 			// Measured on a shipping title: the same call answered handled and
 			// did nothing, twice, because nothing had focus yet. Waiting on a
 			// widget rather than on a stopwatch is the fix.
+			// Navmesh tiles are built across frames, so the mesh is not there
+			// when BeginPlay returns. Pathing into that window fails with a
+			// message about the goal being off the navmesh - which reads as a
+			// level fault and is not one - and the usual workaround is to sleep
+			// a guessed number of seconds, which is a fudge factor that has to
+			// be retuned per level and per machine.
+			if (Type == TEXT("navmesh_ready"))
+			{
+				UNavigationSystemV1* Nav = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+				if (!Nav)
+				{
+					OutError = TEXT("this world has no navigation system, so no navmesh will ever be ready - check the level has a nav mesh bounds volume");
+					return false;
+				}
+				const APlayerController* PC = World->GetFirstPlayerController();
+				APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+				if (!Pawn)
+				{
+					// No pawn yet is a reason to keep waiting, not an error:
+					// this is usually the first thing after pie_start.
+					return false;
+				}
+
+				// Ask the question the caller actually has - can a path be
+				// built - rather than a proxy for it. Two proxies were tried
+				// and both answered yes while pathing still failed:
+				//
+				//   GetNumRemainingBuildTasks() == 0 is also true BEFORE
+				//   generation starts, so it reported ready 400ms after
+				//   BeginPlay with no mesh in the level at all.
+				//
+				//   ProjectPointToNavigation succeeded at 121ms because its
+				//   query extent finds mesh NEAR the point rather than AT it,
+				//   and a goal 200 units from the nearest tile still projects.
+				//
+				// Building the path costs more than either, and it is the only
+				// answer that cannot be true while navigate_to fails.
+				FVector Goal;
+				if (!TryGetVector(Condition, TEXT("location"), Goal))
+				{
+					OutError = TEXT("navmesh_ready needs 'location' - the point you intend to path to. The pawn stands on mesh long before the far side of a level has any, so a test that omits the destination is the misleading half of the failure this exists to prevent.");
+					return false;
+				}
+
+				UNavigationPath* Path = Nav->FindPathToLocationSynchronously(
+					World, Pawn->GetActorLocation(), Goal, Pawn);
+				return Path != nullptr && Path->IsValid() && !Path->IsPartial();
+			}
+
 			if (Type == TEXT("ui_visible"))
 			{
 				const FString Needle = GetString(Condition, TEXT("contains"));
@@ -393,7 +446,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("wait_until");
-		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?} - 'property' takes the same dotted paths get_property does, so nested struct members and values behind an object reference are assertable, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}, ui_visible {contains}. ui_visible waits for a UMG widget that is actually on screen, matching part of a widget name or of the text it displays - a menu is constructed a frame or two after the screen holding it is added, and a key sent into that gap reaches the viewport instead of the menu and still answers handled. A timeout is reported as condition_met=false, not as an error.");
+		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?} - 'property' takes the same dotted paths get_property does, so nested struct members and values behind an object reference are assertable, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}, ui_visible {contains}, navmesh_ready {location?}. navmesh_ready {location} waits until a complete path can actually be built from the player pawn to that location, which is the question navigate_to is about to ask. 'location' is required. It deliberately avoids the two cheaper proxies, both of which answer yes while pathing still fails: the engine's remaining-build-task count reads zero before generation has even started, and projecting a point onto the mesh succeeds when there is mesh merely NEAR it. Navmesh tiles build across frames, so pathing issued straight after BeginPlay fails with a message about the goal being off the navmesh - which reads as a level fault and is not one - and the usual workaround is sleeping a guessed number of seconds that has to be retuned per level and per machine. Navmesh tiles are built across frames, so the mesh is absent for a while after BeginPlay and pathing into that window fails with a message about the goal being off the navmesh, which reads as a level fault and is not one; the usual workaround is sleeping a guessed number of seconds, which has to be retuned per level and per machine. ui_visible waits for a UMG widget that is actually on screen, matching part of a widget name or of the text it displays - a menu is constructed a frame or two after the screen holding it is added, and a key sent into that gap reaches the viewport instead of the menu and still answers handled. A timeout is reported as condition_met=false, not as an error.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"condition":{"type":"object","description":"{type, ...} - see tool description"},"timeout":{"type":"number","default":30,"description":"seconds (0.1-300)"},"world":{"type":"string","enum":["editor","pie"]}},"required":["condition"]})json"));
 		Info.bReadOnly = true;
 		Info.TimeoutSeconds = 310.0;
