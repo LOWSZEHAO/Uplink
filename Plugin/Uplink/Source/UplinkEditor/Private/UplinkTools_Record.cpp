@@ -470,7 +470,7 @@ void UplinkTools::RegisterRecord(FUplinkToolRegistry& Registry, FUplinkInputReco
 {
 	Registry.RegisterQuick(
 		TEXT("input_record"),
-		TEXT("Record the human's real input through a passive Slate tap: key and mouse-button presses, analog axes, and mouse movement, each timestamped from the start of the take. action: 'start' | 'stop' (returns the events - keep them to replay later) | 'status'. The tap is editor-wide rather than viewport-only, so keys typed into editor panels land in the take too. Not captured: the mouse wheel, and the second press of a double-click. A recording auto-stops when PIE ends and is kept as the last take, which 'stop' still hands back."),
+		TEXT("Record the human's real input through a passive Slate tap: key and mouse-button presses, analog axes, and mouse movement, each timestamped from the start of the take. action: 'start' | 'stop' (returns the events - keep them to replay later) | 'status'. The tap is editor-wide rather than viewport-only, so keys typed into editor panels land in the take too. The mouse wheel is recorded as a MouseWheelAxis sample and the second click of a double-click as an ordinary press, since Slate delivers both through their own events and a take that dropped them replayed a release nothing had pressed. A recording auto-stops when PIE ends and is kept as the last take, which 'stop' still hands back."),
 		TEXT(R"json({"type":"object","properties":{"action":{"type":"string","enum":["start","stop","status"]}},"required":["action"]})json"),
 		/*bReadOnly=*/false,
 		[&Recorder](const FUplinkToolContext& Ctx) -> FUplinkToolResult

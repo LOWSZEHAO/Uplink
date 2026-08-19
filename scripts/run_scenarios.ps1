@@ -33,6 +33,21 @@ try {
     exit 1
 }
 
+# Start from a known state. A session left running by whoever used the editor
+# last makes every scenario that calls pie_start fail on its first step, with a
+# refusal that describes the session rather than the test - and the run then
+# looks like a regression in whatever those scenarios cover. Scenarios take
+# care of their own cleanup through teardown; this is the other end of that.
+try {
+    $pie = Invoke-RestMethod -Uri "$Endpoint/tool/pie_status" -Method Post -Body "{}" -TimeoutSec 10
+    if ($pie.data.state -ne "none") {
+        Write-Host "a PIE session was already running ($($pie.data.state)) - stopping it first`n" -ForegroundColor Yellow
+        Invoke-RestMethod -Uri "$Endpoint/tool/pie_stop" -Method Post -Body '{"wait_ms":40000}' -TimeoutSec 60 | Out-Null
+    }
+} catch {
+    Write-Host "could not check PIE state: $($_.Exception.Message)" -ForegroundColor DarkYellow
+}
+
 $files = Get-ChildItem -Path $scenarioDir -Filter *.json | Sort-Object Name
 if ($Filter) { $files = $files | Where-Object { $_.Name -like "*$Filter*" } }
 if (-not $files) { Write-Host "no scenario files matched '$Filter'" -ForegroundColor Yellow; exit 1 }

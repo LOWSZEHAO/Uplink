@@ -78,6 +78,40 @@ public:
 		return false;
 	}
 
+	/**
+	 * Slate delivers the second click of a double as its own event, not as
+	 * another button-down, so without this a take held a key_up with no press
+	 * in front of it - a replay then released a button nothing had pressed.
+	 * Recorded as an ordinary press because that is what the game receives
+	 * from a person clicking twice.
+	 */
+	virtual bool HandleMouseButtonDoubleClickEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override
+	{
+		FUplinkRecordedInput Event;
+		Event.Type = TEXT("key_down");
+		Event.Key = MouseEvent.GetEffectingButton().ToString();
+		Owner.Add(MoveTemp(Event));
+		return false;
+	}
+
+	/**
+	 * The wheel arrives here and nowhere else, so a take dropped it entirely -
+	 * and a wheel is how a great many games switch weapons, zoom, or cycle a
+	 * target, which is exactly the input somebody records a session to prove.
+	 * MouseWheelAxis carries the delta, so it is stored as an axis sample
+	 * rather than a keypress.
+	 */
+	virtual bool HandleMouseWheelOrGestureEvent(FSlateApplication& SlateApp,
+		const FPointerEvent& InWheelEvent, const FPointerEvent* InGestureEvent) override
+	{
+		FUplinkRecordedInput Event;
+		Event.Type = TEXT("axis");
+		Event.Key = EKeys::MouseWheelAxis.ToString();
+		Event.Amount = InWheelEvent.GetWheelDelta();
+		Owner.Add(MoveTemp(Event));
+		return false;
+	}
+
 private:
 	FUplinkInputRecorder& Owner;
 };

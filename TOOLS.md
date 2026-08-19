@@ -122,7 +122,7 @@ Every list is capped, because this is read in an agent's context window. Gatheri
 | Tool | What it does |
 |---|---|
 | `input_record` | Capture the human's real input (keys, mouse buttons, axes, mouse moves) through a passive Slate tap — play is unaffected. `{action: start\|stop\|status}`; `stop` returns the timestamped events and keeps them as the last take. Auto-stops when PIE ends. |
-| `input_replay` | Replay a take into the running game through the engine's simulated-input path — a regression test from a real play session. `{events? (from a stop; omit = last take), speed?}` |
+| `input_replay` | Replay a take into the running game through the engine's simulated-input path. `{events? (from a stop; omit = last take), speed?}` **Read this before relying on it:** a replayed key reaches the player controller, and on an Enhanced Input project — most UE5 games — that fires no Input Action. Measured on a real game: a two-second W through this path moved the character not at all, while the same action through `input_action` moved it 350 units. So a take replays menus and legacy input faithfully, and does not reproduce gameplay bound through Enhanced Input. `handled` counts only the events that prove they reached `UPlayerInput` — a floor, not a total. |
 
 ---
 
