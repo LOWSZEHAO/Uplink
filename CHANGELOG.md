@@ -9,6 +9,22 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## 0.31.0
 
 ### Fixed
+- The `evidence_on_failure` bundle re-reads every property the scenario itself
+  asserted on or waited for, taken in the failed world before teardown removes
+  it. The bundle already said what the frame looked like, what was near the
+  player and what the log complained about; what it did not carry was the
+  number the assertion was actually about. A run that stops at “expected
+  bIsDead to be true, got false” and then tears down the session has destroyed
+  the only world in which the enemy’s health could be read — and whether it
+  took damage and refused to die, or never took any, is the next question. An
+  agent diagnosing a benchmark reported rebuilding the whole fight by hand for
+  that number, three rounds running. Targets come from the scenario: whatever
+  it read or waited on is, by construction, what it considers worth knowing.
+- `get_property` echoes the property path in its result. A reply of
+  `{object, type: float, value: 1}` does not say *which* float, which matters
+  as soon as a caller reads a batch of them — the evidence bundle above returns
+  one per assertion.
+
 - Property paths index array elements: `Items[0].ItemData.HealPercent` reads
   through an array, into the struct in that element, across the object
   reference it holds, and down to a float. `get_property`, `set_property` and

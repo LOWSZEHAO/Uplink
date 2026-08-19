@@ -40,6 +40,11 @@ void UplinkObject::RegisterGetProperty(FUplinkToolRegistry& Registry)
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("object"), Object->GetPathName());
+			// Echo the path back. A reply of {object, type: float, value: 1} does
+			// not say WHICH float, and a caller reading a batch of these - the
+			// scenario evidence bundle re-reads every asserted property at once -
+			// otherwise has to match them up by position.
+			Data->SetStringField(TEXT("property"), GetString(Ctx.Params, TEXT("property")));
 			Data->SetStringField(TEXT("type"), Property->GetCPPType());
 			Data->SetField(TEXT("value"), Value);
 			return FUplinkToolResult::Ok(Data);

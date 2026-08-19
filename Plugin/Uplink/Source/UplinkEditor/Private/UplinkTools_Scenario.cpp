@@ -547,6 +547,113 @@ namespace
 		 * named and skipped: a scenario must not fail because the thing meant
 		 * to explain its failure was missing.
 		 */
+		/**
+		 * Re-read every property the scenario was asserting on, at the moment it
+		 * failed.
+		 *
+		 * The bundle already says what the frame looked like, what was near the
+		 * player and what the log complained about. What it did not carry is the
+		 * number the assertion was actually about - and that is the one the
+		 * diagnosis turns on. A run that stops at "expected bIsDead to be true,
+		 * got false" then tears down PIE has destroyed the only world in which
+		 * the enemy's health could be read, so the next question - did it take
+		 * damage at all, or take damage and refuse to die - cannot be answered
+		 * without rebuilding the whole fight by hand. An agent doing exactly
+		 * that reported it as the bundle's biggest gap, three rounds running.
+		 *
+		 * Targets come from the scenario itself: whatever it read or waited on
+		 * is, by construction, what it considers worth knowing.
+		 */
+		void QueueAssertedProperties()
+		{
+			const FUplinkToolDef* Def = Registry.Find(TEXT("get_property"));
+			if (!Def)
+			{
+				return;
+			}
+
+			TSet<FString> Seen;
+			int32 Queued = 0;
+
+			auto Queue = [&](const TSharedPtr<FJsonObject>& From, const FString& FallbackWorld)
+			{
+				if (!From.IsValid() || Queued >= 24)
+				{
+					return;
+				}
+				FString Property;
+				if (!From->TryGetStringField(FStringView(TEXT("property")), Property) || Property.IsEmpty())
+				{
+					return;
+				}
+				TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
+				FString Key = Property;
+				for (const TCHAR* Field : { TEXT("actor"), TEXT("object_path"), TEXT("component"), TEXT("world") })
+				{
+					FString Value;
+					if (From->TryGetStringField(FStringView(Field), Value) && !Value.IsEmpty())
+					{
+						Params->SetStringField(Field, Value);
+						Key += TEXT("|") + Value;
+					}
+				}
+				if (!Params->HasField(FStringView(TEXT("world"))) && !FallbackWorld.IsEmpty())
+				{
+					Params->SetStringField(TEXT("world"), FallbackWorld);
+				}
+				Params->SetStringField(TEXT("property"), Property);
+
+				// A path still carrying a $steps[] reference was never expanded
+				// for this run and names nothing; reading it would only add a
+				// failed capture to a bundle explaining a failure.
+				FString Rendered;
+				const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Rendered);
+				FJsonSerializer::Serialize(Params, Writer);
+				if (Rendered.Contains(TEXT("$")))
+				{
+					return;
+				}
+				if (Seen.Contains(Key))
+				{
+					return;
+				}
+				Seen.Add(Key);
+
+				FStepSpec Step;
+				Step.Tool = TEXT("get_property");
+				Step.Params = Params;
+				Step.TimeoutSeconds = 15.0;
+				EvidenceSteps.Add(MoveTemp(Step));
+				++Queued;
+			};
+
+			for (const FStepSpec& Spec : Steps)
+			{
+				if (!Spec.Params.IsValid())
+				{
+					continue;
+				}
+				FString StepWorld;
+				Spec.Params->TryGetStringField(FStringView(TEXT("world")), StepWorld);
+				if (StepWorld.StartsWith(TEXT("$")))
+				{
+					StepWorld.Empty();
+				}
+
+				if (Spec.Tool == TEXT("get_property"))
+				{
+					Queue(Spec.Params, StepWorld);
+					continue;
+				}
+				// wait_until keeps its target inside the condition object.
+				const TSharedPtr<FJsonObject>* Condition = nullptr;
+				if (Spec.Params->TryGetObjectField(FStringView(TEXT("condition")), Condition) && Condition->IsValid())
+				{
+					Queue(*Condition, StepWorld);
+				}
+			}
+		}
+
 		void BuildEvidenceSteps()
 		{
 			for (const FEvidenceSource& Source : EvidenceSources)
@@ -577,6 +684,9 @@ namespace
 				Step.TimeoutSeconds = FMath::Clamp(Def->Info.TimeoutSeconds, 0.5, 900.0);
 				EvidenceSteps.Add(MoveTemp(Step));
 			}
+
+			// Last, so the perishable captures happen closest to the failure.
+			QueueAssertedProperties();
 		}
 
 		/**
@@ -916,7 +1026,7 @@ void UplinkTools::RegisterScenario(FUplinkToolRegistry& Registry)
 {
 	FUplinkToolInfo Info;
 	Info.Name = TEXT("run_scenario");
-	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step. Each step inherits the timeout its own tool declares unless overridden. A step with expect_failure:true is asserting a refusal - it passes when the tool errors, which is how a scenario mixes normal steps with rejection tests. Optional phases: 'setup' builds the fixture and, if any setup step fails, the steps are skipped entirely rather than failing for the wrong reason (reference setup results as \"$setup[N].field\"); 'teardown' ALWAYS runs, including after an aborted run, which is when cleanup matters most. artifacts:{screenshot_on_failure:true} captures the viewport when a step fails; artifacts:{evidence_on_failure:true} goes further, gathering an 'evidence' bundle at the FIRST failed step and before teardown runs - the viewport, observe (the player, the nearest actors, their collision state and overlaps), drain_events (which watched events actually fired) and the recent output_log. Detecting a failure and diagnosing one are different problems: the assertion tells you the door did not open, the bundle is the material for working out whether the input never fired, the collision never overlapped, or the logic never ran. Facts only, capped per source, and a capture that fails never changes the verdict. budget_seconds fails a scenario that passed every assertion but took longer than it should - a performance regression otherwise hides in a green suite.");
+	Info.Description = TEXT("Run a scripted playtest: a list of tool steps executed in order as one task, returning a structured pass/fail report with per-step timing. Each step is {tool, params?, expect?, timeout?}. Param strings of the form \"$steps[N].field.path\" are replaced with values from step N's result data (e.g. spawn an actor in step 0, then teleport to \"$steps[0].location\"). 'expect' matches fields of the step's result data; a wait_until step without an expect fails the scenario if its condition times out. stop_on_failure (default true) aborts at the first failed step. Each step inherits the timeout its own tool declares unless overridden. A step with expect_failure:true is asserting a refusal - it passes when the tool errors, which is how a scenario mixes normal steps with rejection tests. Optional phases: 'setup' builds the fixture and, if any setup step fails, the steps are skipped entirely rather than failing for the wrong reason (reference setup results as \"$setup[N].field\"); 'teardown' ALWAYS runs, including after an aborted run, which is when cleanup matters most. artifacts:{screenshot_on_failure:true} captures the viewport when a step fails; artifacts:{evidence_on_failure:true} goes further, gathering an 'evidence' bundle at the FIRST failed step and before teardown runs - the viewport, observe (the player, the nearest actors, their collision state and overlaps), drain_events (which watched events actually fired), the recent output_log, and a re-read of every property the scenario itself asserted on or waited for - the number the assertion was about, taken in the failed world before teardown removes it. That last one is what turns \"expected bIsDead to be true, got false\" into a diagnosis: whether the enemy took damage and refused to die, or never took any, is the next question and it cannot be answered once the session is gone. Detecting a failure and diagnosing one are different problems: the assertion tells you the door did not open, the bundle is the material for working out whether the input never fired, the collision never overlapped, or the logic never ran. Facts only, capped per source, and a capture that fails never changes the verdict. budget_seconds fails a scenario that passed every assertion but took longer than it should - a performance regression otherwise hides in a green suite.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object","description":"Result-data fields that must match"},"expect_failure":{"type":"boolean","default":false,"description":"This step asserts a refusal: it passes when the tool errors and fails when it succeeds"},"timeout":{"type":"number","description":"Seconds for this step; defaults to the tool's own declared timeout - pie_start asks for 900"}},"required":["tool"]}},"setup":{"type":"array","description":"Fixture steps run first; if one fails the main steps are skipped","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object"},"expect_failure":{"type":"boolean"},"timeout":{"type":"number"}},"required":["tool"]}},"teardown":{"type":"array","description":"Cleanup steps that always run, including after an aborted run","items":{"type":"object","properties":{"tool":{"type":"string"},"params":{"type":"object"},"expect":{"type":"object"},"expect_failure":{"type":"boolean"},"timeout":{"type":"number"}},"required":["tool"]}},"artifacts":{"type":"object","properties":{"screenshot_on_failure":{"type":"boolean","default":false},"evidence_on_failure":{"type":"boolean","default":false,"description":"At the first failed main step, and before teardown, gather an 'evidence' bundle: the viewport, observe, drain_events and the recent log - the material for diagnosing the failure, not just detecting it"}}},"budget_seconds":{"type":"number","description":"Fail the scenario if the whole run takes longer than this"},"stop_on_failure":{"type":"boolean","default":true}},"required":["steps"]})json"));
 	Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
