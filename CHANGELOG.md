@@ -8,6 +8,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.31.0
 
+### Fixed
+- `wait_until`’s `property_equals` condition takes the same dotted property
+  paths `get_property` and `set_property` do. It looked the name up directly on
+  the class, so the one tool whose entire job is asserting was the only one that
+  could not reach a nested value — a GAS attribute at
+  `AttributeSet.Health.CurrentValue` was simply unassertable, and the failure
+  said “property not found”, which reads as a wrong property name rather than a
+  missing capability. All three now share `ResolvePropertyPath`.
+
 ### Added
 - `spawn_volume` — a volume actor with real brush geometry: trigger volumes,
   nav mesh bounds, blocking volumes, post-process volumes, anything deriving

@@ -3,6 +3,7 @@
 // get_world_state, perf_stats.
 
 #include "UplinkTools.h"
+#include "Object/UplinkObjectPath.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/TextBlock.h"
@@ -273,11 +274,16 @@ namespace
 			{
 				return false; // object may appear later; keep waiting
 			}
-			FProperty* Property = FindFProperty<FProperty>(Object->GetClass(), *GetString(Condition, TEXT("property")));
-			if (!Property)
+			void* ValueAddr = nullptr;
+			FString PathError;
+			FProperty* Property = UplinkObject::ResolvePropertyPath(
+				Object, GetString(Condition, TEXT("property")), ValueAddr, PathError);
+			if (!Property || !ValueAddr)
 			{
-				OutError = FString::Printf(TEXT("property '%s' not found on %s"),
-					*GetString(Condition, TEXT("property")), *Object->GetClass()->GetName());
+				OutError = PathError.IsEmpty()
+					? FString::Printf(TEXT("property '%s' not found on %s"),
+						*GetString(Condition, TEXT("property")), *Object->GetClass()->GetName())
+					: PathError;
 				return false;
 			}
 			const TSharedPtr<FJsonValue> Expected = Condition->TryGetField(FStringView(TEXT("value")));
@@ -286,8 +292,7 @@ namespace
 				OutError = TEXT("property_equals condition needs 'value'");
 				return false;
 			}
-			const TSharedPtr<FJsonValue> Actual = FJsonObjectConverter::UPropertyToJsonValue(
-				Property, Property->ContainerPtrToValuePtr<void>(Object));
+			const TSharedPtr<FJsonValue> Actual = FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr);
 			if (!Actual.IsValid())
 			{
 				return false;
@@ -388,7 +393,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("wait_until");
-		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?}, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}, ui_visible {contains}. ui_visible waits for a UMG widget that is actually on screen, matching part of a widget name or of the text it displays - a menu is constructed a frame or two after the screen holding it is added, and a key sent into that gap reaches the viewport instead of the menu and still answers handled. A timeout is reported as condition_met=false, not as an error.");
+		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?} - 'property' takes the same dotted paths get_property does, so nested struct members and values behind an object reference are assertable, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}, ui_visible {contains}. ui_visible waits for a UMG widget that is actually on screen, matching part of a widget name or of the text it displays - a menu is constructed a frame or two after the screen holding it is added, and a key sent into that gap reaches the viewport instead of the menu and still answers handled. A timeout is reported as condition_met=false, not as an error.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"condition":{"type":"object","description":"{type, ...} - see tool description"},"timeout":{"type":"number","default":30,"description":"seconds (0.1-300)"},"world":{"type":"string","enum":["editor","pie"]}},"required":["condition"]})json"));
 		Info.bReadOnly = true;
 		Info.TimeoutSeconds = 310.0;
