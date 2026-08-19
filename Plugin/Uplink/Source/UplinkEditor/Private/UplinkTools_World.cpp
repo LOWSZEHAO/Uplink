@@ -15,6 +15,11 @@
 #include "EngineUtils.h"
 #include "Materials/MaterialInterface.h"
 #include "GameFramework/Actor.h"
+#include "Builders/CubeBuilder.h"
+#include "Components/BrushComponent.h"
+#include "Engine/Brush.h"
+#include "Engine/Polys.h"
+#include "Model.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 
 using namespace UplinkToolUtil;
@@ -1092,5 +1097,116 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			return FUplinkToolResult::Ok(Data, Total == 0
 				? FString::Printf(TEXT("%d actor(s) scanned, none override anything"), ActorsScanned)
 				: FString::Printf(TEXT("%d override(s) across %d actor(s)"), Total, ActorsScanned));
+		});
+
+	// spawn_actor reaches a volume class and produces a volume that bounds
+	// nothing: SpawnActor never runs the brush-builder step the editor's place
+	// flow does, so BrushBuilder, Brush and BrushComponent.Brush all come back
+	// empty. A NavMeshBoundsVolume built that way generates no navmesh, a
+	// TriggerVolume overlaps nothing, and neither reports a problem - the actor
+	// is there, correctly named and positioned, and simply has no shape.
+	Registry.RegisterQuick(
+		TEXT("spawn_volume"),
+		TEXT("Spawn a volume actor with real brush geometry - a trigger volume, nav mesh bounds, blocking volume, post-process volume, anything deriving from ABrush. spawn_actor cannot do this: it calls SpawnActor, which never runs the brush-builder step the editor's placement flow does, so the volume arrives with no Brush at all. It bounds nothing, generates no navmesh, overlaps nobody, and nothing anywhere reports a fault - the actor exists and is simply shapeless. This builds a box brush of the requested size and registers it, so the volume behaves the way one dragged in from the place-actors panel does. 'size' is the full extent on each axis, defaulting to 200."),
+		TEXT(R"json({"type":"object","properties":{"class_path":{"type":"string","description":"Volume class, e.g. /Script/Engine.TriggerVolume, /Script/NavigationSystem.NavMeshBoundsVolume, /Script/Engine.BlockingVolume"},"location":{"type":"object"},"rotation":{"type":"object"},"size":{"type":"object","description":"{x,y,z} full extents in world units; defaults to 200 on each axis"},"label":{"type":"string"},"world":{"type":"string"}},"required":["class_path"],"additionalProperties":false})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			FString WorldError;
+			UWorld* World = Ctx.ResolveWorld(WorldError);
+			if (!World)
+			{
+				return FUplinkToolResult::Error(WorldError);
+			}
+
+			const FString ClassPath = GetString(Ctx.Params, TEXT("class_path"));
+			UClass* Class = LoadClass<AActor>(nullptr, *ClassPath);
+			if (!Class)
+			{
+				Class = FindObject<UClass>(nullptr, *ClassPath);
+			}
+			if (!Class)
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("class not found: %s"), *ClassPath));
+			}
+			if (!Class->IsChildOf(ABrush::StaticClass()))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("%s is not a brush-based volume - use spawn_actor for it"), *ClassPath));
+			}
+
+			FVector Location = FVector::ZeroVector;
+			TryGetVector(Ctx.Params, TEXT("location"), Location);
+			FRotator Rotation = FRotator::ZeroRotator;
+			TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation);
+
+			FVector Size(200.0, 200.0, 200.0);
+			TryGetVector(Ctx.Params, TEXT("size"), Size);
+			// A zero on any axis makes a degenerate brush that silently bounds
+			// nothing, which is the very failure this tool exists to avoid.
+			Size.X = FMath::Max(1.0, FMath::Abs(Size.X));
+			Size.Y = FMath::Max(1.0, FMath::Abs(Size.Y));
+			Size.Z = FMath::Max(1.0, FMath::Abs(Size.Z));
+
+			FActorSpawnParameters Params;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			ABrush* Volume = World->SpawnActor<ABrush>(Class, Location, Rotation, Params);
+			if (!Volume)
+			{
+				return FUplinkToolResult::Error(TEXT("spawn failed"));
+			}
+
+			// The order matters: the model and its polygon list have to exist
+			// and be hooked to the brush component before the builder runs, or
+			// Build writes into nothing.
+			Volume->PreEditChange(nullptr);
+			Volume->Brush = NewObject<UModel>(Volume, NAME_None, RF_Transactional);
+			Volume->Brush->Initialize(nullptr, true);
+			Volume->Brush->Polys = NewObject<UPolys>(Volume->Brush, NAME_None, RF_Transactional);
+			if (UBrushComponent* BrushComponent = Volume->GetBrushComponent())
+			{
+				BrushComponent->Brush = Volume->Brush;
+			}
+
+			UCubeBuilder* Builder = NewObject<UCubeBuilder>(Volume);
+			Builder->X = Size.X;
+			Builder->Y = Size.Y;
+			Builder->Z = Size.Z;
+			Volume->BrushBuilder = Builder;
+			Builder->Build(World, Volume);
+			Volume->PostEditChange();
+			Volume->MarkPackageDirty();
+
+			const FString Label = GetString(Ctx.Params, TEXT("label"));
+			if (!Label.IsEmpty())
+			{
+				Volume->SetActorLabel(Label);
+			}
+
+			// Say whether the geometry actually arrived rather than assuming
+			// it: a volume that reports success and holds no polygons is the
+			// exact silent failure being fixed here.
+			const int32 PolyCount = (Volume->Brush && Volume->Brush->Polys)
+				? Volume->Brush->Polys->Element.Num() : 0;
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("name"), Volume->GetName());
+			Data->SetStringField(TEXT("label"), Volume->GetActorNameOrLabel());
+			Data->SetStringField(TEXT("class"), Class->GetPathName());
+			TSharedRef<FJsonObject> SizeJson = MakeShared<FJsonObject>();
+			SizeJson->SetNumberField(TEXT("x"), Size.X);
+			SizeJson->SetNumberField(TEXT("y"), Size.Y);
+			SizeJson->SetNumberField(TEXT("z"), Size.Z);
+			Data->SetObjectField(TEXT("size"), SizeJson);
+			Data->SetNumberField(TEXT("polygons"), PolyCount);
+			if (PolyCount == 0)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("%s spawned but the brush builder produced no geometry, so it would bound nothing - the actor has been left in place for inspection"),
+					*Volume->GetName()));
+			}
+			return FUplinkToolResult::Ok(Data, FString::Printf(
+				TEXT("%s spawned with a %g x %g x %g box brush (%d polygons)"),
+				*Volume->GetName(), Size.X, Size.Y, Size.Z, PolyCount));
 		});
 }

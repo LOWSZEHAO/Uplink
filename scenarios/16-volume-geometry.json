@@ -1,0 +1,54 @@
+{
+  "_name": "Volume geometry",
+  "_purpose": "A volume spawned through the tools has real brush geometry, and a class that is not a volume is refused rather than half-built. spawn_actor reaches a volume class perfectly well and produces one that bounds nothing - SpawnActor never runs the brush-builder step the editor's placement flow does - so the actor arrives correctly named and positioned with no shape at all, and nothing reports a fault. A nav bounds volume built that way generates no navmesh; a trigger volume overlaps nobody. This pins down that spawn_volume does not have that hole.",
+  "_requires": "Any project. Runs in the editor world and cleans up after itself.",
+  "steps": [
+    {
+      "tool": "delete_actors",
+      "params": { "names": ["UplinkScenarioVolume"], "world": "editor" }
+    },
+    {
+      "_note": "6 polygons is a closed box. Fewer means the builder ran and produced nothing usable, which is the silent failure being guarded against.",
+      "tool": "spawn_volume",
+      "params": {
+        "class_path": "/Script/Engine.TriggerVolume",
+        "location": { "x": 0, "y": 0, "z": 0 },
+        "size": { "x": 400, "y": 300, "z": 200 },
+        "label": "UplinkScenarioVolume",
+        "world": "editor"
+      },
+      "expect": { "polygons": 6 }
+    },
+    {
+      "tool": "level_actors",
+      "params": { "name_contains": "TriggerVolume", "world": "editor" },
+      "expect": { "total_matching": 1 }
+    },
+    {
+      "_note": "A class with no brush cannot be given one, and saying so beats spawning something shapeless and calling it a volume.",
+      "tool": "spawn_volume",
+      "params": { "class_path": "/Script/Engine.PointLight", "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "_note": "A size of zero on an axis is clamped rather than producing a degenerate brush that bounds nothing.",
+      "tool": "spawn_volume",
+      "params": {
+        "class_path": "/Script/Engine.TriggerVolume",
+        "location": { "x": 1000, "y": 0, "z": 0 },
+        "size": { "x": 0, "y": 300, "z": 200 },
+        "world": "editor"
+      },
+      "expect": { "polygons": 6 }
+    },
+    {
+      "tool": "delete_actors",
+      "params": { "names": ["$steps[1].name", "$steps[4].name"], "world": "editor" }
+    },
+    {
+      "tool": "level_actors",
+      "params": { "name_contains": "TriggerVolume", "world": "editor" },
+      "expect": { "total_matching": 0 }
+    }
+  ]
+}

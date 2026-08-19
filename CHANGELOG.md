@@ -9,6 +9,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## 0.31.0
 
 ### Added
+- `spawn_volume` — a volume actor with real brush geometry: trigger volumes,
+  nav mesh bounds, blocking volumes, post-process volumes, anything deriving
+  from `ABrush`. `spawn_actor` reaches those classes perfectly well and
+  produces a volume that bounds nothing: `SpawnActor` never runs the
+  brush-builder step the editor’s placement flow does, so `BrushBuilder`,
+  `Brush` and `BrushComponent.Brush` all come back empty. The actor is there,
+  correctly named and positioned, with no shape — a nav bounds volume that
+  generates no navmesh, a trigger that overlaps nobody, and nothing anywhere
+  reporting a fault. Found while building a test level whose `navigate_to`
+  refused to path because the nav volume enclosed nothing. The tool reports the
+  polygon count and returns an error rather than success when the builder
+  produced no geometry, because claiming success on an empty volume is the
+  failure it exists to remove.
+
+### Added
 - `level_diff` — every property on a placed actor that differs from what its
   class says it should be: the details panel’s yellow revert-arrow, as data. A
   level is mostly defaults, and the overrides are the short list of decisions
