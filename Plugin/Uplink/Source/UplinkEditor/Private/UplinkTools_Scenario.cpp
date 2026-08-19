@@ -8,6 +8,8 @@
 #include "UplinkToolUtil.h"
 
 #include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 using namespace UplinkToolUtil;
 
@@ -224,6 +226,44 @@ namespace
 			return MakeShared<FJsonValueArray>(Copy);
 		}
 		return Value;
+	}
+
+	/** One line of JSON, for putting a value inside a sentence. */
+	FString DescribeValue(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid() || Value->Type == EJson::Null)
+		{
+			return TEXT("nothing");
+		}
+		if (Value->Type == EJson::Object || Value->Type == EJson::Array)
+		{
+			FString Text;
+			const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Text);
+			if (Value->Type == EJson::Object)
+			{
+				FJsonSerializer::Serialize(Value->AsObject().ToSharedRef(), Writer);
+			}
+			else
+			{
+				FJsonSerializer::Serialize(Value->AsArray(), Writer);
+			}
+			return Text;
+		}
+		if (Value->Type == EJson::String)
+		{
+			return FString::Printf(TEXT("\"%s\""), *Value->AsString());
+		}
+		if (Value->Type == EJson::Boolean)
+		{
+			return Value->AsBool() ? TEXT("true") : TEXT("false");
+		}
+		double Number = 0.0;
+		if (Value->TryGetNumber(Number))
+		{
+			return FString::SanitizeFloat(Number);
+		}
+		return TEXT("?");
 	}
 
 	bool ValuesMatch(const TSharedPtr<FJsonValue>& Expected, const TSharedPtr<FJsonValue>& Actual)
@@ -587,10 +627,12 @@ namespace
 				for (const auto& Pair : Spec.Expect->Values)
 				{
 					const FString Key = UplinkCompat::JsonKeyToString(Pair.Key);
-					if (!ValuesMatch(Pair.Value, Result.Data->TryGetField(FStringView(Key))))
+					const TSharedPtr<FJsonValue> ActualValue = Result.Data->TryGetField(FStringView(Key));
+					if (!ValuesMatch(Pair.Value, ActualValue))
 					{
 						bSuccess = false;
-						FailReason = FString::Printf(TEXT("expectation not met: %s"), *Key);
+						FailReason = FString::Printf(TEXT("expected %s to be %s, got %s"),
+							*Key, *DescribeValue(Pair.Value), *DescribeValue(ActualValue));
 						break;
 					}
 				}

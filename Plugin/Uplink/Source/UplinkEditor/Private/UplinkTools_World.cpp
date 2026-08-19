@@ -955,4 +955,142 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				? FString::Printf(TEXT("%d hit(s)"), HitJson.Num())
 				: TEXT("no hit"));
 		});
+
+	// What a person sees as the yellow revert-arrow beside a property in the
+	// details panel, as data. A level is mostly its defaults; the interesting
+	// part is the handful of places it disagrees with them, and that handful is
+	// where "this worked yesterday" always turns out to live.
+	Registry.RegisterQuick(
+		TEXT("level_diff"),
+		TEXT("Every property on a placed actor that differs from what its class says it should be - the details panel's yellow revert-arrow, as data. A level is mostly defaults; the overrides are the short list of decisions somebody actually made in it, and when a level worked yesterday and does not today the cause is nearly always one of them. Each row names the actor, the component when the override sits on one, the property, the value now, and the value it would otherwise have. Components are compared against their own archetype - the Blueprint's SCS template - rather than the class default, so a value the Blueprint itself sets is not reported as a level override. Placement transforms are excluded by default because nearly every placed actor overrides them and they bury everything else; pass include_transforms to see them. Editor-only components - billboards, arrows, sprites - are skipped entirely: their native constructors diverge from the bare component default on every actor of a type, so they are the same noise in every level and none of it is a decision anybody made. Long struct values are truncated. Read-only."),
+		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","description":"editor, pie, or an id from the worlds tool"},"name_contains":{"type":"string","description":"Only actors whose name or label contains this"},"class_contains":{"type":"string","description":"Only actors whose class path contains this"},"include_transforms":{"type":"boolean","default":false,"description":"Include RelativeLocation/Rotation/Scale3D, which almost every placed actor overrides"},"max":{"type":"number","default":200}},"additionalProperties":false})json"),
+		/*bReadOnly=*/true,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			FString WorldError;
+			UWorld* World = Ctx.ResolveWorld(WorldError);
+			if (!World)
+			{
+				return FUplinkToolResult::Error(WorldError);
+			}
+
+			const FString NameFilter = GetString(Ctx.Params, TEXT("name_contains"));
+			const FString ClassFilter = GetString(Ctx.Params, TEXT("class_contains"));
+			bool bTransforms = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("include_transforms")), bTransforms);
+			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 200)), 1, 2000);
+
+			// Placement is an override on essentially every actor ever dragged
+			// into a level, so left in it is the only thing you can see.
+			static const TSet<FName> TransformProps = {
+				FName(TEXT("RelativeLocation")), FName(TEXT("RelativeRotation")), FName(TEXT("RelativeScale3D"))
+			};
+
+			int32 Total = 0;
+			TArray<TSharedPtr<FJsonValue>> Rows;
+
+			auto Collect = [&](UObject* Object, const FString& ActorName, const FString& ComponentName)
+			{
+				UObject* Archetype = Object ? Object->GetArchetype() : nullptr;
+				if (!Object || !Archetype || Archetype->GetClass() != Object->GetClass())
+				{
+					return;
+				}
+				for (TFieldIterator<FProperty> It(Object->GetClass()); It; ++It)
+				{
+					const FProperty* Prop = *It;
+					// Only what a person could have set: an editable, saved
+					// property. Transient state differs constantly and says
+					// nothing about how the level was authored.
+					if (!Prop->HasAnyPropertyFlags(CPF_Edit) || Prop->HasAnyPropertyFlags(CPF_Transient | CPF_EditConst))
+					{
+						continue;
+					}
+					if (!bTransforms && TransformProps.Contains(Prop->GetFName()))
+					{
+						continue;
+					}
+					if (Prop->Identical_InContainer(Object, Archetype))
+					{
+						continue;
+					}
+
+					++Total;
+					if (Rows.Num() >= Max)
+					{
+						continue;
+					}
+
+					FString Now, Was;
+					Prop->ExportTextItem_Direct(Now, Prop->ContainerPtrToValuePtr<void>(Object), nullptr, Object, PPF_None);
+					Prop->ExportTextItem_Direct(Was, Prop->ContainerPtrToValuePtr<void>(Archetype), nullptr, Archetype, PPF_None);
+
+					auto Shorten = [](FString& Text)
+					{
+						const int32 Limit = 240;
+						if (Text.Len() > Limit)
+						{
+							Text = Text.Left(Limit) + TEXT("...");
+						}
+					};
+					Shorten(Now);
+					Shorten(Was);
+
+					TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+					Row->SetStringField(TEXT("actor"), ActorName);
+					if (!ComponentName.IsEmpty())
+					{
+						Row->SetStringField(TEXT("component"), ComponentName);
+					}
+					Row->SetStringField(TEXT("property"), Prop->GetName());
+					Row->SetStringField(TEXT("value"), Now);
+					Row->SetStringField(TEXT("default"), Was);
+					Rows.Add(MakeShared<FJsonValueObject>(Row));
+				}
+			};
+
+			int32 ActorsScanned = 0;
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				AActor* Actor = *It;
+				if (!Actor)
+				{
+					continue;
+				}
+				const FString Name = Actor->GetName();
+				const FString Label = Actor->GetActorNameOrLabel();
+				if (!NameFilter.IsEmpty()
+					&& !Name.Contains(NameFilter, ESearchCase::IgnoreCase)
+					&& !Label.Contains(NameFilter, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+				if (!ClassFilter.IsEmpty() && !Actor->GetClass()->GetPathName().Contains(ClassFilter, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+
+				++ActorsScanned;
+				Collect(Actor, Name, FString());
+				for (UActorComponent* Component : Actor->GetComponents())
+				{
+					if (Component && !Component->IsEditorOnly())
+					{
+						Collect(Component, Name, Component->GetName());
+					}
+				}
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetArrayField(TEXT("overrides"), Rows);
+			Data->SetNumberField(TEXT("total_matching"), Total);
+			Data->SetNumberField(TEXT("actors_scanned"), ActorsScanned);
+			if (Total > Rows.Num())
+			{
+				Data->SetBoolField(TEXT("truncated"), true);
+			}
+			return FUplinkToolResult::Ok(Data, Total == 0
+				? FString::Printf(TEXT("%d actor(s) scanned, none override anything"), ActorsScanned)
+				: FString::Printf(TEXT("%d override(s) across %d actor(s)"), Total, ActorsScanned));
+		});
 }

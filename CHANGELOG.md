@@ -6,6 +6,38 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.31.0
+
+### Added
+- `level_diff` — every property on a placed actor that differs from what its
+  class says it should be: the details panel’s yellow revert-arrow, as data. A
+  level is mostly defaults, and the overrides are the short list of decisions
+  somebody actually made in it — which is where “this worked yesterday” nearly
+  always turns out to live. Components are compared against their own archetype
+  (the Blueprint’s SCS template) rather than the class default, so a value the
+  Blueprint sets is not reported as a level override. Placement transforms are
+  off by default and editor-only components are skipped entirely: on a
+  six-actor test level that took the report from 33 rows to 8, and the one
+  injected fault appeared as the 9th.
+- `wait_until` gains a `ui_visible {contains}` condition, matching a live
+  widget’s name or the text it displays. A menu is constructed a frame or two
+  after the screen holding it is added, and a key sent into that gap reaches
+  the viewport instead of the menu — and still answers handled. Waiting on a
+  widget rather than on a stopwatch is the fix; measured on a shipping title,
+  where the stopwatch version silently did nothing twice.
+- `cancellableHint` in tool annotations. `CanCancel()` was a runtime virtual
+  with no static counterpart, so a client could not tell which tools a stop
+  button would actually stop. Tools registered through `RegisterQuick` declare
+  `false`: they run to completion inside one call, so there is no moment at
+  which a cancel could arrive and change the outcome.
+
+### Changed
+- `run_scenario` assertion failures name what they expected and what they got —
+  `expected value to be true, got false` rather than `expectation not met:
+  value`. A scenario with four `get_property` assertions in a row reported the
+  same six words four different ways, leaving the step index as the only thing
+  telling them apart.
+
 ## 0.30.1
 
 ### Fixed

@@ -3,6 +3,10 @@
 // get_world_state, perf_stats.
 
 #include "UplinkTools.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/TextBlock.h"
+#include "UObject/UObjectIterator.h"
 #include "UplinkEventRecorder.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
@@ -128,10 +132,10 @@ namespace
 
 			static const TSet<FString> KnownTypes = {
 				TEXT("property_equals"), TEXT("actor_exists"), TEXT("actor_gone"),
-				TEXT("event_count"), TEXT("elapsed") };
+				TEXT("event_count"), TEXT("elapsed"), TEXT("ui_visible") };
 			if (!KnownTypes.Contains(Type))
 			{
-				Out = FUplinkToolResult::Error(TEXT("condition.type must be property_equals, actor_exists, actor_gone, event_count, or elapsed"));
+				Out = FUplinkToolResult::Error(TEXT("condition.type must be property_equals, actor_exists, actor_gone, event_count, elapsed, or ui_visible"));
 				return EUplinkToolStep::Done;
 			}
 			if (Type == TEXT("event_count") &&
@@ -197,6 +201,62 @@ namespace
 			if (!World)
 			{
 				return false;
+			}
+
+			// A menu is built a frame or two after the screen that owns it is
+			// added, and a key sent into that gap goes to the viewport instead.
+			// Measured on a shipping title: the same call answered handled and
+			// did nothing, twice, because nothing had focus yet. Waiting on a
+			// widget rather than on a stopwatch is the fix.
+			if (Type == TEXT("ui_visible"))
+			{
+				const FString Needle = GetString(Condition, TEXT("contains"));
+				if (Needle.IsEmpty())
+				{
+					OutError = TEXT("ui_visible condition needs 'contains' - part of a widget name or of the text it displays");
+					return false;
+				}
+				bool bFound = false;
+				for (TObjectIterator<UUserWidget> It; It; ++It)
+				{
+					UUserWidget* Screen = *It;
+					if (!Screen || Screen->GetWorld() != World || !Screen->IsInViewport())
+					{
+						continue;
+					}
+					if (Screen->GetName().Contains(Needle, ESearchCase::IgnoreCase))
+					{
+						bFound = true;
+						break;
+					}
+					if (UWidgetTree* Tree = Screen->WidgetTree)
+					{
+						Tree->ForEachWidget([&bFound, &Needle](UWidget* Widget)
+						{
+							if (bFound || !Widget)
+							{
+								return;
+							}
+							if (Widget->GetName().Contains(Needle, ESearchCase::IgnoreCase))
+							{
+								bFound = true;
+								return;
+							}
+							if (const UTextBlock* Text = Cast<UTextBlock>(Widget))
+							{
+								if (Text->GetText().ToString().Contains(Needle, ESearchCase::IgnoreCase))
+								{
+									bFound = true;
+								}
+							}
+						});
+					}
+					if (bFound)
+					{
+						break;
+					}
+				}
+				return bFound;
 			}
 
 			if (Type == TEXT("actor_exists") || Type == TEXT("actor_gone"))
@@ -328,7 +388,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("wait_until");
-		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?}, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}. A timeout is reported as condition_met=false, not as an error.");
+		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?}, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}, ui_visible {contains}. ui_visible waits for a UMG widget that is actually on screen, matching part of a widget name or of the text it displays - a menu is constructed a frame or two after the screen holding it is added, and a key sent into that gap reaches the viewport instead of the menu and still answers handled. A timeout is reported as condition_met=false, not as an error.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"condition":{"type":"object","description":"{type, ...} - see tool description"},"timeout":{"type":"number","default":30,"description":"seconds (0.1-300)"},"world":{"type":"string","enum":["editor","pie"]}},"required":["condition"]})json"));
 		Info.bReadOnly = true;
 		Info.TimeoutSeconds = 310.0;

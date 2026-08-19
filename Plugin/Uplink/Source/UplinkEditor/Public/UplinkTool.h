@@ -215,6 +215,18 @@ struct FUplinkToolInfo
 	/** Routinely takes many seconds - slowness here is not a hang. */
 	bool bLongRunning = false;
 
+	/**
+	 * Whether asking this tool to stop can actually stop it.
+	 *
+	 * Only tools that run across ticks have a window in which a cancel can
+	 * land; a synchronous one has completed by the time anybody could ask, so
+	 * RegisterQuick clears this. Published because a client that cannot tell
+	 * the difference either offers a stop button that does nothing or offers
+	 * none for the long jobs that need one - and the tools where it matters
+	 * are exactly the ones a caller regrets starting.
+	 */
+	bool bCancellable = true;
+
 	double TimeoutSeconds = 30.0;
 };
 

@@ -328,6 +328,10 @@ void FUplinkToolRegistry::RegisterQuick(
 	Info.InputSchema = ParseSchema(SchemaJson);
 	Info.bReadOnly = bReadOnly;
 	Info.bTransactional = bTransactional;
+	// A quick tool runs to completion inside one call. There is no moment at
+	// which a cancel could arrive and change the outcome, so saying it is
+	// cancellable would be a promise nothing can keep.
+	Info.bCancellable = false;
 
 	TSharedRef<TFunction<FUplinkToolResult(const FUplinkToolContext&)>> Shared =
 		MakeShared<TFunction<FUplinkToolResult(const FUplinkToolContext&)>>(MoveTemp(Fn));
@@ -400,6 +404,10 @@ TArray<TSharedPtr<FJsonValue>> FUplinkToolRegistry::BuildMcpToolList() const
 		if (Info.bLongRunning)
 		{
 			Annotations->SetBoolField(TEXT("longRunningHint"), true);
+		}
+		if (Info.bCancellable)
+		{
+			Annotations->SetBoolField(TEXT("cancellableHint"), true);
 		}
 		// Built-ins say nothing: a hundred entries all claiming Uplink is noise
 		// in a list a client re-reads on every connect. A tool from anywhere
