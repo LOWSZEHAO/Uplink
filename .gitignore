@@ -17,6 +17,9 @@ npm-debug.log*
 
 # --- Machine-local config (never commit host-project paths) ---
 scripts/hosts.local.json
+# Names of other projects this machine works on, for check_repo.ps1 to grep
+# for. The list itself must never be committed - it is the thing being kept out.
+scripts/private_terms.local.txt
 
 # --- Local working notes (never commit) ---
 docs/

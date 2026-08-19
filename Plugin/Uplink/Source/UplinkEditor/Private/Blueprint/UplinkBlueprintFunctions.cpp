@@ -244,7 +244,6 @@ namespace UplinkBlueprint
 			}
 			FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, NewGraph, /*bIsUserCreated=*/true, nullptr);
 
-			// Find the entry node so we can flag thread-safety and add parameters.
 			UK2Node_FunctionEntry* Entry = nullptr;
 			for (UEdGraphNode* Node : NewGraph->Nodes)
 			{

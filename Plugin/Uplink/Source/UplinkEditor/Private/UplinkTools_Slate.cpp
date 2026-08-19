@@ -289,9 +289,9 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 			const FString StartPath = GetString(Ctx.Params, TEXT("path"));
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 
+			// A find with neither a window nor a path is a global find.
 			if (!State.Find.IsEmpty() && WindowFilter.IsEmpty() && StartPath.IsEmpty())
 			{
-				// Global find - sweep every window.
 				const TArray<TSharedRef<SWindow>> Windows = TopLevelWindows();
 				for (int32 Index = 0; Index < Windows.Num(); ++Index)
 				{

@@ -151,7 +151,6 @@ namespace
 				return Node;
 			}
 		}
-		// Fall back to the authored title / settings class name.
 		for (UObject* Node : Nodes)
 		{
 			if (FNameProperty* TitleProp = CastField<FNameProperty>(Node->GetClass()->FindPropertyByName(TEXT("NodeTitle"))))
@@ -353,7 +352,6 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(TEXT("AddNodeOfType returned no node"));
 			}
 
-			// Apply caller-supplied settings properties.
 			TArray<FString> Applied, Rejected;
 			const TSharedPtr<FJsonObject>* Props = nullptr;
 			if (Settings && Ctx.Params->TryGetObjectField(FStringView(TEXT("properties")), Props) && Props->IsValid())

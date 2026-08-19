@@ -123,10 +123,10 @@ namespace
 	/**
 	 * A trace channel by whatever name the caller has actually seen.
 	 *
-	 * StaticEnum only knows ECC_GameTraceChannel2; the project renamed that to
-	 * Azr_Trace in DefaultEngine.ini and that rename is the only name in the
-	 * .ini, in the details panel, or in anyone's head. The display-name table
-	 * is where the two meet.
+	 * StaticEnum only knows ECC_GameTraceChannel2. A project that renames that
+	 * channel in DefaultEngine.ini gets a name that is the only one appearing
+	 * in the .ini, in the details panel, or in anyone's head - and it never
+	 * reaches the enum. The display-name table is where the two meet.
 	 */
 	bool ResolveCollisionChannel(const FString& Name, ECollisionChannel& OutChannel)
 	{
@@ -655,10 +655,9 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 						UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
 						if (!Material)
 						{
-							// Same policy as the mesh above. Skipping this
+							// Same policy as the mesh above: skipping this
 							// quietly produced a batch of default-grey actors
-							// reported as spawned, which is exactly the kind
-							// of success-for-work-not-done this refuses to do.
+							// reported as spawned.
 							return AbandonEntry(Actor, Index, FString::Printf(TEXT("material not found: %s"), *MaterialPath));
 						}
 						MeshComponent->SetMaterial(0, Material);
@@ -753,7 +752,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("trace"),
-		TEXT("Ask the physics scene what is there. Casts a ray (or a swept sphere/box/capsule with 'radius'/'half_height') and reports what it hit: actor, component, impact point, normal, distance, physical material. 'to' or 'direction'+'distance' set the end point. 'profile' traces by collision profile (e.g. 'Azr_Collision'), otherwise 'channel' names a trace channel ('Visibility', 'Camera', or a project channel by the name the project gave it). A profile, channel or ignore_actors name this project does not have is refused and listed back, never swapped for a default - a trace that answers on the wrong channel is worse than no answer. 'multi' returns every hit along the ray instead of the first. Use this instead of guessing geometry - a downward trace is how you find ground height under a point."),
+		TEXT("Ask the physics scene what is there. Casts a ray (or a swept sphere/box/capsule with 'radius'/'half_height') and reports what it hit: actor, component, impact point, normal, distance, physical material. 'to' or 'direction'+'distance' set the end point. 'profile' traces by collision profile (a stock one like 'BlockAll', or one your project defines), otherwise 'channel' names a trace channel ('Visibility', 'Camera', or a project channel by the name the project gave it). A profile, channel or ignore_actors name this project does not have is refused and listed back, never swapped for a default - a trace that answers on the wrong channel is worse than no answer. 'multi' returns every hit along the ray instead of the first. Use this instead of guessing geometry - a downward trace is how you find ground height under a point."),
 		TEXT(R"json({"type":"object","properties":{"from":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"to":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"direction":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"distance":{"type":"number","default":10000},"shape":{"type":"string","enum":["line","sphere","box","capsule"],"default":"line"},"radius":{"type":"number","default":50,"description":"Sphere/capsule radius; for a box, the X and Y half-extent"},"half_height":{"type":"number","default":100,"description":"Capsule half-height; for a box, the Z half-extent (defaults to 'radius')"},"channel":{"type":"string","default":"Visibility"},"profile":{"type":"string"},"multi":{"type":"boolean","default":false},"complex":{"type":"boolean","default":false},"ignore_actors":{"type":"array","items":{"type":"string"}},"draw_seconds":{"type":"number","default":0,"description":"Draw the trace in the world for this many seconds (needs a realtime viewport to be visible)"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["from"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -962,10 +961,6 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				: TEXT("no hit"));
 		});
 
-	// What a person sees as the yellow revert-arrow beside a property in the
-	// details panel, as data. A level is mostly its defaults; the interesting
-	// part is the handful of places it disagrees with them, and that handful is
-	// where "this worked yesterday" always turns out to live.
 	Registry.RegisterQuick(
 		TEXT("level_diff"),
 		TEXT("Every property on a placed actor that differs from what its class says it should be - the details panel's yellow revert-arrow, as data. A level is mostly defaults; the overrides are the short list of decisions somebody actually made in it, and when a level worked yesterday and does not today the cause is nearly always one of them. Each row names the actor, the component when the override sits on one, the property, the value now, and the value it would otherwise have. Components are compared against their own archetype - the Blueprint's SCS template - rather than the class default, so a value the Blueprint itself sets is not reported as a level override. Placement transforms are excluded by default because nearly every placed actor overrides them and they bury everything else; pass include_transforms to see them. Editor-only components - billboards, arrows, sprites - are skipped entirely: their native constructors diverge from the bare component default on every actor of a type, so they are the same noise in every level and none of it is a decision anybody made. Long struct values are truncated. Read-only."),

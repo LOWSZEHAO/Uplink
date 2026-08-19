@@ -163,7 +163,6 @@ bool UplinkMcp::Handle(
 		return true;
 	}
 
-	// Decode body (UTF-8 JSON).
 	FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(Request.Body.GetData()), Request.Body.Num());
 	const FString BodyString(Converter.Length(), Converter.Get());
 

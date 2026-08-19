@@ -29,7 +29,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   somewhere else.
 
 - `scripts/check_repo.ps1`, and a GitHub Actions workflow that runs it on every
-  push. Fifteen static checks that need no engine and finish in seconds:
+  push. Sixteen static checks that need no engine and finish in seconds:
   every tool schema parses as JSON, tool names are unique, every scenario step
   names a real tool and passes only parameters that tool declares, the trait
   table has no orphans, TOOLS.md documents every tool and its count is true,
@@ -38,6 +38,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it stops being true — so a build gate never sees any of them. `scripts/ci.ps1`
   runs the checks, the dual-engine build and the scenario suite in one command,
   and reports a stage that did not run as skipped rather than passed.
+
+  One of the sixteen greps for the names of unrelated projects the machine also
+  works on. Prose written while looking at another codebase carries its
+  vocabulary out with it, and nothing about the code gives that away - the
+  `trace` tool shipped a private project's collision profile as its worked
+  example, and a comment named that project's renamed trace channel. The list
+  of names is read from `scripts/private_terms.local.txt`, which is gitignored,
+  because committing the list would publish what the check exists to keep out.
+  Absent, the check reports as skipped rather than passed.
 
 ### Fixed
 - `set_property` verifies the value survived and refuses when it did not. A

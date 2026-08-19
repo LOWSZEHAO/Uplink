@@ -31,6 +31,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 $script:FailedChecks = @()
+$script:SkippedChecks = @()
 $script:WarnCount = 0
 $script:CheckCount = 0
 
@@ -68,6 +69,14 @@ function Write-Warn {
     param([string]$Text)
     $script:WarnCount++
     Write-Host ("  [WARN] " + $Text) -ForegroundColor Yellow
+}
+
+# A check that could not run is reported as skipped, never folded into the pass
+# count. "It did not run" and "it found nothing" are different answers.
+function Write-Skip {
+    param([string]$Name, [string]$Why)
+    $script:SkippedChecks += $Name
+    Write-Host ("  [SKIP] " + $Name + " - " + $Why) -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------------
@@ -505,6 +514,53 @@ Invoke-Check "No machine-specific paths are committed in the plugin source or br
     }
 }
 
+# This repo is developed on a machine that also holds unrelated and private
+# work, and prose written while looking at one of those projects carries its
+# vocabulary out with it - a channel name in a comment, a class name in an
+# example. Nothing about the code reveals it, so only a name search finds it.
+#
+# The list of names lives in scripts/private_terms.local.txt, which is
+# gitignored: committing the terms would publish exactly what the check exists
+# to keep out. One term per line, # for comments. Absent, the check is skipped
+# rather than passed - a cloud runner has no such file and never will.
+$PrivateTermsFile = Join-Path $PSScriptRoot "private_terms.local.txt"
+if (-not (Test-Path $PrivateTermsFile)) {
+    Write-Skip "No private project names appear in committed text" "no scripts/private_terms.local.txt on this machine"
+}
+else {
+    Invoke-Check "No private project names appear in committed text" {
+        $Terms = @(Get-Content -LiteralPath $PrivateTermsFile -Encoding UTF8 |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and (-not $_.StartsWith("#")) })
+        if ($Terms.Count -eq 0) { return }
+
+        $Targets = @()
+        foreach ($dir in @("Plugin", "bridge", "scenarios", "scripts", ".github")) {
+            $path = Join-Path $RepoRoot $dir
+            if (Test-Path $path) {
+                $Targets += Get-ChildItem -Path $path -Recurse -File -Include *.cpp, *.h, *.cs, *.js, *.json, *.md, *.ps1, *.yml, *.uplugin |
+                    Where-Object { $_.FullName -notmatch 'node_modules|Binaries|Intermediate' }
+            }
+        }
+        $Targets += Get-ChildItem -Path $RepoRoot -File -Filter *.md
+
+        foreach ($f in $Targets) {
+            if ($f.Name -eq "private_terms.local.txt") { continue }
+            $rel   = $f.FullName.Substring($RepoRoot.Length + 1)
+            $lines = @(Get-Content -LiteralPath $f.FullName -Encoding UTF8)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                foreach ($t in $Terms) {
+                    if ($lines[$i] -match [regex]::Escape($t)) {
+                        # The term itself is not printed: this output ends up in
+                        # CI logs and terminal scrollback.
+                        "${rel}:$($i + 1) contains a private project name"
+                    }
+                }
+            }
+        }
+    }
+}
+
 # ---------------------------------------------------------------------------
 
 Write-Info ""
@@ -516,7 +572,10 @@ if ($script:FailedChecks.Count -gt 0) {
 }
 $suffix = ""
 if ($script:WarnCount -gt 0) { $suffix = " ($($script:WarnCount) warning(s))" }
-Write-Host ("CHECKS PASSED: all $($script:CheckCount) checks$suffix.") -ForegroundColor Green
+if ($script:SkippedChecks.Count -gt 0) {
+    $suffix += " $($script:SkippedChecks.Count) check(s) did not run: " + ($script:SkippedChecks -join ", ") + "."
+}
+Write-Host ("CHECKS PASSED: all $($script:CheckCount) checks$suffix") -ForegroundColor Green
 
 # Exit explicitly: a script that falls off the end leaves $LASTEXITCODE at
 # whatever the previous command set, and a caller reading it sees a stale

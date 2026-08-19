@@ -90,15 +90,12 @@ namespace UplinkBlueprint
 				OutError = TEXT("map needs both halves: map:<key>:<value>, e.g. map:name:float");
 				return false;
 			}
-			// Object/struct specs contain their own colon (object:/Script/...),
-			// so re-join everything after the first split point for the key when
-			// the key itself is a prefixed form.
+			// Object/struct specs contain their own colon (object:/Script/...).
 			if ((KeyPart == TEXT("object") || KeyPart == TEXT("class") || KeyPart == TEXT("struct")
 				|| KeyPart == TEXT("enum") || KeyPart == TEXT("soft_object") || KeyPart == TEXT("soft_class")))
 			{
-				// key is prefixed: find the value after the key's own payload.
-				// Simplest honest rule: prefixed keys are not supported - keys in
-				// Blueprint maps are almost always name/string/int anyway.
+				// Prefixed keys are not supported: keys in Blueprint maps are
+				// almost always name/string/int anyway.
 				OutError = TEXT("map keys must be simple types (bool,int,int64,float,string,name,text,byte). Prefixed key types are not supported.");
 				return false;
 			}

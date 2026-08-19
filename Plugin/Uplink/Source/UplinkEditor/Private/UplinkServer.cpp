@@ -468,7 +468,6 @@ bool FUplinkServer::HandleRunTool(const FHttpServerRequest& Request, const FHttp
 	{
 		return true;
 	}
-	// Path is /tool/{name}.
 	FString ToolName = Request.RelativePath.GetPath();
 	ToolName.RemoveFromStart(TEXT("/tool"));
 	ToolName.RemoveFromStart(TEXT("/"));

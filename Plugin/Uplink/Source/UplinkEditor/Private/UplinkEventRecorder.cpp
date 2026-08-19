@@ -29,7 +29,6 @@ FGuid FUplinkEventRecorder::StartWatch(UObject* Object, const FString& DelegateN
 		return FGuid();
 	}
 
-	// Collect the delegate properties to bind.
 	TArray<FMulticastDelegateProperty*> Properties;
 	if (DelegateName == TEXT("*"))
 	{

@@ -543,11 +543,6 @@ namespace
 		}
 
 		/**
-		 * Assemble the bundle's steps. A collector this build does not have is
-		 * named and skipped: a scenario must not fail because the thing meant
-		 * to explain its failure was missing.
-		 */
-		/**
 		 * Re-read every property the scenario was asserting on, at the moment it
 		 * failed.
 		 *
@@ -654,6 +649,11 @@ namespace
 			}
 		}
 
+		/**
+		 * Assemble the bundle's steps. A collector this build does not have is
+		 * named and skipped: a scenario must not fail because the thing meant
+		 * to explain its failure was missing.
+		 */
 		void BuildEvidenceSteps()
 		{
 			for (const FEvidenceSource& Source : EvidenceSources)

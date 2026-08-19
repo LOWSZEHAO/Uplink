@@ -248,7 +248,6 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 						return EUplinkToolStep::Pending;
 					}
 
-					// Tile them into one sheet.
 					const int32 Rows = FMath::CeilToInt(static_cast<float>(Captured.Num()) / Columns);
 					const FIntPoint SheetSize(FrameSize.X * Columns, FrameSize.Y * Rows);
 					TArray<FColor> Sheet;
