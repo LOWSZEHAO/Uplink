@@ -22,6 +22,8 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Widget.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Misc/ScopeExit.h"
+#include "Framework/Application/SlateUser.h"
 #include "Widgets/SViewport.h"
 #include "Misc/App.h"
 #include "NavigationSystem.h"
@@ -69,6 +71,15 @@ namespace
 		return Count;
 	}
 
+	/** What a Slate key dispatch actually did, beyond the boolean. */
+	struct FSlateKeyDispatch
+	{
+		bool bHandled = false;
+		bool bFocusForced = false;
+		bool bFocusInGameViewport = false;
+		FString FocusedWidget = TEXT("none");
+	};
+
 	/**
 	 * Send a key the way a real keyboard does: as a Slate event to whatever
 	 * currently holds focus.
@@ -79,39 +90,35 @@ namespace
 	 * because the widget was listening to Slate and the key was going to the
 	 * pawn. Returns whether anything accepted it.
 	 */
-	/** True when the widget holding keyboard focus sits under Root. */
-	bool IsFocusUnder(FSlateApplication& Slate, const TSharedRef<SWidget>& Root)
+	bool SendSlateKey(const FKey& Key, bool bDown, bool bWithCharacter, FSlateKeyDispatch* OutDispatch = nullptr)
 	{
-		TSharedPtr<SWidget> Widget = Slate.GetUserFocusedWidget(0);
-		while (Widget.IsValid())
+		FSlateKeyDispatch Dispatch;
+		ON_SCOPE_EXIT
 		{
-			if (Widget == Root)
+			if (OutDispatch)
 			{
-				return true;
+				*OutDispatch = Dispatch;
 			}
-			Widget = Widget->GetParentWidget();
-		}
-		return false;
-	}
+		};
 
-	/** Type of the widget holding keyboard focus, for reporting where a key went. */
-	FString DescribeFocusedWidget()
-	{
-		if (!FSlateApplication::IsInitialized())
-		{
-			return TEXT("none");
-		}
-		const TSharedPtr<SWidget> Widget = FSlateApplication::Get().GetUserFocusedWidget(0);
-		return Widget.IsValid() ? Widget->GetTypeAsString() : TEXT("none");
-	}
-
-	bool SendSlateKey(const FKey& Key, bool bDown, bool bWithCharacter)
-	{
 		if (!FSlateApplication::IsInitialized())
 		{
 			return false;
 		}
 		FSlateApplication& Slate = FSlateApplication::Get();
+
+		// One user index for the focus question and for the event itself. Slate
+		// resolves the user out of the event and bubbles along that user's focus
+		// path, so asking about a different user answers a question nobody
+		// asked. The engine's own keyboard entry points name the keyboard user.
+		const int32 UserIndex = Slate.GetUserIndexForKeyboard();
+		auto DescribeFocus = [&Slate, UserIndex]() -> FString
+		{
+			const TSharedPtr<const FSlateUser> User = Slate.GetUser(UserIndex);
+			const TSharedPtr<SWidget> Focused = User.IsValid() ? User->GetFocusedWidget() : nullptr;
+			return Focused.IsValid() ? Focused->GetTypeAsString() : TEXT("none");
+		};
+		Dispatch.FocusedWidget = DescribeFocus();
 
 		// A key goes to whatever holds keyboard focus, and after a tool-driven
 		// session that is often the editor UI rather than the game - so claim
@@ -121,14 +128,32 @@ namespace
 		// key" screen relies on, is the exact case this route exists to serve;
 		// taking focus back would send the key to the viewport instead of the
 		// widget that asked for it, the viewport would answer handled, and the
-		// menu would never move. The game layer manager is installed as the
-		// viewport widget content, so anything the game itself focuses, UMG
-		// included, is a descendant of the viewport.
+		// menu would never move.
+		//
+		// The question is put to the focus PATH rather than to a walk up the
+		// widget parents: the path is the chain Slate itself bubbles the event
+		// along, it is per-user, and it is the same test the engine runs
+		// internally for this. It answers correctly whether the session plays
+		// inside the level viewport or in a window of its own, because either
+		// way the registered viewport widget is the one sitting in that path.
 		if (const TSharedPtr<SViewport> GameViewport = Slate.GetGameViewport())
 		{
-			if (!IsFocusUnder(Slate, GameViewport.ToSharedRef()))
+			if (const TSharedPtr<const FSlateUser> User = Slate.GetUser(UserIndex))
+			{
+				Dispatch.bFocusInGameViewport = User->IsWidgetInFocusPath(GameViewport);
+			}
+			if (!Dispatch.bFocusInGameViewport)
 			{
 				Slate.SetAllUserFocusToGameViewport(EFocusCause::SetDirectly);
+				Dispatch.bFocusForced = true;
+				// Re-read rather than assume: the grab has nothing to grab when
+				// no path to the viewport can be built, and the caller is owed
+				// where the key really went, not where it was aimed.
+				if (const TSharedPtr<const FSlateUser> Refreshed = Slate.GetUser(UserIndex))
+				{
+					Dispatch.bFocusInGameViewport = Refreshed->IsWidgetInFocusPath(GameViewport);
+				}
+				Dispatch.FocusedWidget = DescribeFocus();
 			}
 		}
 
@@ -139,26 +164,49 @@ namespace
 		const uint32 KeyCode = KeyCodePtr ? *KeyCodePtr : 0;
 		const uint32 CharCode = CharCodePtr ? *CharCodePtr : 0;
 
-		const FKeyEvent Event(Key, FModifierKeysState(), /*UserIndex=*/0,
+		const FKeyEvent Event(Key, FModifierKeysState(), UserIndex,
 			/*bIsRepeat=*/false, CharCode, KeyCode);
 
-		bool bHandled = false;
 		if (bDown)
 		{
-			bHandled = Slate.ProcessKeyDownEvent(Event);
+			Dispatch.bHandled = Slate.ProcessKeyDownEvent(Event);
 			// A printable key also produces a character event, which is what
 			// text boxes and "press any key" prompts often listen for.
 			if (bWithCharacter && CharCode != 0)
 			{
-				const FCharacterEvent CharEvent(static_cast<TCHAR>(CharCode), FModifierKeysState(), 0, false);
-				bHandled |= Slate.ProcessKeyCharEvent(CharEvent);
+				const FCharacterEvent CharEvent(static_cast<TCHAR>(CharCode), FModifierKeysState(),
+					static_cast<uint32>(UserIndex), false);
+				Dispatch.bHandled |= Slate.ProcessKeyCharEvent(CharEvent);
 			}
 		}
 		else
 		{
-			bHandled = Slate.ProcessKeyUpEvent(Event);
+			Dispatch.bHandled = Slate.ProcessKeyUpEvent(Event);
 		}
-		return bHandled;
+		return Dispatch.bHandled;
+	}
+
+	/** Write where the key landed alongside the boolean, so the two are read together. */
+	void ReportSlateKey(const TSharedRef<FJsonObject>& Data, const FSlateKeyDispatch& Dispatch)
+	{
+		Data->SetStringField(TEXT("focusedWidget"), Dispatch.FocusedWidget);
+		Data->SetBoolField(TEXT("focusInGameViewport"), Dispatch.bFocusInGameViewport);
+		Data->SetBoolField(TEXT("focusForced"), Dispatch.bFocusForced);
+	}
+
+	/** The sentence half of the same report: handled by whom, not just handled. */
+	FString DescribeSlateKeyResult(const FSlateKeyDispatch& Dispatch)
+	{
+		if (!Dispatch.bHandled)
+		{
+			return TEXT("sent, but no widget handled it - is anything focused, and does it override OnKeyDown?");
+		}
+		if (Dispatch.bFocusForced)
+		{
+			return FString::Printf(TEXT("sent to %s, which handled it - nothing in the game held focus, so focus moved to the game viewport first; a UMG widget that already had focus would have kept it"),
+				*Dispatch.FocusedWidget);
+		}
+		return FString::Printf(TEXT("sent to the focused widget (%s), which handled it"), *Dispatch.FocusedWidget);
 	}
 
 	FPiePlayer GetPiePlayer(FString& OutError, bool bNeedEnhancedInput)
@@ -331,7 +379,7 @@ namespace
 			// on a controller with no pawn.
 			if (Route == TEXT("ui"))
 			{
-				bUiHandled = SendSlateKey(Key, /*bDown=*/true, /*bWithCharacter=*/true);
+				bUiHandled = SendSlateKey(Key, /*bDown=*/true, /*bWithCharacter=*/true, &UiDispatch);
 				ReleaseAt = FPlatformTime::Seconds() + FMath::Clamp(GetNumber(Ctx.Params, TEXT("duration"), 0.12), 0.03, 10.0);
 				return EUplinkToolStep::Pending;
 			}
@@ -350,7 +398,7 @@ namespace
 			Player.PC->InputKey(Press);
 			if (Route == TEXT("both"))
 			{
-				bUiHandled = SendSlateKey(Key, /*bDown=*/true, /*bWithCharacter=*/true);
+				bUiHandled = SendSlateKey(Key, /*bDown=*/true, /*bWithCharacter=*/true, &UiDispatch);
 			}
 
 			ReleaseAt = FPlatformTime::Seconds() + FMath::Clamp(GetNumber(Ctx.Params, TEXT("duration"), 0.12), 0.03, 10.0);
@@ -390,10 +438,14 @@ namespace
 			if (Route != TEXT("game"))
 			{
 				Data->SetBoolField(TEXT("uiHandled"), bUiHandled);
+				// Reported from the press, not the release: the press is the
+				// edge a menu acts on, and the one whose focus the caller aimed
+				// at.
+				ReportSlateKey(Data, UiDispatch);
 			}
-			Out = FUplinkToolResult::Ok(Data, (Route != TEXT("game") && !bUiHandled)
-				? TEXT("tapped, but no widget handled it - is anything focused, and does it override OnKeyDown?")
-				: TEXT("tapped"));
+			Out = FUplinkToolResult::Ok(Data, Route == TEXT("game")
+				? TEXT("tapped")
+				: FString::Printf(TEXT("tapped - %s"), *DescribeSlateKeyResult(UiDispatch)));
 			return EUplinkToolStep::Done;
 		}
 
@@ -401,6 +453,7 @@ namespace
 		FKey Key;
 		FString Route = TEXT("game");
 		bool bUiHandled = false;
+		FSlateKeyDispatch UiDispatch;
 		double ReleaseAt = 0.0;
 	};
 
@@ -638,7 +691,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("input_key");
-		Info.Description = TEXT("Simulate a raw key in the running game (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX). 'route' decides WHO receives it: 'game' (default) reaches the player controller's own input stack; 'ui' sends a real Slate key event to the focused widget, which is the only thing a UMG menu overriding OnKeyDown will ever see - if a title screen or menu ignores your keys, this is why; 'both' does each, like a real keypress. The reply reports whether anything handled it. IMPORTANT: on a project driven by Enhanced Input - which is most UE5 games - a raw key does NOT fire the Input Actions bound to it. Measured on a real game: W held for two seconds through this tool moved the character not at all and still answered handled:true, while the same two seconds of its IA_Move through input_action moved it 350 units. Use input_action for anything gameplay binds to, and keep this for menus and for games still on the legacy input stack.");
+		Info.Description = TEXT("Simulate a raw key in the running game (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX). 'route' decides WHO receives it: 'game' (default) reaches the player controller's own input stack; 'ui' sends a real Slate key event to the focused widget, which is the only thing a UMG menu overriding OnKeyDown will ever see - if a title screen or menu ignores your keys, this is why; 'both' does each, like a real keypress. The reply reports whether anything handled it, and names the widget that had focus plus whether it sat inside the game viewport: handled:true with focusInGameViewport:true and an SViewport focusedWidget means the key reached the game rather than the UI, which is the usual reason a menu looks like it ignored a key that came back handled. IMPORTANT: on a project driven by Enhanced Input - which is most UE5 games - a raw key does NOT fire the Input Actions bound to it. Measured on a real game: W held for two seconds through this tool moved the character not at all and still answered handled:true, while the same two seconds of its IA_Move through input_action moved it 350 units. Use input_action for anything gameplay binds to, and keep this for menus and for games still on the legacy input stack.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"key":{"type":"string","description":"UE key name: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, Gamepad_LeftX, ..."},"event":{"type":"string","enum":["tap","pressed","released","axis"],"default":"tap"},"route":{"type":"string","enum":["game","ui","both"],"default":"game","description":"Who receives the key: the player controller, the focused UMG widget, or both"},"amount":{"type":"number","default":1.0},"duration":{"type":"number","description":"tap only: seconds between press and release (default 0.12)"}},"required":["key"]})json"));
 		Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
@@ -676,21 +729,20 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 					// any gameplay controller exists at all.
 					if (Route == TEXT("ui"))
 					{
-						const FString Focused = DescribeFocusedWidget();
-						const bool bUiHandled = SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true);
+						FSlateKeyDispatch Dispatch;
+						const bool bUiHandled = SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true, &Dispatch);
 						TSharedRef<FJsonObject> UiData = MakeShared<FJsonObject>();
 						// Which widget was listening is the whole diagnosis when
-						// a menu ignores a key that came back handled: a viewport
-						// here means the key went to the game, not to the UI.
-						UiData->SetStringField(TEXT("focusedWidget"), Focused);
+						// a menu ignores a key that came back handled:
+						// focusInGameViewport with an SViewport here means the
+						// key reached the game, not the UI.
+						ReportSlateKey(UiData, Dispatch);
 						// Same field names as the tap path, so a caller reads one
 						// shape regardless of which event it sent.
 						UiData->SetBoolField(TEXT("handled"), bUiHandled);
 						UiData->SetBoolField(TEXT("uiHandled"), bUiHandled);
 						UiData->SetStringField(TEXT("route"), TEXT("ui"));
-						Out = FUplinkToolResult::Ok(UiData, bUiHandled
-							? TEXT("sent to the focused widget")
-							: TEXT("sent, but no widget handled it - is anything focused, and does it override OnKeyDown?"));
+						Out = FUplinkToolResult::Ok(UiData, DescribeSlateKeyResult(Dispatch));
 						return EUplinkToolStep::Done;
 					}
 
@@ -738,8 +790,10 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 					if (Route == TEXT("both"))
 					{
 						// A real key reaches the UI as well as the game.
+						FSlateKeyDispatch BothDispatch;
 						Data->SetBoolField(TEXT("uiHandled"),
-							SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true));
+							SendSlateKey(Key, Event != TEXT("released"), /*bWithCharacter=*/true, &BothDispatch));
+						ReportSlateKey(Data, BothDispatch);
 					}
 					Out = FUplinkToolResult::Ok(Data);
 					return EUplinkToolStep::Done;

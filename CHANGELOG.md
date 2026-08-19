@@ -14,9 +14,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before every send, so a menu that had focused itself lost it a moment before
   the key arrived; the viewport answered handled and the menu never moved. That
   is the whole reason the route exists, and it could not work. Focus is now
-  claimed only when it is sitting outside the game — the game layer manager is
-  installed as the viewport widget content, so anything the game focuses is a
-  descendant of the viewport and is left alone. Verified against a commercial
+  claimed only when it is sitting outside the game. The question is put to the
+  focus path through `FSlateUser::IsWidgetInFocusPath`, which is the same test
+  the engine runs internally, on the user index `GetUserIndexForKeyboard()`
+  names — the dispatched key now goes to that user too, instead of a hardcoded
+  0 that only agreed with the focus test by luck. Verified against a commercial
   title: its "press any key" screen, W/S menu navigation and E to confirm all
   respond to simulated keys now, and its in-game tutorial pages advance.
 - `click_widget` reports the press and the release separately (`downHandled`,
@@ -25,9 +27,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the session, a panel over the top — leaves the button unfired. Folding both
   edges into one `handled` reported that as a click. `handled` is unchanged for
   callers that read it; the message now names which edge was lost.
-- `input_key` with `route: "ui"` reports `focusedWidget`. When a menu ignores a
-  key that came back handled, the widget that was listening is the diagnosis —
-  a viewport there means the key reached the game rather than the UI.
+- `input_key` reports where the key actually landed on every route that
+  touches Slate, taps included: `focusedWidget`, `focusInGameViewport`, and
+  `focusForced` (whether this call had to move focus itself). When a menu
+  ignores a key that came back handled, that is the diagnosis — `SPIEViewport`
+  with `focusForced: true` means the key reached the game because nothing in
+  the UI held focus. The message says it in words too: "sent to the focused
+  widget (SObjectWidget), which handled it".
 
 ## 0.30.0
 
