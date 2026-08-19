@@ -52,6 +52,7 @@ namespace
 	/** Alphabetical, so a missing or duplicated row is easy to spot by eye. */
 	const FUplinkToolTraitRow GToolTraits[] =
 	{
+		{ TEXT("anim_modify"),       Trait_Destructive },                          // remove_notify deletes authored notifies
 		{ TEXT("asset_import"),      Trait_Destructive | Trait_LongRunning },      // imports replace an existing asset in place
 		{ TEXT("bp_find_broken"),    Trait_LongRunning },                          // loads every Blueprint in the project
 		{ TEXT("bp_references"),     Trait_LongRunning },                          // opens unloaded packages to find callers
@@ -64,6 +65,8 @@ namespace
 		{ TEXT("input_key"),         Trait_RequiresPie },
 		{ TEXT("input_replay"),      Trait_RequiresPie | Trait_LongRunning },      // replays a take at its recorded pace
 		{ TEXT("landscape_create"),  Trait_LongRunning },                          // heightmap import and resample
+		{ TEXT("level_new"),         Trait_Destructive },                          // switching level abandons unsaved work in the current one
+		{ TEXT("level_open"),        Trait_Destructive },                          // as above - the engine load path does not prompt
 		{ TEXT("live_compile"),      Trait_LongRunning },                          // a C++ compile
 		{ TEXT("navigate_to"),       Trait_RequiresPie | Trait_LongRunning },      // the pawn walks there in real time
 		{ TEXT("niagara_compile"),   Trait_LongRunning },                          // blocks until the system finishes compiling

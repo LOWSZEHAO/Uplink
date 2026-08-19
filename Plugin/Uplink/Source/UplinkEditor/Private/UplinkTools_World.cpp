@@ -8,6 +8,7 @@
 
 #include "Editor.h"
 #include "LevelEditorSubsystem.h"
+#include "FileHelpers.h"
 #include "LevelEditorViewport.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
@@ -1213,6 +1214,51 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	// already open, the save writes an empty level, and not one call reports a
 	// problem. That cost an afternoon; these two exist so it cannot happen
 	// again, because they check.
+	// Both tools below hand the map change to the engine's own load path, which
+	// does not prompt - deliberately, since these run unattended and a modal
+	// would hang every tool on the game thread. The cost is that unsaved work in
+	// the level being left is destroyed without a word: spawn_actor, spawn_batch
+	// and move_actor only mark the package dirty, so an agent that placed forty
+	// actors and then opened another map to check something lost all forty and
+	// was told the map opened.
+	auto UnsavedWork = [](TArray<FString>& OutNames) -> bool
+	{
+		TArray<UPackage*> Dirty;
+		FEditorFileUtils::GetDirtyWorldPackages(Dirty);
+		FEditorFileUtils::GetDirtyContentPackages(Dirty);
+		for (const UPackage* Package : Dirty)
+		{
+			if (Package)
+			{
+				OutNames.Add(Package->GetName());
+			}
+		}
+		return OutNames.Num() > 0;
+	};
+
+	auto RefuseIfUnsaved = [UnsavedWork](const FUplinkToolContext& Ctx, FUplinkToolResult& Out) -> bool
+	{
+		bool bDiscard = false;
+		Ctx.Params->TryGetBoolField(FStringView(TEXT("discard_unsaved")), bDiscard);
+		if (bDiscard)
+		{
+			return false;
+		}
+		TArray<FString> Names;
+		if (!UnsavedWork(Names))
+		{
+			return false;
+		}
+		const int32 Shown = FMath::Min(Names.Num(), 8);
+		TArray<FString> Head(Names.GetData(), Shown);
+		Out = FUplinkToolResult::Error(FString::Printf(
+			TEXT("%d package(s) have unsaved changes and changing level would destroy them: %s%s. ")
+			TEXT("Call save first, or pass discard_unsaved:true if losing them is intended."),
+			Names.Num(), *FString::Join(Head, TEXT(", ")),
+			Names.Num() > Shown ? TEXT(", ...") : TEXT("")));
+		return true;
+	};
+
 	auto CurrentMap = []() -> FString
 	{
 		const UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -1222,10 +1268,15 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("level_open"),
 		TEXT("Open a level for editing, and confirm the editor is actually on it. The confirmation is the point: the underlying engine call can report success while the editor keeps editing the level it already had, and everything placed afterwards then goes into the wrong world without a single call complaining. Returns the map the editor ended up on."),
-		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Level asset path, e.g. /Game/Maps/Arena"}},"required":["path"],"additionalProperties":false})json"),
+		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Level asset path, e.g. /Game/Maps/Arena"},"discard_unsaved":{"type":"boolean","default":false,"description":"Proceed even though other packages have unsaved changes, losing them"}},"required":["path"],"additionalProperties":false})json"),
 		/*bReadOnly=*/false,
-		[CurrentMap](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		[CurrentMap, RefuseIfUnsaved](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
+			FUplinkToolResult Refusal;
+			if (RefuseIfUnsaved(Ctx, Refusal))
+			{
+				return Refusal;
+			}
 			const FString Path = GetString(Ctx.Params, TEXT("path"));
 			ULevelEditorSubsystem* Levels = GEditor ? GEditor->GetEditorSubsystem<ULevelEditorSubsystem>() : nullptr;
 			if (!Levels)
@@ -1253,10 +1304,15 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("level_new"),
 		TEXT("Create an empty level AND switch the editor to it. The engine's own NewLevel does the first half only: it writes the asset, answers true, and leaves the editor editing whatever it was editing before - so actors spawned next land somewhere else entirely and the new level saves empty, silently. This creates it, opens it, and verifies the editor arrived, so a later spawn cannot go astray. It does not save; call save when the level has something in it."),
-		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Where to create it, e.g. /Game/Maps/Arena"},"partitioned":{"type":"boolean","default":false,"description":"World Partition. Leave false for a small fixture level."}},"required":["path"],"additionalProperties":false})json"),
+		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Where to create it, e.g. /Game/Maps/Arena"},"partitioned":{"type":"boolean","default":false,"description":"World Partition. Leave false for a small fixture level."},"discard_unsaved":{"type":"boolean","default":false,"description":"Proceed even though other packages have unsaved changes, losing them"}},"required":["path"],"additionalProperties":false})json"),
 		/*bReadOnly=*/false,
-		[CurrentMap](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		[CurrentMap, RefuseIfUnsaved](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
+			FUplinkToolResult Refusal;
+			if (RefuseIfUnsaved(Ctx, Refusal))
+			{
+				return Refusal;
+			}
 			const FString Path = GetString(Ctx.Params, TEXT("path"));
 			bool bPartitioned = false;
 			Ctx.Params->TryGetBoolField(FStringView(TEXT("partitioned")), bPartitioned);

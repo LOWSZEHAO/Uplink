@@ -74,6 +74,53 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declares `_expect_scenario_refused` and asserts on the call; the runner no
   longer scores any file backwards by its filename.
 
+- `wait_until` refuses a condition that can never become true instead of
+  waiting out its timeout. `actor_exists`/`actor_gone` never checked that
+  `actor` was given, and the lookup falls back to a substring match - every
+  string contains the empty string, so an omitted actor matched whichever actor
+  came first and answered "condition met" instantly, naming nothing. A
+  `property_equals` naming neither `actor` nor `object_path` had its resolve
+  error discarded and waited the full timeout. An object that has not spawned
+  *yet* is still worth waiting for, so that case is untouched; what is refused
+  is a condition with no target at all.
+
+- `widget_add` refuses a widget the root panel would not take. The
+  explicit-parent branch already checked `AddChild` and said exactly why; the
+  branch three lines below it discarded the same return value, so adding a
+  second child to a Button or Border root reported success and left the widget
+  in the tree parented to nothing, surfacing later as a compiler complaint with
+  no apparent cause.
+
+- `pie_start` refuses a `rotation` passed without a `location` rather than
+  ignoring it. The engine gates the whole placement on the location -
+  `FRequestPlaySessionParams::HasPlayWorldPlacement()` is `StartLocation.IsSet()`
+  - so a rotation alone was never read and the pawn spawned at the level's
+  PlayerStart facing its own way, with the call reporting success.
+
+- `foliage_scatter` scatters into the editor world, like `lighting_setup` and
+  `landscape_create` beside it. It followed the caller's world instead, and
+  never declared a `world` parameter to say so - so with a session running it
+  placed its instances in the PIE copy, counted them, reported them, and lost
+  them all at `pie_stop`.
+
+- `bp_modify op=set_variable` refuses `type` and `default` instead of dropping
+  them. Only `add_variable` reads those - it passes them to
+  `AddMemberVariable` - so a call meant to retune an existing variable reported
+  success and changed nothing.
+
+- `anim_modify` records its edits in the transaction buffer. It called
+  `MarkPackageDirty` but never `Modify()`, so its transaction was empty and
+  `edit_history undo` - the documented way back from a destructive tool - could
+  not restore a removed notify. It is now marked Destructive, along with
+  `level_open` and `level_new`.
+
+- `level_open` and `level_new` refuse when other packages have unsaved changes,
+  naming them, and take `discard_unsaved` to proceed anyway. The engine's load
+  path does not prompt, which is deliberate for tools that run unattended, but
+  `spawn_actor`, `spawn_batch` and `move_actor` only mark the level dirty - so
+  an agent that placed forty actors and then opened another map to check
+  something lost all forty and was told the map opened.
+
 - `set_property` verifies the value survived and refuses when it did not. A
   Blueprint variable that is not instance editable is put back by the actor's
   construction scripts on the way out of `PostEditChangeProperty`, and the

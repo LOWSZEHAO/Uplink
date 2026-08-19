@@ -320,8 +320,14 @@ void UplinkContentTools::RegisterEnvironment(FUplinkToolRegistry& Registry)
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
+			// The editor world, like lighting_setup and landscape_create above.
+			// Scattering is authoring: an omitted world resolves to the PIE
+			// world while a session is running, so the instances would land in
+			// the copy the engine throws away at pie_stop - placed, counted and
+			// reported, and gone. This tool never declared 'world', so there
+			// was no way to ask for the other one either.
 			FString Error;
-			UWorld* World = Ctx.ResolveWorld(Error);
+			UWorld* World = EditorWorld(Error);
 			if (!World)
 			{
 				return FUplinkToolResult::Error(Error);
@@ -384,10 +390,7 @@ void UplinkContentTools::RegisterEnvironment(FUplinkToolRegistry& Registry)
 				Instances->AddInstance(Transform, /*bWorldSpace=*/true);
 				++Placed;
 			}
-			if (!Ctx.IsPieWorld())
-			{
-				World->MarkPackageDirty();
-			}
+			World->MarkPackageDirty();
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("actor"), Holder->GetName());

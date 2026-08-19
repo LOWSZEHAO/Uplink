@@ -37,16 +37,32 @@ namespace UplinkBlueprint
 					return FUplinkToolResult::Error(TEXT("AddMemberVariable failed (name collision?)"));
 				}
 			}
-			else if (FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, VarName) == INDEX_NONE)
+			else
 			{
-				TArray<FString> Names;
-				for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+				if (FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, VarName) == INDEX_NONE)
 				{
-					Names.Add(Variable.VarName.ToString());
+					TArray<FString> Names;
+					for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+					{
+						Names.Add(Variable.VarName.ToString());
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no variable '%s' on this blueprint. Variables: %s"),
+						*VarName.ToString(), *FString::Join(Names, TEXT(", "))));
 				}
-				return FUplinkToolResult::Error(FString::Printf(
-					TEXT("no variable '%s' on this blueprint. Variables: %s"),
-					*VarName.ToString(), *FString::Join(Names, TEXT(", "))));
+				// set_variable changes the details-panel knobs below; 'type' and
+				// 'default' are read only by add_variable, which passes them to
+				// AddMemberVariable. Accepting them here dropped them in silence
+				// and answered success, so a call meant to retune a variable
+				// reported having done it and changed nothing.
+				if (OpParams->HasField(TEXT("type")) || OpParams->HasField(TEXT("default")))
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("set_variable cannot change a variable's type or default value - it sets the ")
+						TEXT("details-panel flags (instance_editable, expose_on_spawn, category, tooltip). ")
+						TEXT("'%s' already exists; remove it and add_variable it again to change its shape."),
+						*VarName.ToString()));
+				}
 			}
 
 			// The knobs on the variable details panel, addressable on creation or

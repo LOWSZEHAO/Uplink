@@ -315,12 +315,32 @@ namespace
 
 			if (Type == TEXT("actor_exists") || Type == TEXT("actor_gone"))
 			{
-				AActor* Actor = FindActor(World, GetString(Condition, TEXT("actor")));
+				const FString ActorName = GetString(Condition, TEXT("actor"));
+				if (ActorName.IsEmpty())
+				{
+					// FindActor falls back to a substring match, and every
+					// string contains the empty string - so an omitted 'actor'
+					// matched the first actor in the world and answered
+					// "condition met" instantly, naming nothing.
+					OutError = FString::Printf(
+						TEXT("%s condition needs 'actor' - the name or label to look for"), *Type);
+					return false;
+				}
+				AActor* Actor = FindActor(World, ActorName);
 				const bool bExists = Actor != nullptr && IsValid(Actor);
 				return Type == TEXT("actor_exists") ? bExists : !bExists;
 			}
 
 			// property_equals
+			if (!Condition->HasField(TEXT("actor")) && !Condition->HasField(TEXT("object_path")))
+			{
+				// An object that has not spawned yet is worth waiting for, which
+				// is why an unresolved target below is not an error. A condition
+				// naming no target at all is a different thing: it can never
+				// become true, so waiting the full timeout only delays saying so.
+				OutError = TEXT("property_equals condition needs 'actor' or 'object_path' - the object to read the property from");
+				return false;
+			}
 			FString ResolveError;
 			UObject* Object = ResolveObject(Condition, World, ResolveError);
 			if (!Object)

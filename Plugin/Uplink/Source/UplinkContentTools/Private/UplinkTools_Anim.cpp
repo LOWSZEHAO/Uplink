@@ -168,6 +168,7 @@ void UplinkContentTools::RegisterAnim(FUplinkToolRegistry& Registry)
 					Skeleton->AddNewAnimationNotify(NotifyName);
 				}
 
+				Anim->Modify();
 				Anim->Notifies.Add(NewEvent);
 				Anim->RefreshCacheData();
 				Anim->MarkPackageDirty();
@@ -179,6 +180,7 @@ void UplinkContentTools::RegisterAnim(FUplinkToolRegistry& Registry)
 
 			if (Op == TEXT("remove_notify"))
 			{
+				Anim->Modify();
 				int32 Removed = 0;
 				if (Ctx.Params->HasField(FStringView(TEXT("index"))))
 				{

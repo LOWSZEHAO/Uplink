@@ -158,7 +158,18 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 			}
 			else if (UPanelWidget* RootPanel = Cast<UPanelWidget>(WidgetBlueprint->WidgetTree->RootWidget))
 			{
-				RootPanel->AddChild(NewWidget);
+				// Same refusal as the explicit-parent branch above: a root that
+				// is a Button or Border is a panel and already holds its child,
+				// so AddChild returns null and the widget stays in the tree
+				// parented to nothing.
+				if (!RootPanel->AddChild(NewWidget))
+				{
+					WidgetBlueprint->WidgetTree->RemoveWidget(NewWidget);
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("the root widget '%s' (%s) cannot take another child - it holds %d and its slot type allows no more. ")
+						TEXT("Single-child panels (Button, Border, SizeBox, ScaleBox...) need a layout panel inside them first."),
+						*RootPanel->GetName(), *RootPanel->GetClass()->GetName(), RootPanel->GetChildrenCount()));
+				}
 			}
 			else
 			{

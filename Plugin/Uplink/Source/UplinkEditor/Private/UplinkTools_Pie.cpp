@@ -74,6 +74,20 @@ namespace
 				TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation);
 				Params.StartRotation = Rotation;
 			}
+			else if (Ctx.Params->HasField(TEXT("rotation")))
+			{
+				// The engine gates the whole placement on the location:
+				// FRequestPlaySessionParams::HasPlayWorldPlacement() is
+				// StartLocation.IsSet(), so a rotation on its own is never read
+				// and the pawn spawns at the untouched PlayerStart. Refusing
+				// beats starting a session that faces the wrong way and says
+				// nothing about it.
+				Out = FUplinkToolResult::Error(TEXT(
+					"'rotation' only applies alongside 'location' - the engine reads the start rotation "
+					"only when a start location is set, so a rotation on its own would spawn the pawn at "
+					"the level's PlayerStart facing its own way. Pass both, or neither."));
+				return EUplinkToolStep::Done;
+			}
 
 			const FString GameModePath = GetString(Ctx.Params, TEXT("game_mode"));
 			if (!GameModePath.IsEmpty())
