@@ -1,0 +1,28 @@
+# The half of the gate that needs no Unreal Engine.
+#
+# Unreal is a licensed, ~100 GB install, so a hosted runner cannot compile the
+# plugin or run the scenario suite - those need a machine with the engine on
+# it and, for the scenarios, an editor actually running. scripts/ci.ps1 runs
+# all three stages there. What is left is still worth automating: everything
+# in check_repo.ps1 rots silently, because none of it breaks a build.
+#
+# To run the full gate here instead, register a self-hosted runner on a
+# machine with UE 5.7 and 5.8 installed and add a second job with
+# `runs-on: self-hosted` calling scripts/ci.ps1 -SkipScenarios.
+
+name: checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  repository-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Static repository checks
+        shell: pwsh
+        run: ./scripts/check_repo.ps1

@@ -17,12 +17,19 @@ void UplinkObject::RegisterGetProperty(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("get_property"),
 		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path' (also accepts 'subsystem:<Class>' for live subsystem instances), or 'actor' (name/label) plus optional 'component'. 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value' - useful because a few engine structs will not serialise as a whole but their members read fine."),
-		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"world":{"type":"string","enum":["editor","pie"]}},"required":["property"]})json"),
+		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FString Error;
 			UWorld* World = Ctx.ResolveWorld(Error);
+			if (!Error.IsEmpty())
+			{
+				// ResolveWorld names the world ids that do exist. ResolveObject
+				// overwrites Error with a generic line, so an explicitly named
+				// world that does not resolve has to be reported here.
+				return FUplinkToolResult::Error(Error);
+			}
 			UObject* Object = ResolveObject(Ctx.Params, World, Error);
 			if (!Object)
 			{

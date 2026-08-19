@@ -32,10 +32,13 @@
     {
       "tool": "bp_query",
       "params": {
-        "blueprint": "/Game/UplinkScenarios/BP_ScenarioProbe.BP_ScenarioProbe",
-        "variables": true
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioProbe.BP_ScenarioProbe"
       },
-      "expect": { "status": "up_to_date" }
+      "expect": {
+        "status": "up_to_date",
+        "parent_class": "/Script/Engine.Actor",
+        "variables": [ { "name": "ScenarioValue", "type": "Float (double-precision)" } ]
+      }
     },
     {
       "tool": "bp_modify",

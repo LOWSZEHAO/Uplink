@@ -17,12 +17,19 @@ void UplinkObject::RegisterCallFunction(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("call_function"),
 		TEXT("Call any UFUNCTION (BlueprintCallable, BlueprintPure, or plain UFUNCTION) on an object by reflection. 'args' maps parameter names to JSON values; the response contains the return value and all out-parameters. This exposes the entire Blueprint-callable API of a project through one tool. 'object_path' also accepts 'subsystem:<Class>' to reach live subsystem instances (e.g. subsystem:AssetEditorSubsystem to open asset editors)."),
-		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"function":{"type":"string"},"args":{"type":"object","description":"Parameter name -> JSON value"},"world":{"type":"string","enum":["editor","pie"]}},"required":["function"]})json"),
+		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"function":{"type":"string"},"args":{"type":"object","description":"Parameter name -> JSON value"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["function"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FString Error;
 			UWorld* World = Ctx.ResolveWorld(Error);
+			if (!Error.IsEmpty())
+			{
+				// ResolveWorld names the world ids that do exist. ResolveObject
+				// overwrites Error with a generic line, so an explicitly named
+				// world that does not resolve has to be reported here.
+				return FUplinkToolResult::Error(Error);
+			}
 			UObject* Object = ResolveObject(Ctx.Params, World, Error);
 			if (!Object)
 			{

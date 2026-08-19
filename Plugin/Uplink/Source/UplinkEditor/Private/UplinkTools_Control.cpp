@@ -957,7 +957,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("click_widget"),
 		TEXT("Click a UMG widget in the running game - menus, buttons, HUD elements - by synthesizing a real mouse press at the widget's screen position (so it goes through actual hit-testing, like a player's click). 'widget' matches by name (exact first, then contains) across all live UserWidgets; or pass a raw screen 'position'. The widget must be on screen."),
-		TEXT(R"json({"type":"object","properties":{"widget":{"type":"string","description":"Widget name, e.g. 'BtnStart'"},"position":{"type":"object","description":"{x,y} desktop pixels, instead of 'widget'"},"world":{"type":"string","enum":["editor","pie"]}}})json"),
+		TEXT(R"json({"type":"object","properties":{"widget":{"type":"string","description":"Widget name, e.g. 'BtnStart'"},"position":{"type":"object","description":"{x,y} desktop pixels, instead of 'widget'"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}}})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

@@ -374,12 +374,19 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 	Registry.RegisterQuick(
 		TEXT("watch_events"),
 		TEXT("Start recording broadcasts of a dynamic multicast delegate (any BlueprintAssignable event like OnGrabbed, OnValueChanged) with their parameter payloads. delegate '*' watches every delegate on the object. Read captures with drain_events. Watches stop automatically when PIE ends."),
-		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"delegate":{"type":"string","description":"Delegate property name, or '*' for all"},"world":{"type":"string","enum":["editor","pie"]}},"required":["delegate"]})json"),
+		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"delegate":{"type":"string","description":"Delegate property name, or '*' for all"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["delegate"]})json"),
 		/*bReadOnly=*/false,
 		[&Recorder](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FString Error;
 			UWorld* World = Ctx.ResolveWorld(Error);
+			if (!Error.IsEmpty())
+			{
+				// ResolveWorld names the world ids that do exist. ResolveObject
+				// overwrites Error with a generic line, so an explicitly named
+				// world that does not resolve has to be reported here.
+				return FUplinkToolResult::Error(Error);
+			}
 			UObject* Object = ResolveObject(Ctx.Params, World, Error);
 			if (!Object)
 			{
@@ -447,7 +454,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("wait_until");
 		Info.Description = TEXT("Wait (without blocking the editor) until a condition becomes true, or the timeout passes - the assertion primitive for automated playtests. Condition types: property_equals {actor/object_path, property, value, tolerance?} - 'property' takes the same dotted paths get_property does, so nested struct members and values behind an object reference are assertable, actor_exists {actor}, actor_gone {actor}, event_count {watch_id, at_least, since_seq?}, elapsed {seconds}, ui_visible {contains}, navmesh_ready {location?}. navmesh_ready {location} waits until a complete path can actually be built from the player pawn to that location, which is the question navigate_to is about to ask. 'location' is required. It deliberately avoids the two cheaper proxies, both of which answer yes while pathing still fails: the engine's remaining-build-task count reads zero before generation has even started, and projecting a point onto the mesh succeeds when there is mesh merely NEAR it. Navmesh tiles build across frames, so pathing issued straight after BeginPlay fails with a message about the goal being off the navmesh - which reads as a level fault and is not one - and the usual workaround is sleeping a guessed number of seconds that has to be retuned per level and per machine. Navmesh tiles are built across frames, so the mesh is absent for a while after BeginPlay and pathing into that window fails with a message about the goal being off the navmesh, which reads as a level fault and is not one; the usual workaround is sleeping a guessed number of seconds, which has to be retuned per level and per machine. ui_visible waits for a UMG widget that is actually on screen, matching part of a widget name or of the text it displays - a menu is constructed a frame or two after the screen holding it is added, and a key sent into that gap reaches the viewport instead of the menu and still answers handled. A timeout is reported as condition_met=false, not as an error.");
-		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"condition":{"type":"object","description":"{type, ...} - see tool description"},"timeout":{"type":"number","default":30,"description":"seconds (0.1-300)"},"world":{"type":"string","enum":["editor","pie"]}},"required":["condition"]})json"));
+		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"condition":{"type":"object","description":"{type, ...} - see tool description"},"timeout":{"type":"number","default":30,"description":"seconds (0.1-300)"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["condition"]})json"));
 		Info.bReadOnly = true;
 		Info.TimeoutSeconds = 310.0;
 		Registry.Register(MoveTemp(Info), [&Recorder]() -> TSharedRef<IUplinkInvocation>
@@ -459,7 +466,7 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 	Registry.RegisterQuick(
 		TEXT("get_world_state"),
 		TEXT("Compact snapshot of actors in the current world: name, class, location, plus any requested property values - a delta-friendly alternative to screenshots for checking game state."),
-		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","enum":["editor","pie"]},"class_contains":{"type":"string"},"name_contains":{"type":"string"},"properties":{"type":"array","items":{"type":"string"},"description":"Property names to include per actor (when present on its class)"},"max":{"type":"number","default":50}}})json"),
+		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"},"class_contains":{"type":"string"},"name_contains":{"type":"string"},"properties":{"type":"array","items":{"type":"string"},"description":"Property names to include per actor (when present on its class)"},"max":{"type":"number","default":50}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

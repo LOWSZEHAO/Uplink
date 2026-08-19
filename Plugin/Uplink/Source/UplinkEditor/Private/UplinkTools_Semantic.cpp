@@ -190,7 +190,7 @@ void UplinkTools::RegisterSemantic(FUplinkToolRegistry& Registry)
 		TEXT("whether it is overlapping the player right now, and the names of the events it can fire (pass one to ")
 		TEXT("watch_events). Reports facts only: there is no guess at what is 'interactable'. Pair it with ")
 		TEXT("viewport_screenshot when the agent needs to see as well as know."),
-		TEXT(R"json({"type":"object","properties":{"radius":{"type":"number","default":1500,"minimum":1,"description":"Search distance in cm"},"max":{"type":"integer","default":20,"minimum":1,"description":"How many nearby actors to report"},"class_contains":{"type":"string","description":"Only report actors whose class name contains this"},"world":{"type":"string","enum":["editor","pie"]}},"additionalProperties":false})json"),
+		TEXT(R"json({"type":"object","properties":{"radius":{"type":"number","default":1500,"minimum":1,"description":"Search distance in cm"},"max":{"type":"integer","default":20,"minimum":1,"description":"How many nearby actors to report"},"class_contains":{"type":"string","description":"Only report actors whose class name contains this"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"additionalProperties":false})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

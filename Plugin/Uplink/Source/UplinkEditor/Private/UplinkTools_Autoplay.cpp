@@ -201,7 +201,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	InRegistry.RegisterQuick(
 		TEXT("ui_live"),
 		TEXT("What UMG is on screen right now: every widget in every UserWidget that was added to the viewport, nested sub-widgets included, with its class, any text it displays, screen rect, visibility, and whether a click could land on it ('interactive' means hit-testable and laid out; a widget set HitTestInvisible lets clicks pass straight through). This is how you find a menu without reading its Blueprint - the names here are what click_widget takes, and 'rect' is [x, y, width, height] in the same desktop pixels click_widget's 'position' takes, which are not viewport-relative screenshot pixels. UI drawn on a WidgetComponent in the world is not covered, because nothing added it to a viewport. Each row also carries 'object_path' for the element and 'screen_path' for the UserWidget whose tree it lives in - a nested sub-widget rather than the outer screen, when the element sits inside one - and both are what get_property, set_property and call_function accept - so a menu you can see is also one you can read a variable off or call a function on, which matters when a widget swallows input and no key or click will advance it. A widget with a zero rect exists but is not laid out, which usually means the screen it belongs to has not been shown yet. PIE only."),
-		TEXT(R"json({"type":"object","properties":{"contains":{"type":"string","description":"Only widgets whose name, class or text contains this"},"interactive_only":{"type":"boolean","default":false,"description":"Only widgets that accept a click"},"on_screen_only":{"type":"boolean","default":true,"description":"Skip widgets with no laid-out geometry"},"max":{"type":"number","default":80},"world":{"type":"string","enum":["editor","pie"]}}})json"),
+		TEXT(R"json({"type":"object","properties":{"contains":{"type":"string","description":"Only widgets whose name, class or text contains this"},"interactive_only":{"type":"boolean","default":false,"description":"Only widgets that accept a click"},"on_screen_only":{"type":"boolean","default":true,"description":"Skip widgets with no laid-out geometry"},"max":{"type":"number","default":80},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -341,7 +341,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	InRegistry.RegisterQuick(
 		TEXT("actor_components"),
 		TEXT("List a live actor's components with the names get_property and set_property expect. Guessing is unreliable: a character's movement component is called CharMoveComp, not CharacterMovement, and the wrong guess simply reports that the component does not exist."),
-		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string"},"class_contains":{"type":"string"},"max":{"type":"number","default":60},"world":{"type":"string","enum":["editor","pie"]}},"required":["actor"]})json"),
+		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string"},"class_contains":{"type":"string"},"max":{"type":"number","default":60},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["actor"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -409,7 +409,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	InRegistry.RegisterQuick(
 		TEXT("streaming_status"),
 		TEXT("Which sublevels are loaded, visible, or still coming. Without this an unfinished stream is indistinguishable from a broken level or an empty one - the only clue is an actor count that looks too low, which is exactly how a game that had not been entered through its menu looked. 'settled' means nothing is mid-transition, not that everything is loaded: a sublevel the game deliberately leaves unloaded is settled, and 'pending' names the ones actually moving. 'actorCount' counts the levels that are loaded now, so it climbs as they arrive."),
-		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","enum":["editor","pie"]}}})json"),
+		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

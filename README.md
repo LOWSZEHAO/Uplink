@@ -1,5 +1,7 @@
 # Uplink
 
+[![checks](https://github.com/LOWSZEHAO/Uplink/actions/workflows/checks.yml/badge.svg)](https://github.com/LOWSZEHAO/Uplink/actions/workflows/checks.yml)
+
 **A direct data link between an AI agent and a running Unreal Engine editor.**
 
 Uplink is a C++ editor plugin that speaks [MCP](https://modelcontextprotocol.io), plus an optional Node bridge. It hands an AI assistant the editor itself: assets, Blueprints, actors, materials, animation, and every reflected UFUNCTION in your project.
@@ -26,7 +28,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.30.0 — 107 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.30.0 — 111 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. An audit this month found five authoring calls that reported success while doing the wrong thing, all of them already shipped. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -91,7 +93,7 @@ Worth reading before you point an agent at real work.
 
 ## The toolset
 
-107 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
+111 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|
@@ -145,6 +147,16 @@ AI agent (MCP client) ──┤   (native MCP — no Node needed)   ├── Pl
 
 Every tool declares whether it only reads. Anything that writes runs in its own editor transaction unless it opted out, which is what makes its edits undoable by hand afterwards, and its parameters are checked against its published schema before it runs.
 
+## Checks
+
+```powershell
+.\scripts\ci.ps1
+```
+
+Three gates, cheapest first. `check_repo.ps1` is fifteen static checks that need no engine and finish in seconds — every tool schema parses, names are unique, every scenario step names a real tool and passes only parameters that tool declares, the docs list every tool, the version agrees in all four places that carry it. `build_all.ps1` compiles against both engines. `run_scenarios.ps1` runs the suite against a live editor. Each can be run on its own, and `ci.ps1` reports a stage that did not run as skipped rather than passed.
+
+The static checks are the half a cloud machine can run, so [they run on every push](.github/workflows/checks.yml). Everything they cover fails silently by nature: nothing there breaks a build, which is exactly why it needs checking.
+
 ## Extending Uplink with your own tools
 
 Other plugins can add project-specific tools without forking Uplink. Implement [`IUplinkToolProvider`](Plugin/Uplink/Source/UplinkEditor/Public/UplinkToolProvider.h), register it as a modular feature, and your tools appear alongside the built-ins, late-loading plugins included. The header has a complete example.
@@ -154,7 +166,7 @@ Other plugins can add project-specific tools without forking Uplink. Implement [
 ```
 Plugin/Uplink/     the UE editor plugin (C++)
 bridge/            Node stdio MCP server (optional)
-scripts/           build, project-linking and scenario-running helpers (PowerShell)
+scripts/           build, project-linking, checking and scenario-running helpers (PowerShell)
 scenarios/         runnable proof - a regression suite in the tool's own format
 CHANGELOG.md       what changed, and what changed behaviour rather than adding to it
 TOOLS.md           full tool reference (parameters, conventions, security model)

@@ -20,7 +20,61 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   zero *before* generation starts, and projecting a point onto the mesh succeeds
   when there is mesh merely near it.
 
+- `level_open` and `level_new`, which open a level and then confirm the editor
+  is on it. Going through `LevelEditorSubsystem` directly has a trap in it:
+  `NewLevel` writes the asset and returns true without making it the level
+  being edited, so every actor placed afterwards lands in whatever level was
+  already open, the new one saves empty, and not one call reports a problem.
+  Both tools verify where the editor actually ended up and fail if it is
+  somewhere else.
+
+- `scripts/check_repo.ps1`, and a GitHub Actions workflow that runs it on every
+  push. Fifteen static checks that need no engine and finish in seconds:
+  every tool schema parses as JSON, tool names are unique, every scenario step
+  names a real tool and passes only parameters that tool declares, the trait
+  table has no orphans, TOOLS.md documents every tool and its count is true,
+  and the version is the same number in all four places that carry it. These
+  all rot the same way — the code keeps working while something written beside
+  it stops being true — so a build gate never sees any of them. `scripts/ci.ps1`
+  runs the checks, the dual-engine build and the scenario suite in one command,
+  and reports a stage that did not run as skipped rather than passed.
+
 ### Fixed
+- `set_property` verifies the value survived and refuses when it did not. A
+  Blueprint variable that is not instance editable is put back by the actor's
+  construction scripts on the way out of `PostEditChangeProperty`, and the
+  write, the change event and the dirty flag all succeed on the way past — so
+  the call reported success and the number was the old one. The read-back goes
+  through a fresh resolve rather than the address written to, because rerunning
+  the construction scripts rebuilds components and that address may no longer
+  belong to anything. The refusal names the cause and the fix.
+
+- `save` no longer reports failure for an unnamed `/Temp/` level. It is a
+  scratch level the editor is holding, it has no file to write to, and it is
+  almost never what the caller was saving — one turned an otherwise complete
+  save red. Those packages are listed separately in `unnamed`.
+
+- The `world` parameter is declared the same way on all 23 tools that take one.
+  Fifteen of them declared `enum: [editor, pie]`, which the schema validator
+  enforces, so they refused the very ids `worlds` exists to hand out: passing
+  `"pie:1"` to name one client in a multi-client session was rejected before
+  the resolver ever saw it, on `get_property`, `call_function`, `click_widget`,
+  `console_command` and `actor_components` among others, while the eight tools
+  without the enum accepted it. Nothing is lost by removing it — an unknown
+  world was already refused at resolve time with a better message, naming the
+  worlds that do exist.
+
+- `get_property`, `set_property`, `call_function` and `observe` report which
+  worlds exist when the one named does not. The resolver already produced that
+  line; the object lookup that ran next overwrote it with "no world available
+  to search for the actor", so the diagnosis was computed and then discarded.
+  Only visible once the `world` enum stopped rejecting those ids earlier.
+
+- `build_all.ps1` no longer reports a pass for a build that did not happen. An
+  engine that was not installed was skipped with a warning and never recorded,
+  so a machine with neither engine printed "BUILD GATE PASSED: all engines
+  compiled" having compiled nothing. A missing engine is now a failure.
+
 - `navigate_to` stops guessing when a pawn stalls on the navmesh. Standing on
   mesh and motionless was reported as "the path to the goal could not be
   built", which was an assumption - and on a real project it was the wrong one.

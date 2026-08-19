@@ -565,7 +565,7 @@ void UplinkTools::RegisterPCG(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("pcg_generate"),
 		TEXT("Run a PCG graph on an actor: adds a PCG component if the actor has none, assigns the graph, and generates. Pair with spawn_actor (/Script/PCG.PCGVolume) to get a bounded volume to populate. cleanup:true clears previously generated content instead."),
-		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string"},"graph":{"type":"string"},"cleanup":{"type":"boolean","default":false},"force":{"type":"boolean","default":true},"world":{"type":"string","enum":["editor","pie"]}},"required":["actor"]})json"),
+		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string"},"graph":{"type":"string"},"cleanup":{"type":"boolean","default":false},"force":{"type":"boolean","default":true},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["actor"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

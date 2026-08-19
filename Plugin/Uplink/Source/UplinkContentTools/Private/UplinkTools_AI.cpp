@@ -50,7 +50,7 @@ void UplinkContentTools::RegisterAI(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("ai_query"),
 		TEXT("What the AI in the running game is doing: for each AI controller, its pawn, the behaviour tree it is running, the currently active node, the active task chain, and the full blackboard. The active node answers 'why is this enemy doing that' and is not reachable any other way - it is not exposed to Blueprint. Filter with 'actor' (matches controller or pawn name/label). Normally used against PIE; an editor world has no running AI."),
-		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string","description":"Only controllers whose own name/label, or their pawn's, contains this"},"blackboard":{"type":"boolean","default":true},"max":{"type":"number","default":20},"world":{"type":"string","enum":["editor","pie"]}}})json"),
+		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string","description":"Only controllers whose own name/label, or their pawn's, contains this"},"blackboard":{"type":"boolean","default":true},"max":{"type":"number","default":20},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

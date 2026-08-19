@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 107 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 111 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -244,9 +244,13 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 
 | Tool | What it does |
 |---|---|
+| `level_open` | Open a level for editing, and confirm the editor is actually on it. The confirmation is the point: the underlying engine call reports success while the editor keeps editing the level it already had, and everything placed afterwards goes into the wrong world without one call complaining. Returns the map it ended up on. `{path}` |
+| `level_new` | Create an empty level **and switch the editor to it**. The engine's `NewLevel` does the first half only — it writes the asset, answers true, and leaves the editor where it was, so actors spawned next land somewhere else and the new level saves empty. This creates it, opens it, and verifies the editor arrived. It does not save; call `save` once the level has something in it. `{path, partitioned?}` |
 | `level_actors` | List actors with name/label/class/location. `{world?, class_contains?, name_contains?, max?}` |
+| `level_diff` | What was changed by hand in this level: every placed actor's properties that differ from its class defaults. The answer to "what is special about this level" without opening it — and the fastest way to find the one actor somebody tweaked. Editor-only components are skipped, because they are scene infrastructure rather than content. Transforms are excluded by default since almost every placed actor overrides them. `{world?, name_contains?, class_contains?, include_transforms?, max?}` |
 | `spawn_actor` | Spawn by class path (`/Script/Engine.PointLight` or `/Game/BP_X.BP_X_C`). `{class_path, location?, rotation?, label?, world?}` |
 | `spawn_batch` | Spawn up to 1000 actors in one call — scene assembly at scale. Each entry is `{mesh \| class_path, location, rotation?, scale?, label?, material?}`; `mesh` spawns a movable StaticMeshActor with optional material override. Fails fast with the failing index. `{actors:[...], world?}` |
+| `spawn_volume` | Spawn a volume that has real brush geometry. `spawn_actor` reaches a volume class perfectly well and produces one that bounds nothing: `SpawnActor` never runs the brush-builder step the editor's own placement flow does, so the actor arrives correctly named and positioned with no shape at all, and nothing reports a fault. A nav bounds volume built that way generates no navmesh; a trigger volume overlaps nobody. This builds the brush and verifies the polygons exist. `{class_path, location?, rotation?, size?, label?, world?}` |
 | `delete_actors` | Destroy actors by name/label. `{names:[...], world?}` |
 | `move_actor` | Set location/rotation/scale (any subset), physics-safe in PIE. `{actor, location?, rotation?, scale?, world?}` |
 | `viewport_screenshot` | PNG of the active viewport — the game viewport during PIE, else the editor viewport, which is **redrawn first** so a window that is not in front never returns a stale frame. `{refresh?}`. Returned as an MCP image block (HTTP: `image_base64`). |

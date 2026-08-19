@@ -20,11 +20,17 @@ if (-not (Test-Path $Uplugin)) {
 }
 
 $Failed = @()
+$Built = @()
+$Missing = @()
 foreach ($Engine in $Engines) {
     $Uat = Join-Path $Engine "Engine\Build\BatchFiles\RunUAT.bat"
     $Name = Split-Path $Engine -Leaf
     if (-not (Test-Path $Uat)) {
-        Write-Warning "Skipping $Name (RunUAT not found at $Uat)"
+        # An engine that is not installed is a gate that did not run, not a
+        # gate that passed. Skipping used to leave $Failed empty, so a machine
+        # with neither engine printed PASSED having compiled nothing.
+        Write-Host "=== $Name NOT INSTALLED (no RunUAT at $Uat) ===" -ForegroundColor Red
+        $Missing += $Name
         continue
     }
 
@@ -37,6 +43,7 @@ foreach ($Engine in $Engines) {
         $Failed += $Name
     } else {
         Write-Host "=== $Name OK ===" -ForegroundColor Green
+        $Built += $Name
     }
 }
 
@@ -45,4 +52,11 @@ if ($Failed.Count -gt 0) {
     Write-Host ("BUILD GATE FAILED: " + ($Failed -join ", ")) -ForegroundColor Red
     exit 1
 }
-Write-Host "BUILD GATE PASSED: all engines compiled." -ForegroundColor Green
+if ($Missing.Count -gt 0) {
+    Write-Host ("BUILD GATE DID NOT RUN: " + ($Missing -join ", ") + " not installed.") -ForegroundColor Red
+    Write-Host "Pass -Engines with the paths you do have, or install the missing engine." -ForegroundColor Red
+    exit 1
+}
+Write-Host ("BUILD GATE PASSED: " + ($Built -join ", ") + " compiled.") -ForegroundColor Green
+
+exit 0

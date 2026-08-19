@@ -74,12 +74,19 @@ void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("set_property"),
 		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value', matching get_property. In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit. A named object reference that resolves to nothing is refused rather than written as null."),
-		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"world":{"type":"string","enum":["editor","pie"]}},"required":["property","value"]})json"),
+		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property","value"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FString Error;
 			UWorld* World = Ctx.ResolveWorld(Error);
+			if (!Error.IsEmpty())
+			{
+				// ResolveWorld names the world ids that do exist. ResolveObject
+				// overwrites Error with a generic line, so an explicitly named
+				// world that does not resolve has to be reported here.
+				return FUplinkToolResult::Error(Error);
+			}
 			UObject* Object = ResolveObject(Ctx.Params, World, Error);
 			if (!Object)
 			{

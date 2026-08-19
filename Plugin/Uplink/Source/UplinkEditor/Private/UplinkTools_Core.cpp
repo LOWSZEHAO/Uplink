@@ -58,7 +58,7 @@ void UplinkTools::RegisterCore(FUplinkToolRegistry& Registry, FUplinkLogCapture&
 	Registry.RegisterQuick(
 		TEXT("console_command"),
 		TEXT("Run an Unreal console command (e.g. 'stat fps', 'ke * ...', 'open MapName') and return its captured output. Runs against the PIE world when one is active unless world='editor'."),
-		TEXT(R"json({"type":"object","properties":{"command":{"type":"string","description":"The console command line"},"world":{"type":"string","enum":["editor","pie"]}},"required":["command"]})json"),
+		TEXT(R"json({"type":"object","properties":{"command":{"type":"string","description":"The console command line"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["command"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{

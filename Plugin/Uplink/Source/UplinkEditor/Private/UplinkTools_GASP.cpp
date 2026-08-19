@@ -202,7 +202,7 @@ void UplinkTools::RegisterGASP(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("motionmatch_debug"),
 		TEXT("Read the live motion-matching state off a character in the running game: which pose search database(s) the anim node is currently searching, plus any motion-matching values the anim blueprint exposes. Answers 'why is it playing that animation?' during a PIE session. Pair with pie_start."),
-		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string","description":"Actor name/label; defaults to the player pawn"},"world":{"type":"string","enum":["editor","pie"]},"max_values":{"type":"number","default":40}},"required":[]})json"),
+		TEXT(R"json({"type":"object","properties":{"actor":{"type":"string","description":"Actor name/label; defaults to the player pawn"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"},"max_values":{"type":"number","default":40}},"required":[]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
