@@ -10,6 +10,7 @@
 #include "LevelEditorViewport.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInterface.h"
@@ -40,13 +41,123 @@ namespace
 			TEXT("no actor named '%s' in this world. Actors here: %s"),
 			*Wanted, Names.Num() ? *FString::Join(Names, TEXT(", ")) : TEXT("(none)"));
 	}
+
+	/**
+	 * Exact name or exact label, and nothing else.
+	 *
+	 * The shared FindActor falls back to a label substring, which is a helpful
+	 * guess for a tool that reads and a loaded gun for one that destroys:
+	 * asking to delete "Cube" in a level that only has "Cube_Wall_01" would
+	 * take the wall and report it as the actor asked for. The near miss is
+	 * handed back instead, so the caller can name it deliberately.
+	 */
+	AActor* FindActorExact(UWorld* World, const FString& NameOrLabel, FString& OutNearMiss)
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (Actor->GetName() == NameOrLabel)
+			{
+				return Actor;
+			}
+#if WITH_EDITOR
+			const FString Label = Actor->GetActorLabel();
+			if (Label == NameOrLabel)
+			{
+				return Actor;
+			}
+			if (OutNearMiss.IsEmpty() && Label.Contains(NameOrLabel))
+			{
+				OutNearMiss = Label;
+			}
+#endif
+		}
+		return nullptr;
+	}
+
+	/** Every collision profile the project defines, so a refusal says what to type. */
+	FString DescribeCollisionProfiles()
+	{
+		TArray<TSharedPtr<FName>> Names;
+		UCollisionProfile::GetProfileNames(Names);
+		TArray<FString> Flat;
+		for (const TSharedPtr<FName>& Name : Names)
+		{
+			if (Name.IsValid())
+			{
+				Flat.Add(Name->ToString());
+			}
+		}
+		return Flat.Num() ? FString::Join(Flat, TEXT(", ")) : TEXT("(none)");
+	}
+
+	/** Channel names as this project spells them - engine channels plus any it renamed. */
+	FString DescribeCollisionChannels()
+	{
+		TArray<FString> Names;
+		if (const UCollisionProfile* Profiles = UCollisionProfile::Get())
+		{
+			for (int32 Index = 0; Index < ECC_MAX; ++Index)
+			{
+				const FString Name = Profiles->ReturnChannelNameFromContainerIndex(Index).ToString();
+				// A channel the project has not claimed keeps its placeholder
+				// enum name, and the engine's own six are reserved. Listing two
+				// dozen of those buries the handful that are real.
+				if (Name.IsEmpty() || Name == TEXT("None") || Name.Contains(TEXT("Deprecated"))
+					|| Name.StartsWith(TEXT("GameTraceChannel")) || Name.StartsWith(TEXT("EngineTraceChannel")))
+				{
+					continue;
+				}
+				Names.Add(Name);
+			}
+		}
+		return Names.Num() ? FString::Join(Names, TEXT(", ")) : TEXT("(none)");
+	}
+
+	/**
+	 * A trace channel by whatever name the caller has actually seen.
+	 *
+	 * StaticEnum only knows ECC_GameTraceChannel2; the project renamed that to
+	 * Azr_Trace in DefaultEngine.ini and that rename is the only name in the
+	 * .ini, in the details panel, or in anyone's head. The display-name table
+	 * is where the two meet.
+	 */
+	bool ResolveCollisionChannel(const FString& Name, ECollisionChannel& OutChannel)
+	{
+		if (const UEnum* ChannelEnum = StaticEnum<ECollisionChannel>())
+		{
+			// Accept both the friendly names and the raw ECC_ enum names.
+			int64 Value = ChannelEnum->GetValueByNameString(FString::Printf(TEXT("ECC_%s"), *Name));
+			if (Value == INDEX_NONE)
+			{
+				Value = ChannelEnum->GetValueByNameString(Name);
+			}
+			if (Value >= 0 && Value < static_cast<int64>(ECC_MAX))
+			{
+				OutChannel = static_cast<ECollisionChannel>(Value);
+				return true;
+			}
+		}
+		if (const UCollisionProfile* Profiles = UCollisionProfile::Get())
+		{
+			for (int32 Index = 0; Index < ECC_MAX; ++Index)
+			{
+				if (Profiles->ReturnChannelNameFromContainerIndex(Index).ToString() == Name)
+				{
+					OutChannel = static_cast<ECollisionChannel>(Index);
+					return true;
+				}
+			}
+		}
+		return false;
+	}
 }
 
 void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("worlds"),
-		TEXT("List every live world and the id that addresses it: the level being edited ('editor'), one per PIE instance ('pie:0', 'pie:1' when playing as several clients), and the preview world behind an open asset editor ('preview:World_3'). Pass an id as the 'world' parameter of any world tool to hit exactly that one - 'pie' on its own only ever means the instance currently in play. 'is_default' marks the world an omitted 'world' goes to right now."),
+		TEXT("List every live world and the id that addresses it: the level being edited ('editor'), one per PIE instance ('pie:0', 'pie:1' when playing as several clients), the preview world behind an open asset editor ('preview:World_3'), and anything else the engine is holding a world context for ('game:', 'inactive:'). Pass an id as the 'world' parameter of any world tool to hit exactly that one - 'pie' on its own only ever means the instance currently in play. 'is_default' marks the world an omitted 'world' goes to right now."),
 		TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -93,7 +204,7 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 	Registry.RegisterQuick(
 		TEXT("level_actors"),
 		TEXT("List actors in the current world (PIE world when a session is active, else the editor world). Supports substring filters."),
-		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"},"class_contains":{"type":"string"},"name_contains":{"type":"string","description":"Matches actor name OR editor label"},"max":{"type":"number","default":200}}})json"),
+		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"},"class_contains":{"type":"string","description":"Substring of the class PATH, e.g. 'StaticMeshActor' or '/Game/BP_'"},"name_contains":{"type":"string","description":"Matches actor name OR editor label"},"max":{"type":"number","default":200,"description":"Rows returned, capped at 2000; 'total_matching' keeps counting past it and 'truncated' says the list was cut"}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -179,11 +290,14 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			AActor* Actor = World->SpawnActor<AActor>(Class, Location, Rotation, SpawnParams);
 			if (!Actor)
 			{
-				return FUplinkToolResult::Error(TEXT("SpawnActor failed"));
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("the engine would not spawn a %s. An abstract class, an editor-only class, or one whose Blueprint does not compile cannot be placed - check it opens in the editor first."),
+					*Class->GetName()));
 			}
 
-#if WITH_EDITOR
 			const FString Label = GetString(Ctx.Params, TEXT("label"));
+			const bool bLabelDropped = !Label.IsEmpty() && Ctx.IsPieWorld();
+#if WITH_EDITOR
 			if (!Label.IsEmpty() && !Ctx.IsPieWorld())
 			{
 				Actor->SetActorLabel(Label);
@@ -196,13 +310,21 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("name"), Actor->GetName());
+#if WITH_EDITOR
+			// The label as it ended up, not as it was asked for. A caller that
+			// then looks the actor up by the label it passed needs to see that
+			// the play world kept the spawn name instead.
+			Data->SetStringField(TEXT("label"), Actor->GetActorLabel());
+#endif
 			Data->SetObjectField(TEXT("location"), VectorToJson(Actor->GetActorLocation()));
-			return FUplinkToolResult::Ok(Data);
+			return FUplinkToolResult::Ok(Data, bLabelDropped
+				? FString::Printf(TEXT("spawned as '%s'; 'label' was ignored because labels exist only in the editor world - address this actor by its name"), *Actor->GetName())
+				: FString());
 		});
 
 	Registry.RegisterQuick(
 		TEXT("delete_actors"),
-		TEXT("Destroy actors by exact name or editor label."),
+		TEXT("Destroy actors by exact name or editor label - a partial match is never guessed at, because the guess is unrecoverable. 'destroyed' counts the actors actually destroyed; a name that matched nothing comes back in 'not_found', and an actor the engine would not destroy in 'refused'."),
 		TEXT(R"json({"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["names"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -222,17 +344,34 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 
 			int32 Destroyed = 0;
 			TArray<FString> Missing;
+			TArray<FString> NearMisses;
+			TArray<FString> Refused;
 			for (const TSharedPtr<FJsonValue>& NameValue : *Names)
 			{
 				const FString Name = NameValue->AsString();
-				if (AActor* Actor = FindActor(World, Name))
+				FString NearMiss;
+				AActor* Actor = FindActorExact(World, Name, NearMiss);
+				if (!Actor)
 				{
-					World->DestroyActor(Actor);
+					Missing.Add(Name);
+					if (!NearMiss.IsEmpty())
+					{
+						NearMisses.Add(FString::Printf(TEXT("'%s' -> '%s'"), *Name, *NearMiss));
+					}
+					continue;
+				}
+				// The engine refuses some destroys outright - the WorldSettings
+				// actor always, and in a play world anything this instance has
+				// no authority over. Counting the attempt as a destruction is
+				// how "destroyed 300" comes back from a level that still holds
+				// them.
+				if (World->DestroyActor(Actor))
+				{
 					++Destroyed;
 				}
 				else
 				{
-					Missing.Add(Name);
+					Refused.Add(Name);
 				}
 			}
 			if (Destroyed > 0 && !Ctx.IsPieWorld())
@@ -251,7 +390,30 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				}
 				Data->SetArrayField(TEXT("not_found"), MissingJson);
 			}
-			return FUplinkToolResult::Ok(Data);
+			if (Refused.Num() > 0)
+			{
+				TArray<TSharedPtr<FJsonValue>> RefusedJson;
+				for (const FString& Name : Refused)
+				{
+					RefusedJson.Add(MakeShared<FJsonValueString>(Name));
+				}
+				Data->SetArrayField(TEXT("refused"), RefusedJson);
+			}
+
+			TArray<FString> Notes;
+			if (Refused.Num() > 0)
+			{
+				Notes.Add(FString::Printf(
+					TEXT("the engine refused to destroy %s - the world settings actor cannot be deleted, and in a play world neither can an actor this instance has no authority over"),
+					*FString::Join(Refused, TEXT(", "))));
+			}
+			if (NearMisses.Num() > 0)
+			{
+				Notes.Add(FString::Printf(
+					TEXT("names must match an actor name or editor label exactly; the closest thing in this world was %s"),
+					*FString::Join(NearMisses, TEXT(", "))));
+			}
+			return FUplinkToolResult::Ok(Data, Notes.Num() ? FString::Join(Notes, TEXT("; ")) : FString());
 		});
 
 	Registry.RegisterQuick(
@@ -276,21 +438,56 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			}
 
 			FVector Location;
-			if (TryGetVector(Ctx.Params, TEXT("location"), Location))
+			FRotator Rotation;
+			FVector Scale;
+			const bool bSetLocation = TryGetVector(Ctx.Params, TEXT("location"), Location);
+			const bool bSetRotation = TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation);
+			const bool bSetScale = TryGetVector(Ctx.Params, TEXT("scale"), Scale);
+			const bool bMoving = bSetLocation || bSetRotation || bSetScale;
+			if (bMoving && !Actor->GetRootComponent())
+			{
+				// SetActorLocation on a rootless actor returns false and does
+				// nothing, which used to read back as a successful move to the
+				// place it never went.
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' has no root component, so it has no transform to move. Move the actor that owns it, or add a scene component as its root."),
+					*Actor->GetName()));
+			}
+
+			const bool bEditorWorld = !Ctx.IsPieWorld();
+#if WITH_EDITOR
+			// What a drag in the viewport does first. Without it the change
+			// sits outside the open transaction, so edit_history cannot walk it
+			// back, and in a one-file-per-actor level the actor's own package
+			// is never marked dirty - so save writes the level and loses the
+			// move.
+			if (bMoving && bEditorWorld)
+			{
+				Actor->Modify();
+			}
+#endif
+			if (bSetLocation)
 			{
 				Actor->SetActorLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
 			}
-			FRotator Rotation;
-			if (TryGetRotator(Ctx.Params, TEXT("rotation"), Rotation))
+			if (bSetRotation)
 			{
 				Actor->SetActorRotation(Rotation, ETeleportType::TeleportPhysics);
 			}
-			FVector Scale;
-			if (TryGetVector(Ctx.Params, TEXT("scale"), Scale))
+			if (bSetScale)
 			{
 				Actor->SetActorScale3D(Scale);
 			}
-			if (!Ctx.IsPieWorld())
+#if WITH_EDITOR
+			// The other half of the viewport's move: a Blueprint actor that
+			// builds its components from its transform is otherwise left
+			// showing the old one until something else rebuilds it.
+			if (bMoving && bEditorWorld)
+			{
+				Actor->PostEditMove(/*bFinished=*/true);
+			}
+#endif
+			if (bEditorWorld)
 			{
 				World->MarkPackageDirty();
 			}
@@ -303,8 +500,8 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("spawn_batch"),
-		TEXT("Spawn many actors in one call - the scene-assembly workhorse. Each entry: {mesh: static mesh path (spawns a StaticMeshActor with it) OR class_path, location, rotation?, scale?, label?, material?}. A city block, a prop set, or a whole layout lands in a single request. Returns each spawned actor's name."),
-		TEXT(R"json({"type":"object","properties":{"actors":{"type":"array","items":{"type":"object"}},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["actors"]})json"),
+		TEXT("Spawn up to 1000 actors in one call - the scene-assembly workhorse. Each entry: {mesh: static mesh path (spawns a movable StaticMeshActor carrying it) OR class_path, never both, location, rotation?, scale?, label?, material? (slot 0 only)}. A city block, a prop set, or a whole layout lands in a single request. Returns every spawned actor's name in 'spawned'. A bad entry stops the batch rather than being skipped, and the refusal still carries 'spawned' plus 'failed_index', so the actors already placed can be named and cleaned up with delete_actors."),
+		TEXT(R"json({"type":"object","properties":{"actors":{"type":"array","maxItems":1000,"items":{"type":"object"}},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["actors"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -321,17 +518,60 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			}
 			if (Specs->Num() > 1000)
 			{
-				return FUplinkToolResult::Error(TEXT("max 1000 actors per call"));
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("%d actors in one call; the ceiling is 1000. Split the layout across several calls."), Specs->Num()));
 			}
 
 			UClass* StaticMeshActorClass = StaticLoadClass(AActor::StaticClass(), nullptr, TEXT("/Script/Engine.StaticMeshActor"));
+			if (!StaticMeshActorClass)
+			{
+				// Nothing below can honour a 'mesh' entry without it, and
+				// SpawnActor(nullptr) would come back as a per-entry failure
+				// blaming the caller's data for an engine problem.
+				return FUplinkToolResult::Error(TEXT("StaticMeshActor class is not loadable in this editor, so 'mesh' entries cannot be spawned - use 'class_path' instead"));
+			}
 			TArray<TSharedPtr<FJsonValue>> Spawned;
+
+			// A batch that stops halfway has already changed the level. The
+			// count alone leaves those actors in the world with nothing able to
+			// address them, so the failure carries the same 'spawned' list a
+			// success would - delete_actors takes it as-is.
+			auto Abandon = [&](int32 Index, const FString& Reason) -> FUplinkToolResult
+			{
+				if (Spawned.Num() > 0 && !Ctx.IsPieWorld())
+				{
+					World->MarkPackageDirty();
+				}
+				TSharedRef<FJsonObject> Partial = MakeShared<FJsonObject>();
+				Partial->SetArrayField(TEXT("spawned"), Spawned);
+				Partial->SetNumberField(TEXT("count"), Spawned.Num());
+				Partial->SetNumberField(TEXT("failed_index"), Index);
+				FUplinkToolResult Failure = FUplinkToolResult::Error(FString::Printf(
+					TEXT("actors[%d]: %s - %d spawned before the failure and left in the world, named in 'spawned'; pass that list to delete_actors to undo the half-batch"),
+					Index, *Reason, Spawned.Num()));
+				Failure.Data = Partial;
+				return Failure;
+			};
+
+			// The half-configured actor for the failing entry goes back out, so
+			// 'spawned' is exactly what is left behind. When the engine will not
+			// take it, it is still standing in the level, so it joins the list
+			// rather than disappearing from the caller's cleanup as well.
+			auto AbandonEntry = [&](AActor* Placed, int32 Index, const FString& Reason) -> FUplinkToolResult
+			{
+				if (!World->DestroyActor(Placed))
+				{
+					Spawned.Add(MakeShared<FJsonValueString>(Placed->GetName()));
+				}
+				return Abandon(Index, Reason);
+			};
+
 			for (int32 Index = 0; Index < Specs->Num(); ++Index)
 			{
 				const TSharedPtr<FJsonObject>* Spec = nullptr;
 				if (!(*Specs)[Index]->TryGetObject(Spec) || !Spec->IsValid())
 				{
-					return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d] is not an object - %d spawned before the failure"), Index, Spawned.Num()));
+					return Abandon(Index, TEXT("entry is not an object"));
 				}
 
 				FVector Location = FVector::ZeroVector;
@@ -340,14 +580,26 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				TryGetRotator(*Spec, TEXT("rotation"), Rotation);
 
 				const FString MeshPath = GetString(*Spec, TEXT("mesh"));
+				const FString ClassPath = GetString(*Spec, TEXT("class_path"));
 				UClass* Class = StaticMeshActorClass;
 				if (MeshPath.IsEmpty())
 				{
-					Class = StaticLoadClass(AActor::StaticClass(), nullptr, *GetString(*Spec, TEXT("class_path")));
+					Class = StaticLoadClass(AActor::StaticClass(), nullptr, *ClassPath);
 					if (!Class)
 					{
-						return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d]: provide 'mesh' or a valid 'class_path' - %d spawned before the failure"), Index, Spawned.Num()));
+						return Abandon(Index, ClassPath.IsEmpty()
+							? FString(TEXT("provide 'mesh' or 'class_path'"))
+							: FString::Printf(TEXT("class not found: %s (a Blueprint class needs the _C suffix)"), *ClassPath));
 					}
+				}
+				else if (!ClassPath.IsEmpty())
+				{
+					// 'mesh' used to win in silence, so a batch asking for
+					// BP_Barrel actors carrying a mesh override came back as a
+					// pile of plain StaticMeshActors reported as spawned.
+					return Abandon(Index, FString::Printf(
+						TEXT("'mesh' and 'class_path' both given ('%s' and '%s'); 'mesh' spawns a StaticMeshActor, so pick one - to put a mesh on your own class, spawn it and set the mesh with set_property"),
+						*MeshPath, *ClassPath));
 				}
 
 				FActorSpawnParameters SpawnParams;
@@ -355,7 +607,8 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				AActor* Actor = World->SpawnActor<AActor>(Class, Location, Rotation, SpawnParams);
 				if (!Actor)
 				{
-					return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d]: spawn failed - %d spawned before the failure"), Index, Spawned.Num()));
+					return Abandon(Index, FString::Printf(
+						TEXT("the engine would not spawn a %s (an abstract or editor-only class cannot be placed)"), *Class->GetName()));
 				}
 
 				FVector Scale;
@@ -372,31 +625,37 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 #endif
 				if (!MeshPath.IsEmpty())
 				{
-					if (UStaticMeshComponent* MeshComponent = Actor->FindComponentByClass<UStaticMeshComponent>())
+					UStaticMeshComponent* MeshComponent = Actor->FindComponentByClass<UStaticMeshComponent>();
+					if (!MeshComponent)
 					{
-						UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
-						if (!Mesh)
+						return AbandonEntry(Actor, Index, FString::Printf(
+							TEXT("a %s has no static mesh component to put '%s' on"), *Class->GetName(), *MeshPath));
+					}
+
+					UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+					if (!Mesh)
+					{
+						// The actor for this entry exists already, so it goes
+						// with the refusal: an empty StaticMeshActor left behind
+						// and absent from 'spawned' is invisible to the caller
+						// and to the cleanup it would run.
+						return AbandonEntry(Actor, Index, FString::Printf(TEXT("mesh not found: %s"), *MeshPath));
+					}
+					MeshComponent->SetMobility(EComponentMobility::Movable);
+					MeshComponent->SetStaticMesh(Mesh);
+					const FString MaterialPath = GetString(*Spec, TEXT("material"));
+					if (!MaterialPath.IsEmpty())
+					{
+						UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+						if (!Material)
 						{
-							return FUplinkToolResult::Error(FString::Printf(TEXT("actors[%d]: mesh not found: %s"), Index, *MeshPath));
+							// Same policy as the mesh above. Skipping this
+							// quietly produced a batch of default-grey actors
+							// reported as spawned, which is exactly the kind
+							// of success-for-work-not-done this refuses to do.
+							return AbandonEntry(Actor, Index, FString::Printf(TEXT("material not found: %s"), *MaterialPath));
 						}
-						MeshComponent->SetMobility(EComponentMobility::Movable);
-						MeshComponent->SetStaticMesh(Mesh);
-						const FString MaterialPath = GetString(*Spec, TEXT("material"));
-						if (!MaterialPath.IsEmpty())
-						{
-							UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
-							if (!Material)
-							{
-								// Same policy as the mesh above. Skipping this
-								// quietly produced a batch of default-grey actors
-								// reported as spawned, which is exactly the kind
-								// of success-for-work-not-done this refuses to do.
-								return FUplinkToolResult::Error(FString::Printf(
-									TEXT("actors[%d]: material not found: %s (%d spawned before the failure)"),
-									Index, *MaterialPath, Spawned.Num()));
-							}
-							MeshComponent->SetMaterial(0, Material);
-						}
+						MeshComponent->SetMaterial(0, Material);
 					}
 				}
 				Spawned.Add(MakeShared<FJsonValueString>(Actor->GetName()));
@@ -475,13 +734,21 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			RotJson->SetNumberField(TEXT("yaw"), ViewRotation.Yaw);
 			RotJson->SetNumberField(TEXT("roll"), ViewRotation.Roll);
 			Data->SetObjectField(TEXT("rotation"), RotJson);
-			return FUplinkToolResult::Ok(Data);
+
+			// The transform below is the editor camera's, and while the game is
+			// playing in that viewport the view comes from the player instead.
+			// The numbers are real and take effect when play stops; a
+			// screenshot taken now will not show them.
+			const bool bPlaying = GEditor->PlayWorld != nullptr;
+			return FUplinkToolResult::Ok(Data, bPlaying
+				? TEXT("a PIE session is running, so the level viewport is showing the game camera - this move applies to the editor camera and will not be visible until play stops. Use player_teleport to move the game camera.")
+				: FString());
 		});
 
 	Registry.RegisterQuick(
 		TEXT("trace"),
-		TEXT("Ask the physics scene what is there. Casts a ray (or a swept sphere/box/capsule with 'radius'/'half_height') and reports what it hit: actor, component, impact point, normal, distance, physical material. 'to' or 'direction'+'distance' set the end point. 'profile' traces by collision profile (e.g. 'Azr_Collision'), otherwise 'channel' names a trace channel ('Visibility', 'Camera', or a project channel). 'multi' returns every hit along the ray instead of the first. Use this instead of guessing geometry - a downward trace is how you find ground height under a point."),
-		TEXT(R"json({"type":"object","properties":{"from":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"to":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"direction":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"distance":{"type":"number","default":10000},"shape":{"type":"string","enum":["line","sphere","box","capsule"],"default":"line"},"radius":{"type":"number","default":50},"half_height":{"type":"number","default":100},"channel":{"type":"string","default":"Visibility"},"profile":{"type":"string"},"multi":{"type":"boolean","default":false},"complex":{"type":"boolean","default":false},"ignore_actors":{"type":"array","items":{"type":"string"}},"draw_seconds":{"type":"number","default":0,"description":"Draw the trace in the world for this many seconds"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["from"]})json"),
+		TEXT("Ask the physics scene what is there. Casts a ray (or a swept sphere/box/capsule with 'radius'/'half_height') and reports what it hit: actor, component, impact point, normal, distance, physical material. 'to' or 'direction'+'distance' set the end point. 'profile' traces by collision profile (e.g. 'Azr_Collision'), otherwise 'channel' names a trace channel ('Visibility', 'Camera', or a project channel by the name the project gave it). A profile, channel or ignore_actors name this project does not have is refused and listed back, never swapped for a default - a trace that answers on the wrong channel is worse than no answer. 'multi' returns every hit along the ray instead of the first. Use this instead of guessing geometry - a downward trace is how you find ground height under a point."),
+		TEXT(R"json({"type":"object","properties":{"from":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"to":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"direction":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}},"distance":{"type":"number","default":10000},"shape":{"type":"string","enum":["line","sphere","box","capsule"],"default":"line"},"radius":{"type":"number","default":50,"description":"Sphere/capsule radius; for a box, the X and Y half-extent"},"half_height":{"type":"number","default":100,"description":"Capsule half-height; for a box, the Z half-extent (defaults to 'radius')"},"channel":{"type":"string","default":"Visibility"},"profile":{"type":"string"},"multi":{"type":"boolean","default":false},"complex":{"type":"boolean","default":false},"ignore_actors":{"type":"array","items":{"type":"string"}},"draw_seconds":{"type":"number","default":0,"description":"Draw the trace in the world for this many seconds (needs a realtime viewport to be visible)"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["from"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -522,13 +789,21 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				for (const TSharedPtr<FJsonValue>& Entry : *IgnoreList)
 				{
 					FString ActorName;
-					if (Entry.IsValid() && Entry->TryGetString(ActorName))
+					if (!Entry.IsValid() || !Entry->TryGetString(ActorName) || ActorName.IsEmpty())
 					{
-						if (AActor* Found = FindActor(World, ActorName))
-						{
-							Query.AddIgnoredActor(Found);
-						}
+						continue;
 					}
+					AActor* Found = FindActor(World, ActorName);
+					if (!Found)
+					{
+						// A name that resolves to nothing used to be dropped,
+						// and the trace then answered a different question from
+						// the one asked - reporting a hit on the very actor the
+						// caller had excluded.
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("ignore_actors: %s"), *DescribeActorsNearby(World, ActorName)));
+					}
+					Query.AddIgnoredActor(Found);
 				}
 			}
 
@@ -564,21 +839,30 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 			const FString Profile = GetString(Ctx.Params, TEXT("profile"));
 			const FString ChannelName = GetString(Ctx.Params, TEXT("channel"), TEXT("Visibility"));
 			ECollisionChannel Channel = ECC_Visibility;
-			if (Profile.IsEmpty())
+			if (!Profile.IsEmpty())
 			{
-				// Accept both the friendly names and the raw ECC_ enum names.
-				const UEnum* ChannelEnum = StaticEnum<ECollisionChannel>();
-				int64 Value = ChannelEnum ? ChannelEnum->GetValueByNameString(FString::Printf(TEXT("ECC_%s"), *ChannelName)) : INDEX_NONE;
-				if (Value == INDEX_NONE && ChannelEnum)
+				// The engine does not refuse a profile it has never heard of:
+				// UWorld logs a warning, quietly traces on WorldStatic with
+				// default responses, and hands back an answer that looks like
+				// the project's collision setup and is not.
+				ECollisionChannel ProfileChannel = ECC_Visibility;
+				FCollisionResponseParams ProfileResponses;
+				if (!UCollisionProfile::GetChannelAndResponseParams(FName(*Profile), ProfileChannel, ProfileResponses))
 				{
-					Value = ChannelEnum->GetValueByNameString(ChannelName);
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no collision profile named '%s' in this project. Profiles here: %s. Pass 'channel' instead to trace by channel."),
+						*Profile, *DescribeCollisionProfiles()));
 				}
-				if (Value == INDEX_NONE)
-				{
-					Value = UEngineTypes::ConvertToCollisionChannel(
-						ChannelName == TEXT("Camera") ? ETraceTypeQuery::TraceTypeQuery2 : ETraceTypeQuery::TraceTypeQuery1);
-				}
-				Channel = static_cast<ECollisionChannel>(Value);
+			}
+			else if (!ResolveCollisionChannel(ChannelName, Channel))
+			{
+				// Falling back to Visibility here was the same failure in
+				// another costume: every trace on a project channel whose name
+				// the enum does not carry silently ran on Visibility and
+				// reported its hits as that channel's.
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no collision channel named '%s' in this project. Channels here: %s. A renamed project channel also answers to its raw name, e.g. GameTraceChannel1."),
+					*ChannelName, *DescribeCollisionChannels()));
 			}
 
 			TArray<FHitResult> Hits;

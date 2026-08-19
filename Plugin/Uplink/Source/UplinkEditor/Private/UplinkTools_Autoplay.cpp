@@ -41,7 +41,14 @@ namespace
 		return FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
 	}
 
-	/** Every live UUserWidget that is actually on screen, in the given world. */
+	/**
+	 * Every live UUserWidget that is actually on screen, in the given world.
+	 *
+	 * IsInViewport means AddToViewport or AddToPlayerScreen and nothing else,
+	 * so these are the screens a player is looking at - not widgets nested
+	 * inside them (walked below) and not ones drawn on a WidgetComponent in
+	 * the world, which no viewport ever sees.
+	 */
 	void GatherLiveWidgets(UWorld* World, TArray<UUserWidget*>& Out)
 	{
 		for (TObjectIterator<UUserWidget> It; It; ++It)
@@ -61,6 +68,51 @@ namespace
 			}
 		}
 	}
+
+	/**
+	 * Every UWidget under one screen, the contents of nested UserWidgets
+	 * included.
+	 *
+	 * UWidgetTree::ForEachWidget walks panels and named slots, and a nested
+	 * UserWidget is neither, so it stops dead at every sub-widget boundary. A
+	 * menu assembled from sub-widgets - which is how most of them are built -
+	 * listed its outer boxes and hid every button inside them, while
+	 * click_widget, which enumerates all UserWidgets, could click them
+	 * perfectly well. Seen keeps a widget reachable from two screens to one
+	 * row and stops a cycle from recursing forever.
+	 *
+	 * Visit is handed the UserWidget whose tree the widget actually lives in,
+	 * not the outermost screen: that is the one carrying the variables and
+	 * functions a caller would go on to read, and for a button inside a row
+	 * widget the two are not the same object.
+	 */
+	void ForEachWidgetInScreen(UUserWidget* Screen, TSet<UWidget*>& Seen, TFunctionRef<void(UWidget*, UUserWidget*)> Visit)
+	{
+		if (!Screen || !Screen->WidgetTree)
+		{
+			return;
+		}
+
+		TArray<UUserWidget*> Nested;
+		Screen->WidgetTree->ForEachWidget([Screen, &Seen, &Nested, &Visit](UWidget* Widget)
+		{
+			if (!Widget || Seen.Contains(Widget))
+			{
+				return;
+			}
+			Seen.Add(Widget);
+			Visit(Widget, Screen);
+			if (UUserWidget* AsUserWidget = Cast<UUserWidget>(Widget))
+			{
+				Nested.Add(AsUserWidget);
+			}
+		});
+
+		for (UUserWidget* Child : Nested)
+		{
+			ForEachWidgetInScreen(Child, Seen, Visit);
+		}
+	}
 }
 
 void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
@@ -70,7 +122,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	// ------------------------------------------------------------------
 	InRegistry.RegisterQuick(
 		TEXT("project_entry"),
-		TEXT("How to start this project the way a player does. Reports the game's default map, the editor startup map, the global default game mode, the current level's own game-mode override, and every map in the project split into persistent and streamed. Read this FIRST on an unfamiliar project: starting play on a gameplay map directly can give an empty world, because a game whose menu loads the level expects to be entered through that menu - the difference showed up as 40 actors versus 1917 on the same map."),
+		TEXT("How to start this project the way a player does. Reports the game's default map, the editor startup map, the global default game mode, the current level's own game-mode override and running game mode, and every map under /Game (maps that ship inside a plugin are not listed). 'streamedLevelCount' counts the sublevels of the current world only - use streaming_status to see them. Read this FIRST on an unfamiliar project: starting play on a gameplay map directly can give an empty world, because a game whose menu loads the level expects to be entered through that menu - the difference showed up as 40 actors versus 1917 on the same map."),
 		TEXT(R"json({"type":"object","properties":{"max_maps":{"type":"number","default":40}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -99,9 +151,16 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				}
 				Data->SetNumberField(TEXT("streamedLevelCount"), World->GetStreamingLevels().Num());
 			}
+			else
+			{
+				// Half of this answer is about the current level, and
+				// swallowing the reason left those fields simply absent,
+				// which reads as a project that has none of them.
+				Data->SetStringField(TEXT("worldError"), WorldError);
+			}
 
-			// Every map in the project, so the caller can see what exists
-			// rather than guessing names.
+			// Every map under /Game, so the caller can see what exists rather
+			// than guessing names.
 			const int32 MaxMaps = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max_maps"), 40.0)), 1, 500);
 			FARFilter Filter;
 			Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("World")));
@@ -123,9 +182,17 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			}
 			Data->SetArrayField(TEXT("maps"), MapList);
 			Data->SetNumberField(TEXT("mapsTotal"), Maps.Num());
+			Data->SetBoolField(TEXT("truncated"), Maps.Num() > MapList.Num());
 
-			return FUplinkToolResult::Ok(Data,
-				TEXT("if the game has a menu that loads the level, start play on the menu map and let it open the gameplay level itself"));
+			// A registry still building its index answers with whatever it has
+			// so far, and a short map list is indistinguishable from a small
+			// project unless it says which one this is.
+			const bool bScanning = Registry().IsLoadingAssets();
+			Data->SetBoolField(TEXT("assetRegistryScanning"), bScanning);
+
+			return FUplinkToolResult::Ok(Data, bScanning
+				? TEXT("the asset registry is still scanning, so this map list is partial - ask again in a few seconds")
+				: TEXT("if the game has a menu that loads the level, start play on the menu map and let it open the gameplay level itself"));
 		});
 
 	// ------------------------------------------------------------------
@@ -133,7 +200,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	// ------------------------------------------------------------------
 	InRegistry.RegisterQuick(
 		TEXT("ui_live"),
-		TEXT("What UMG is on screen right now: every widget in every live UserWidget, with its class, any text it displays, screen rect, visibility, and whether it is interactive. This is how you find a menu without reading its Blueprint - the names here are what click_widget takes. Each row also carries 'object_path' for the element and 'screen_path' for the UserWidget owning it, and both are what get_property, set_property and call_function accept - so a menu you can see is also one you can read a variable off or call a function on, which matters when a widget swallows input and no key or click will advance it. A widget with a zero rect exists but is not laid out, which usually means the screen it belongs to has not been shown yet. PIE only."),
+		TEXT("What UMG is on screen right now: every widget in every UserWidget that was added to the viewport, nested sub-widgets included, with its class, any text it displays, screen rect, visibility, and whether a click could land on it ('interactive' means hit-testable and laid out; a widget set HitTestInvisible lets clicks pass straight through). This is how you find a menu without reading its Blueprint - the names here are what click_widget takes, and 'rect' is [x, y, width, height] in the same desktop pixels click_widget's 'position' takes, which are not viewport-relative screenshot pixels. UI drawn on a WidgetComponent in the world is not covered, because nothing added it to a viewport. Each row also carries 'object_path' for the element and 'screen_path' for the UserWidget whose tree it lives in - a nested sub-widget rather than the outer screen, when the element sits inside one - and both are what get_property, set_property and call_function accept - so a menu you can see is also one you can read a variable off or call a function on, which matters when a widget swallows input and no key or click will advance it. A widget with a zero rect exists but is not laid out, which usually means the screen it belongs to has not been shown yet. PIE only."),
 		TEXT(R"json({"type":"object","properties":{"contains":{"type":"string","description":"Only widgets whose name, class or text contains this"},"interactive_only":{"type":"boolean","default":false,"description":"Only widgets that accept a click"},"on_screen_only":{"type":"boolean","default":true,"description":"Skip widgets with no laid-out geometry"},"max":{"type":"number","default":80},"world":{"type":"string","enum":["editor","pie"]}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -157,6 +224,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 
 			TArray<TSharedPtr<FJsonValue>> Rows;
 			int32 Total = 0;
+			TSet<UWidget*> Seen;
 
 			for (UUserWidget* Root : Roots)
 			{
@@ -164,15 +232,9 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				{
 					continue;
 				}
-				const FString ScreenName = Root->GetName();
-				// The UserWidget itself, which is what carries the Blueprint's own
-				// variables and functions - a page index, a Next handler. The row's
-				// object_path reaches the individual element; this reaches the
-				// screen it belongs to, and they are rarely the one you want twice.
-				const FString ScreenPath = Root->GetPathName();
-				Root->WidgetTree->ForEachWidget([&](UWidget* Widget)
+				ForEachWidgetInScreen(Root, Seen, [&](UWidget* Widget, UUserWidget* Owner)
 				{
-					if (!Widget)
+					if (!Widget || !Owner)
 					{
 						return;
 					}
@@ -202,8 +264,12 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 						return;
 					}
 
-					const bool bInteractive = Widget->GetVisibility() == ESlateVisibility::Visible
-						|| Widget->GetVisibility() == ESlateVisibility::HitTestInvisible;
+					// Visible is the only hit-testable state - HitTestInvisible
+					// and SelfHitTestInvisible are the engine's words for
+					// "clicks pass through me" - and a widget with no geometry
+					// has nowhere for a click to land, so answering "what can I
+					// click" honestly takes both.
+					const bool bInteractive = bLaidOut && Widget->GetVisibility() == ESlateVisibility::Visible;
 					if (bInteractiveOnly && !bInteractive)
 					{
 						return;
@@ -218,8 +284,13 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 					TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
 					Row->SetStringField(TEXT("name"), Name);
 					Row->SetStringField(TEXT("class"), ClassName);
-					Row->SetStringField(TEXT("screen"), ScreenName);
-					Row->SetStringField(TEXT("screen_path"), ScreenPath);
+					// The UserWidget itself, which is what carries the Blueprint's
+					// own variables and functions - a page index, a Next handler.
+					// The row's object_path reaches the individual element; this
+					// reaches the widget owning it, and they are rarely the one
+					// you want twice.
+					Row->SetStringField(TEXT("screen"), Owner->GetName());
+					Row->SetStringField(TEXT("screen_path"), Owner->GetPathName());
 					// The path get_property, set_property and call_function take.
 					// Without it this tool could show you a menu it gave you no way
 					// to reach: a runtime UserWidget is outered to the transient
@@ -235,6 +306,10 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 					Row->SetStringField(TEXT("visibility"), VisibilityEnum
 						? VisibilityEnum->GetNameStringByValue(static_cast<int64>(Widget->GetVisibility()))
 						: FString());
+					// Promised by the description since this tool existed, and
+					// never actually sent: interactive_only filtered on it
+					// while every row kept the answer to itself.
+					Row->SetBoolField(TEXT("interactive"), bInteractive);
 					Row->SetBoolField(TEXT("onScreen"), bLaidOut);
 					if (bLaidOut)
 					{
@@ -333,7 +408,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	// ------------------------------------------------------------------
 	InRegistry.RegisterQuick(
 		TEXT("streaming_status"),
-		TEXT("Which sublevels are loaded, visible, or still coming. Without this an unfinished stream is indistinguishable from a broken level or an empty one - the only clue is an actor count that looks too low, which is exactly how a game that had not been entered through its menu looked."),
+		TEXT("Which sublevels are loaded, visible, or still coming. Without this an unfinished stream is indistinguishable from a broken level or an empty one - the only clue is an actor count that looks too low, which is exactly how a game that had not been entered through its menu looked. 'settled' means nothing is mid-transition, not that everything is loaded: a sublevel the game deliberately leaves unloaded is settled, and 'pending' names the ones actually moving. 'actorCount' counts the levels that are loaded now, so it climbs as they arrive."),
 		TEXT(R"json({"type":"object","properties":{"world":{"type":"string","enum":["editor","pie"]}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -347,6 +422,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 
 			int32 Loaded = 0;
 			int32 Visible = 0;
+			int32 Pending = 0;
 			TArray<TSharedPtr<FJsonValue>> Rows;
 			for (ULevelStreaming* Streaming : World->GetStreamingLevels())
 			{
@@ -358,12 +434,18 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				Row->SetStringField(TEXT("level"), Streaming->GetWorldAssetPackageName());
 				const bool bLoaded = Streaming->IsLevelLoaded();
 				const bool bVisible = Streaming->IsLevelVisible();
+				// The engine's own word for "mid-transition": loaded state does
+				// not match what was asked for, or the package is still on its
+				// way in or out.
+				const bool bPending = Streaming->IsStreamingStatePending();
 				Row->SetBoolField(TEXT("loaded"), bLoaded);
 				Row->SetBoolField(TEXT("visible"), bVisible);
 				Row->SetBoolField(TEXT("shouldBeLoaded"), Streaming->ShouldBeLoaded());
 				Row->SetBoolField(TEXT("shouldBeVisible"), Streaming->ShouldBeVisible());
+				Row->SetBoolField(TEXT("pending"), bPending);
 				Loaded += bLoaded ? 1 : 0;
 				Visible += bVisible ? 1 : 0;
+				Pending += bPending ? 1 : 0;
 				Rows.Add(MakeShared<FJsonValueObject>(Row));
 			}
 
@@ -380,10 +462,15 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			Data->SetNumberField(TEXT("loaded"), Loaded);
 			Data->SetNumberField(TEXT("visible"), Visible);
 			Data->SetNumberField(TEXT("actorCount"), ActorCount);
-			Data->SetBoolField(TEXT("settled"), Loaded == Rows.Num());
+			Data->SetNumberField(TEXT("pending"), Pending);
+			// Settled means nothing is still moving, not "everything is
+			// loaded". Comparing loaded against the sublevel count called a
+			// world unsettled forever whenever it held a sublevel the game
+			// never intends to load, which is most of them.
+			Data->SetBoolField(TEXT("settled"), Pending == 0);
 
-			return FUplinkToolResult::Ok(Data, (Rows.Num() > 0 && Loaded < Rows.Num())
-				? TEXT("sublevels are still loading, or the game has not asked for them yet - a low actor count here is not an empty level")
+			return FUplinkToolResult::Ok(Data, Pending > 0
+				? TEXT("sublevels are still coming or going - a low actor count here is not an empty level; ask again in a second")
 				: FString());
 		});
 
@@ -392,8 +479,8 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	// ------------------------------------------------------------------
 	InRegistry.RegisterQuick(
 		TEXT("input_map"),
-		TEXT("Every Enhanced Input mapping context in the project with its actions and the keys bound to them, and - during play - which contexts are actually applied to the player. Use it to find the real move/interact/confirm actions instead of searching assets by name and hoping."),
-		TEXT(R"json({"type":"object","properties":{"path_prefix":{"type":"string","default":"/Game"},"applied_only":{"type":"boolean","default":false,"description":"Only contexts currently applied to the player (PIE)"},"max":{"type":"number","default":20}}})json"),
+		TEXT("Enhanced Input mapping contexts with their actions and the keys bound to them, and - during play - which of them are actually applied to the player. Use it to find the real move/interact/confirm actions instead of searching assets by name and hoping. 'applied' is only computed for the contexts the scan covers, so a context that lives in a plugin is not merely unapplied, it is unseen: pass path_prefix '/' to scan every mounted root when the game's input comes from somewhere other than /Game."),
+		TEXT(R"json({"type":"object","properties":{"path_prefix":{"type":"string","default":"/Game","description":"Package path to scan; '/' or empty means every mounted root, plugins included"},"applied_only":{"type":"boolean","default":false,"description":"Only contexts currently applied to the player (PIE)"},"max":{"type":"number","default":20}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -404,8 +491,10 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 
 			// The live subsystem tells us which contexts are actually in force.
 			UEnhancedInputLocalPlayerSubsystem* Input = nullptr;
+			bool bPieRunning = false;
 			if (UWorld* PieWorld = GEditor ? GEditor->PlayWorld.Get() : nullptr)
 			{
+				bPieRunning = true;
 				if (const APlayerController* PC = PieWorld->GetFirstPlayerController())
 				{
 					if (ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
@@ -417,17 +506,28 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 
 			FARFilter Filter;
 			Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/EnhancedInput"), TEXT("InputMappingContext")));
-			Filter.PackagePaths.Add(FName(*PathPrefix));
-			Filter.bRecursivePaths = true;
+			// No package path at all is how the registry spells "every mounted
+			// root". The default stays /Game, but a game whose input context
+			// ships inside a plugin needs a way to be seen, and scoping the
+			// scan silently scoped the applied answer with it.
+			if (!PathPrefix.IsEmpty() && PathPrefix != TEXT("/"))
+			{
+				Filter.PackagePaths.Add(FName(*PathPrefix));
+				Filter.bRecursivePaths = true;
+			}
 
 			TArray<FAssetData> Contexts;
 			Registry().GetAssets(Filter, Contexts);
 
 			TArray<TSharedPtr<FJsonValue>> Rows;
+			bool bTruncated = false;
 			for (const FAssetData& Asset : Contexts)
 			{
 				if (Rows.Num() >= Max)
 				{
+					// Stopping here also stops the applied test, so the rest of
+					// the project is unexamined rather than unapplied.
+					bTruncated = true;
 					break;
 				}
 				const UInputMappingContext* Context = Cast<UInputMappingContext>(Asset.GetAsset());
@@ -482,11 +582,27 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetArrayField(TEXT("contexts"), Rows);
+			// total counts the contexts found under path_prefix, which is not
+			// the number of rows here: applied_only filters, and max stops the
+			// scan early. Both of those used to be invisible.
 			Data->SetNumberField(TEXT("total"), Contexts.Num());
+			Data->SetNumberField(TEXT("returned"), Rows.Num());
+			Data->SetBoolField(TEXT("truncated"), bTruncated);
+			Data->SetStringField(TEXT("scanned"), PathPrefix.IsEmpty() ? FString(TEXT("/")) : PathPrefix);
 			Data->SetBoolField(TEXT("livePlayer"), Input != nullptr);
-			return FUplinkToolResult::Ok(Data, Input
-				? FString()
-				: TEXT("no running player, so 'applied' is unknown - start play to see which contexts are in force"));
+
+			FString Message;
+			if (!Input)
+			{
+				Message = bPieRunning
+					? TEXT("play is running but has no local player yet, so 'applied' is unknown - ask again once a player controller exists")
+					: TEXT("no running player, so 'applied' is unknown - start play to see which contexts are in force");
+			}
+			else if (bAppliedOnly && Rows.Num() == 0)
+			{
+				Message = TEXT("no applied context was found under this path - the game's context may ship in a plugin, so try path_prefix '/'");
+			}
+			return FUplinkToolResult::Ok(Data, Message);
 		});
 
 	// ------------------------------------------------------------------
@@ -494,7 +610,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	// ------------------------------------------------------------------
 	InRegistry.RegisterQuick(
 		TEXT("dialog_state"),
-		TEXT("Whether a modal window is blocking the editor, and what it says. Every tool runs on the game thread, so a modal dialog freezes all of them - calls simply hang with no diagnostic. If Uplink has stopped answering, this is the first thing to ask once it answers again. 'dismiss' closes the blocking window, which is the difference between a stuck session and a recoverable one; read the title first, because dismissing a prompt answers it."),
+		TEXT("Whether a modal window is up, what it says, and what else is open. Every tool runs on the game thread, and a modal that blocks it blocks this tool too: while one is up, calls do not fail or time out, they simply do not run. So the ordinary blocking kind is visible here only after it has gone, and 'blocked':false is not evidence that no modal was involved in a hang - ask this first once Uplink answers again and read 'windows', which names what is open. A 'blocked':true answer means a modal that lets the editor keep ticking, such as a slow-task window, and that is also the only kind 'dismiss' can reach. Read the title before dismissing: closing a prompt answers it."),
 		TEXT(R"json({"type":"object","properties":{"dismiss":{"type":"boolean","default":false,"description":"Close the blocking modal. Read the title first - closing a prompt chooses its default answer."}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -509,20 +625,22 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			const TSharedPtr<SWindow> Modal = Slate.GetActiveModalWindow();
 			Data->SetBoolField(TEXT("blocked"), Modal.IsValid());
 
+			// Name every top-level window whichever answer this is: what else
+			// is open is half of it, and the description sends the caller to
+			// 'windows' precisely when no modal is left to name.
+			TArray<TSharedPtr<FJsonValue>> Windows;
+			for (const TSharedRef<SWindow>& Window : Slate.GetTopLevelWindows())
+			{
+				const FString Title = Window->GetTitle().ToString();
+				if (!Title.IsEmpty())
+				{
+					Windows.Add(MakeShared<FJsonValueString>(Title));
+				}
+			}
+			Data->SetArrayField(TEXT("windows"), Windows);
+
 			if (!Modal.IsValid())
 			{
-				// Name any other top-level window too: a non-modal one can
-				// still be the thing a person needs to see.
-				TArray<TSharedPtr<FJsonValue>> Others;
-				for (const TSharedRef<SWindow>& Window : Slate.GetTopLevelWindows())
-				{
-					const FString Title = Window->GetTitle().ToString();
-					if (!Title.IsEmpty())
-					{
-						Others.Add(MakeShared<FJsonValueString>(Title));
-					}
-				}
-				Data->SetArrayField(TEXT("windows"), Others);
 				return FUplinkToolResult::Ok(Data, TEXT("nothing is blocking"));
 			}
 
@@ -539,7 +657,10 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 					TEXT("closed '%s' - if it was a question, it just took its default answer"), *Title));
 			}
 
+			// Not "blocking every tool" - this call answered, so it is one of
+			// the modals that lets the editor keep ticking. Saying otherwise
+			// told the caller the session was stuck when it plainly was not.
 			return FUplinkToolResult::Ok(Data, FString::Printf(
-				TEXT("'%s' is modal and is blocking every tool; pass dismiss:true to close it"), *Title));
+				TEXT("'%s' is modal and up now, though it still lets tools run; pass dismiss:true to close it once you are content with the answer that gives it"), *Title));
 		});
 }

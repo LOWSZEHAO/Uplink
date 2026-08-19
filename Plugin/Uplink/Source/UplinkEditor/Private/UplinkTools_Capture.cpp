@@ -1,5 +1,5 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
-// viewport_screenshot — synchronous pixel readback of the active viewport
+// viewport_screenshot - synchronous pixel readback of the active viewport
 // (PIE game viewport during play, else the active editor viewport).
 // Direct ReadPixels is used instead of FScreenshotRequest because the
 // screenshot-captured delegate does not fire for PIE-in-editor-viewport

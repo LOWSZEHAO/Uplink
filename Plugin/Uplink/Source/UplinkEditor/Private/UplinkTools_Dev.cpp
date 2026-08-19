@@ -25,7 +25,8 @@ namespace
 	 * Latent: kicks off an async Live Coding compile and ticks until the
 	 * compiler goes idle. A successful patch fires the module's patch-complete
 	 * delegate; if the compile ends without one, there were either no changes
-	 * or errors - the message says to check the Live Coding console/log.
+	 * or errors, and nothing outside the module can tell those two apart - so
+	 * the message says where to look instead of picking one.
 	 */
 	class FLiveCompileInvocation : public IUplinkInvocation
 	{
@@ -63,7 +64,23 @@ namespace
 				bPatched = true;
 			});
 			StartTime = FPlatformTime::Seconds();
-			LiveCoding->Compile();
+
+			// The argument-less Compile() throws the outcome away, and a request
+			// that never became a compile leaves IsCompiling() false - so the
+			// first Tick read it as a compile that had already finished with
+			// nothing to do, and a console that failed to start was reported as
+			// "no changes".
+			ELiveCodingCompileResult Started = ELiveCodingCompileResult::Failure;
+			if (!LiveCoding->Compile(ELiveCodingCompileFlags::None, &Started))
+			{
+				LiveCoding->GetOnPatchCompleteDelegate().Remove(PatchHandle);
+				PatchHandle.Reset();
+				Out = FUplinkToolResult::Error(Started == ELiveCodingCompileResult::CompileStillActive
+					? TEXT("a Live Coding compile is already in progress")
+					: TEXT("Live Coding did not start a compile - its console process is not running; open it from the editor (Ctrl+Alt+F11) and try again"));
+				return EUplinkToolStep::Done;
+			}
+			bCompileStarted = true;
 			return EUplinkToolStep::Pending;
 		}
 
@@ -86,8 +103,19 @@ namespace
 			Data->SetNumberField(TEXT("seconds"), FPlatformTime::Seconds() - StartTime);
 			Out = FUplinkToolResult::Ok(Data, bPatched
 				? TEXT("patched - new code is live")
-				: TEXT("compile finished without a patch (no changes, or compile errors - check the Live Coding console / output_log)"));
+				: TEXT("compile finished without a patch - either nothing had changed or the build failed; read output_log with category 'LogLiveCoding' to see which"));
 			return EUplinkToolStep::Done;
+		}
+
+		/**
+		 * A compile cannot be called back. The console process is already
+		 * building and will patch this editor when it finishes, whatever is
+		 * decided here, so answering a cancel with "stopped" would promise
+		 * something that does not happen.
+		 */
+		virtual bool CanCancel() const override
+		{
+			return !bCompileStarted;
 		}
 
 		virtual ~FLiveCompileInvocation() override
@@ -105,6 +133,7 @@ namespace
 		FDelegateHandle PatchHandle;
 		double StartTime = 0.0;
 		bool bPatched = false;
+		bool bCompileStarted = false;
 	};
 #endif // WITH_LIVE_CODING
 }
@@ -113,7 +142,7 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 {
 	FUplinkToolInfo Info;
 	Info.Name = TEXT("live_compile");
-	Info.Description = TEXT("Trigger a Live Coding compile and patch the RUNNING editor with changed C++ - no editor restart. Function-body edits apply in seconds; structural changes (new classes, members, virtuals) still need a real build. Resolves when the compiler goes idle: 'patched' true means new code is live.");
+	Info.Description = TEXT("Trigger a Live Coding compile and patch the RUNNING editor with changed C++ - no editor restart. Function-body edits apply in seconds; structural changes (new classes, members, virtuals) still need a real build. Resolves when the compiler goes idle: 'patched' true means new code is live. 'patched' false is NOT reported as an error - it means either nothing had changed or the build failed, and only the log tells those apart (output_log with category 'LogLiveCoding'). A compile that never started is an error. Once started it cannot be cancelled: the console process patches this editor whether or not the task is still waiting.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{},"additionalProperties":false})json"));
 	Info.bReadOnly = false;
 	// A Live Coding compile is exactly when the user keeps working in the
@@ -191,7 +220,7 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("edit_history"),
-		TEXT("Inspect and walk the editor's undo stack. Every mutating Uplink tool runs inside its own transaction named 'Uplink: <tool>', so an agent's edit can be undone exactly like a hand edit. 'action': 'list' (default) shows what undo/redo would do, 'undo' or 'redo' walk 'steps' entries. Does not apply to PIE-world edits, which the engine does not transact."),
+		TEXT("Inspect and walk the editor's undo stack. A mutating Uplink tool that edits the editor world runs inside its own transaction named 'Uplink: <tool>', so an agent's edit can be undone exactly like a hand edit. Two kinds of call are NOT on the stack: anything done while a play session is running, the editor world included, because the engine discards transactions that touch play objects; and the tools that drive the session or the compiler rather than edit the level (pie_start, pie_stop, pie_step, input_action, input_key, input_replay, navigate_to, run_tests, run_scenario, live_compile, and this tool). 'action': 'list' (default) shows what undo/redo would do, 'undo' or 'redo' walk 'steps' entries and report the transactions that actually moved. Walking an empty stack is a success - there was nothing to do. Being refused is an error: 'undoBlocked' then carries the buffer's own reason, which is a transaction still open elsewhere or an undo barrier, and is a different situation from an empty stack."),
 		TEXT(R"json({"type":"object","properties":{"action":{"type":"string","enum":["list","undo","redo"],"default":"list"},"steps":{"type":"number","default":1,"description":"how many transactions to walk (undo/redo)"}}})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -221,6 +250,19 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 					bCanUndo ? Trans->GetUndoContext().Title.ToString() : FString());
 				Data->SetStringField(TEXT("nextRedo"),
 					bCanRedo ? Trans->GetRedoContext().Title.ToString() : FString());
+
+				// An empty nextUndo reads as an empty stack when the buffer is
+				// saying something else entirely - a transaction open elsewhere,
+				// or an undo barrier, blocks undo just as completely and is the
+				// difference between "nothing to undo" and "not right now".
+				if (!bCanUndo)
+				{
+					Data->SetStringField(TEXT("undoBlocked"), UndoText.ToString());
+				}
+				if (!bCanRedo)
+				{
+					Data->SetStringField(TEXT("redoBlocked"), RedoText.ToString());
+				}
 				Data->SetNumberField(TEXT("queueLength"), Trans->GetQueueLength());
 				Data->SetNumberField(TEXT("undoCount"), Trans->GetUndoCount());
 			};
@@ -242,29 +284,80 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 			// Record what each step actually was, so the caller learns which
 			// edits were rolled back rather than just a count.
 			TArray<TSharedPtr<FJsonValue>> Walked;
+			bool bRefused = false;
 			for (int32 i = 0; i < Steps; ++i)
 			{
-				FText Title;
-				if (bUndo ? !Trans->CanUndo(&Title) : !Trans->CanRedo(&Title))
+				if (bUndo ? !Trans->CanUndo() : !Trans->CanRedo())
 				{
 					break;
 				}
-				const FString Name = bUndo
+				const FString Queued = bUndo
 					? Trans->GetUndoContext().Title.ToString()
 					: Trans->GetRedoContext().Title.ToString();
 				const bool bOk = bUndo ? GEditor->UndoTransaction() : GEditor->RedoTransaction();
 				if (!bOk)
 				{
+					// The buffer said the step was possible, so the editor turned
+					// it down: UndoTransaction bails out during a package save or
+					// a garbage collection. Reporting an empty stack here sends
+					// the caller to look at an undo history that is fine.
+					bRefused = true;
 					break;
 				}
-				Walked.Add(MakeShared<FJsonValueString>(Name));
+
+				// One Undo() can eat several queue entries: the engine skips
+				// expired transactions and applies the first live one behind
+				// them, so the entry that was next is not always the entry that
+				// moved. Reading the far end afterwards names the one that did -
+				// what has just been undone is exactly what redo would put back.
+				FString Applied = Queued;
+				if (bUndo ? Trans->CanRedo() : Trans->CanUndo())
+				{
+					Applied = bUndo
+						? Trans->GetRedoContext().Title.ToString()
+						: Trans->GetUndoContext().Title.ToString();
+				}
+				Walked.Add(MakeShared<FJsonValueString>(Applied));
 			}
 
 			Data->SetArrayField(bUndo ? TEXT("undone") : TEXT("redone"), Walked);
 			Describe(Data);
-			return FUplinkToolResult::Ok(Data, Walked.Num() == 0
-				? FString::Printf(TEXT("nothing to %s"), *Action)
-				: FString::Printf(TEXT("%s %d transaction(s)"), bUndo ? TEXT("undid") : TEXT("redid"), Walked.Num()));
+
+			const FString Busy = FString::Printf(
+				TEXT("the editor refused to %s right now - it will not while a package is saving or garbage is being collected; try again"),
+				*Action);
+			if (Walked.Num() > 0)
+			{
+				return FUplinkToolResult::Ok(Data, bRefused
+					? FString::Printf(TEXT("%s %d transaction(s), then %s"),
+						bUndo ? TEXT("undid") : TEXT("redid"), Walked.Num(), *Busy)
+					: FString::Printf(TEXT("%s %d transaction(s)"),
+						bUndo ? TEXT("undid") : TEXT("redid"), Walked.Num()));
+			}
+
+			// CanUndo fills its reason text for an exhausted stack as well as a
+			// blocked one, so the wording cannot tell "nothing left" from "not
+			// right now". The queue positions can: undo is exhausted once every
+			// entry has been walked, redo once none has.
+			const bool bExhausted = bUndo
+				? Trans->GetQueueLength() == Trans->GetUndoCount()
+				: Trans->GetUndoCount() == 0;
+			if (!bRefused && bExhausted)
+			{
+				return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("nothing to %s"), *Action));
+			}
+
+			// Asking to undo and having nothing happen because the buffer is
+			// fenced or the editor is busy is a failed call, not a satisfied one:
+			// answering ok is how a caller comes to believe an edit was rolled
+			// back. The reason travels in undoBlocked/redoBlocked.
+			FString Blocked;
+			Data->TryGetStringField(FStringView(bUndo ? TEXT("undoBlocked") : TEXT("redoBlocked")), Blocked);
+			FUplinkToolResult Result = FUplinkToolResult::Ok(Data, bRefused
+				? Busy
+				: FString::Printf(TEXT("could not %s: %s"), *Action, *Blocked));
+			Result.bError = true;
+			return Result;
 		},
 		// Walking the undo stack is not itself an undoable edit - wrapping it in
 		// a transaction would fight the buffer it is driving. It is emphatically
@@ -274,7 +367,7 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("plugin_enable"),
-		TEXT("Enable or disable a plugin for THIS project (writes the .uproject). The editor must restart for the change to load/unload modules - the result says so. Use plugin_list to find names."),
+		TEXT("Enable or disable a plugin for THIS project (writes the .uproject). Modules load and unload only on editor restart, and 'restart_required' says whether one is actually needed - it is false when the running editor already matched the state that was just written. Use plugin_list to find names."),
 		TEXT(R"json({"type":"object","properties":{"name":{"type":"string"},"enable":{"type":"boolean","default":true}},"required":["name"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -283,10 +376,13 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 			bool bEnable = true;
 			Ctx.Params->TryGetBoolField(FStringView(TEXT("enable")), bEnable);
 
-			if (!IPluginManager::Get().FindPlugin(Name).IsValid())
+			const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(Name);
+			if (!Plugin.IsValid())
 			{
 				return FUplinkToolResult::Error(FString::Printf(TEXT("no plugin named '%s' (plugin_list to browse)"), *Name));
 			}
+			const bool bWasEnabled = Plugin->IsEnabled();
+
 			FText FailReason;
 			if (!IProjectManager::Get().SetPluginEnabled(Name, bEnable, FailReason))
 			{
@@ -295,10 +391,23 @@ void UplinkTools::RegisterDev(FUplinkToolRegistry& Registry)
 			}
 			if (!IProjectManager::Get().SaveCurrentProjectToDisk(FailReason))
 			{
-				return FUplinkToolResult::Error(FString::Printf(TEXT(".uproject save failed: %s"), *FailReason.ToString()));
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT(".uproject save failed: %s. The change is set in memory only and is lost when the editor exits - check the file is writable (not read-only, not locked by source control) and call again."),
+					*FailReason.ToString()));
 			}
-			return FUplinkToolResult::Ok(nullptr, FString::Printf(
-				TEXT("'%s' %s in the .uproject - restart the editor for it to take effect"),
-				*Name, bEnable ? TEXT("enabled") : TEXT("disabled")));
+
+			// A restart only changes anything when the running editor does not
+			// already match what was just written; promising one for a no-op
+			// teaches the caller to restart for nothing.
+			const bool bRestartRequired = bEnable != bWasEnabled;
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("plugin"), Name);
+			Data->SetBoolField(TEXT("enabled"), bEnable);
+			Data->SetBoolField(TEXT("restart_required"), bRestartRequired);
+			return FUplinkToolResult::Ok(Data, bRestartRequired
+				? FString::Printf(TEXT("'%s' %s in the .uproject - restart the editor for it to take effect"),
+					*Name, bEnable ? TEXT("enabled") : TEXT("disabled"))
+				: FString::Printf(TEXT("'%s' was already %s in this editor and the .uproject now says so too - no restart needed"),
+					*Name, bEnable ? TEXT("enabled") : TEXT("disabled")));
 		});
 }

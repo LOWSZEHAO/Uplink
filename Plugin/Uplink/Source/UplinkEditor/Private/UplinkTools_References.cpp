@@ -74,13 +74,62 @@ namespace
 		};
 		return Algo::Find(Unbounded, Package) != nullptr;
 	}
+
+	/**
+	 * A path_prefix names a folder, not a set of characters.
+	 *
+	 * A plain StartsWith puts /Game/UIOld inside a search scoped to /Game/UI,
+	 * so hits came back from folders the caller had deliberately excluded and
+	 * the reply still called the search complete.
+	 */
+	bool PackageIsUnder(const FString& PackageName, const FString& PathPrefix)
+	{
+		// A bare root is every package, and appending a separator to it would
+		// ask for "//" - which matches nothing, so the search would come back
+		// empty and still call itself complete.
+		if (PathPrefix.IsEmpty() || PathPrefix == TEXT("/"))
+		{
+			return true;
+		}
+		return PackageName == PathPrefix || PackageName.StartsWith(PathPrefix + TEXT("/"));
+	}
+
+	/**
+	 * Drop candidates that hold no Blueprint at all.
+	 *
+	 * The bounded list is package referencers, which is mostly levels, data
+	 * assets and materials - things LoadObject<UBlueprint> was always going to
+	 * return null for. Separating those from a Blueprint that genuinely would
+	 * not open is what lets a failed load be reported instead of swallowed.
+	 */
+	void KeepBlueprintPackages(TArray<FName>& Candidates)
+	{
+		if (Candidates.Num() == 0)
+		{
+			return;
+		}
+		FARFilter Filter;
+		Filter.PackageNames = Candidates;
+		Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+		Filter.bRecursiveClasses = true;
+		TArray<FAssetData> Assets;
+		ReferencesAssetRegistry().GetAssets(Filter, Assets);
+
+		TSet<FName> Keep;
+		Keep.Reserve(Assets.Num());
+		for (const FAssetData& Asset : Assets)
+		{
+			Keep.Add(Asset.PackageName);
+		}
+		Candidates.RemoveAll([&Keep](const FName& Package) { return !Keep.Contains(Package); });
+	}
 }
 
 void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("bp_references"),
-		TEXT("Who uses this - the question to ask BEFORE changing something, where bp_find_broken answers it afterwards. For a function, variable, event dispatcher or whole Blueprint, reports every Blueprint containing a node that calls, reads, writes, binds or overrides it, down to the graph and node guid (feed those straight to bp_modify). Already-loaded Blueprints are scanned for free; unloaded ones are narrowed by the asset registry and only 'max_load' of them are opened, because loading is real work. Anything it did not scan is named in the reply, so a capped answer is never mistaken for 'nothing uses this'. Blind spots it cannot see: AnimGraph property access, UMG property bindings, and object values sitting in pin defaults."),
+		TEXT("Who uses this - the question to ask BEFORE changing something, where bp_find_broken answers it afterwards. For a function, variable, event dispatcher or whole Blueprint, reports every Blueprint containing a node that calls, reads, writes, binds or overrides it, down to the graph and node guid (feed those straight to bp_modify). Already-loaded Blueprints are scanned for free; unloaded ones are narrowed by the asset registry and only 'max_load' of them are opened, because loading is real work. Anything it did not scan is named in the reply and 'complete' says whether the search was exhaustive, so a capped answer is never mistaken for 'nothing uses this'. Blind spots it cannot see: an override implemented as a function GRAPH rather than an event (only event overrides are found), AnimGraph property access, UMG property bindings, and object values sitting in pin defaults."),
 		TEXT(R"json({"type":"object","properties":{"kind":{"type":"string","enum":["blueprint","function","variable","dispatcher"],"description":"What the name refers to"},"name":{"type":"string","description":"Member name, or the package path (/Game/BP_Door) when kind=blueprint"},"class":{"type":"string","description":"Owning class: /Script/Module.Class or /Game/BP_X.BP_X_C. Omit to match on name alone - broader, and every hit reports the owner it found"},"path_prefix":{"type":"string","default":"/Game"},"max_load":{"type":"number","default":25,"description":"How many unloaded candidates to open and scan"},"loaded_only":{"type":"boolean","default":false,"description":"Scan only what is already in memory - instant, and incomplete"}},"required":["kind","name"]})json"),
 		// Not read-only: it loads packages, which is real work a client should be
 		// told about before it auto-approves the call. Same reasoning as
@@ -95,7 +144,13 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(TEXT("'name' is required"));
 			}
 			const FName TargetName(*Name);
-			const FString PathPrefix = GetString(Ctx.Params, TEXT("path_prefix"), TEXT("/Game"));
+			// A trailing slash would make every "under this folder" test below
+			// look for a doubled separator and match nothing.
+			FString PathPrefix = GetString(Ctx.Params, TEXT("path_prefix"), TEXT("/Game"));
+			while (PathPrefix.Len() > 1 && PathPrefix.EndsWith(TEXT("/")))
+			{
+				PathPrefix.LeftChopInline(1);
+			}
 			const int32 MaxLoad = FMath::Clamp(
 				static_cast<int32>(GetNumber(Ctx.Params, TEXT("max_load"), 25.0)), 0, 500);
 			bool bLoadedOnly = false;
@@ -138,6 +193,17 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 					TargetClass = LoadObject<UClass>(nullptr, *(PackageName + TEXT(".") +
 						FPackageName::GetShortName(PackageName) + TEXT("_C")));
 				}
+				if (!TargetClass)
+				{
+					// kind=blueprint matches on class alone - the name is never
+					// compared - so with no class to compare against, the scan
+					// below marks EVERY call, variable and delegate node it
+					// walks as a hit. A path that resolves to nothing came back
+					// as "the entire project references this".
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no Blueprint class at '%s' - either it is not a Blueprint, or its class would not load. kind=blueprint wants a Blueprint's package path (e.g. /Game/BP_Door); ask asset_referencers for the package-level answer, which works for any asset"),
+						*PackageName));
+				}
 			}
 			else if (TargetClass)
 			{
@@ -153,7 +219,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 			{
 				UBlueprint* Bp = *It;
 				if (Bp && !Bp->HasAnyFlags(RF_Transient)
-					&& Bp->GetOutermost()->GetName().StartsWith(PathPrefix))
+					&& PackageIsUnder(Bp->GetOutermost()->GetName(), PathPrefix))
 				{
 					ToScan.Add(Bp);
 				}
@@ -162,6 +228,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 
 			// Then the ones worth opening, narrowed by the registry when it can.
 			TArray<FString> NotScanned;
+			TArray<FString> LoadFailed;
 			int32 Loaded = 0;
 			if (!bLoadedOnly)
 			{
@@ -170,6 +237,9 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 				{
 					ReferencesAssetRegistry().GetReferencers(BoundPackage, Candidates,
 						UE::AssetRegistry::EDependencyCategory::Package);
+					// Referencers are packages of every kind; the sweep below
+					// asks the registry for Blueprints and needs no such pass.
+					KeepBlueprintPackages(Candidates);
 				}
 				else
 				{
@@ -177,6 +247,10 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 					Filter.PackagePaths.Add(FName(*PathPrefix));
 					Filter.bRecursivePaths = true;
 					Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+					// Widget and Animation Blueprints derive from UBlueprint, so
+					// without this the path sweep quietly excluded every WBP and
+					// ABP in the project while still reporting itself complete.
+					Filter.bRecursiveClasses = true;
 					TArray<FAssetData> Assets;
 					ReferencesAssetRegistry().GetAssets(Filter, Assets);
 					for (const FAssetData& Asset : Assets)
@@ -188,7 +262,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 				for (const FName& PackageName : Candidates)
 				{
 					const FString PackageString = PackageName.ToString();
-					if (!PackageString.StartsWith(PathPrefix) || PackageString.StartsWith(TEXT("/Script")))
+					if (!PackageIsUnder(PackageString, PathPrefix) || PackageString.StartsWith(TEXT("/Script")))
 					{
 						continue;
 					}
@@ -207,6 +281,14 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 					{
 						ToScan.Add(Bp);
 						++Loaded;
+					}
+					else
+					{
+						// The registry says this package holds a Blueprint and
+						// it would not open. Dropping that silently let a search
+						// that never looked at the asset still call itself
+						// complete.
+						LoadFailed.Add(PackageString);
 					}
 				}
 			}
@@ -273,6 +355,10 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 							continue;
 						}
 						FString HitKind;
+						// The schema promises that omitting 'class' still tells you
+						// which class each hit actually landed on, so every branch
+						// below has to hand back the owner it matched.
+						UClass* HitOwner = nullptr;
 
 						if (Kind == TEXT("function") || Kind == TEXT("blueprint"))
 						{
@@ -283,6 +369,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 								if (bNameOk && ClassMatches(Call->FunctionReference.GetMemberParentClass(), Bp))
 								{
 									HitKind = Node->IsA<UK2Node_CallParentFunction>() ? TEXT("call_parent") : TEXT("call");
+									HitOwner = Call->FunctionReference.GetMemberParentClass();
 								}
 							}
 						}
@@ -295,6 +382,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 								if (bNameOk && ClassMatches(Var->VariableReference.GetMemberParentClass(), Bp))
 								{
 									HitKind = Node->IsA<UK2Node_VariableSet>() ? TEXT("write") : TEXT("read");
+									HitOwner = Var->VariableReference.GetMemberParentClass();
 								}
 							}
 						}
@@ -314,6 +402,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 										|| TargetAuth->IsChildOf(OwnerAuth)))))
 								{
 									HitKind = TEXT("bound_event");
+									HitOwner = Bound->DelegateOwnerClass;
 								}
 							}
 							else if (UK2Node_BaseMCDelegate* MC = Cast<UK2Node_BaseMCDelegate>(Node))
@@ -322,6 +411,7 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 									|| MC->GetPropertyName() == TargetName;
 								if (bNameOk && ClassMatches(MC->DelegateReference.GetMemberParentClass(), Bp))
 								{
+									HitOwner = MC->DelegateReference.GetMemberParentClass();
 									// Assign derives from Add, so test it first.
 									if (Node->IsA<UK2Node_AssignDelegate>()) { HitKind = TEXT("assign"); }
 									else if (Node->IsA<UK2Node_AddDelegate>()) { HitKind = TEXT("bind"); }
@@ -341,14 +431,22 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 									&& ClassMatches(Event->EventReference.GetMemberParentClass(), Bp))
 								{
 									HitKind = Event->bOverrideFunction ? TEXT("override") : TEXT("event");
+									HitOwner = Event->EventReference.GetMemberParentClass();
 								}
 							}
 							else if (UK2Node_CreateDelegate* Create = Cast<UK2Node_CreateDelegate>(Node))
 							{
 								// Bound as a handler - invisible to any call-site scan.
-								if (Create->GetFunctionName() == TargetName)
+								// This was the one hit kind that matched on name
+								// alone, so a 'class' the caller passed to narrow
+								// the search was ignored here and a same-named
+								// function on an unrelated class came back as a
+								// reference to theirs.
+								if (Create->GetFunctionName() == TargetName
+									&& ClassMatches(Create->GetScopeClass(), Bp))
 								{
 									HitKind = TEXT("used_as_handler");
+									HitOwner = Create->GetScopeClass();
 								}
 							}
 						}
@@ -363,6 +461,15 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 						Row->SetStringField(TEXT("node"), Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
 						Row->SetStringField(TEXT("kind"), HitKind);
 						Row->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+						// A self-context member carries no class of its own - it
+						// belongs to the blueprint the node sits in, which is the
+						// same resolution ClassMatches used to accept the hit.
+						if (UClass* const OwnerAuth = Authoritative(HitOwner
+							? HitOwner
+							: (Bp->GeneratedClass ? Bp->GeneratedClass.Get() : Bp->SkeletonGeneratedClass.Get())))
+						{
+							Row->SetStringField(TEXT("owner"), OwnerAuth->GetPathName());
+						}
 						Hits.Add(MakeShared<FJsonValueObject>(Row));
 						HitAssets.Add(Bp->GetPathName());
 					}
@@ -388,12 +495,43 @@ void UplinkTools::RegisterReferences(FUplinkToolRegistry& Registry)
 				}
 				Data->SetArrayField(TEXT("not_scanned"), Skipped);
 			}
-			Data->SetBoolField(TEXT("complete"), NotScanned.Num() == 0 && !bLoadedOnly);
+			if (LoadFailed.Num() > 0)
+			{
+				TArray<TSharedPtr<FJsonValue>> Broken;
+				for (const FString& Package : LoadFailed)
+				{
+					Broken.Add(MakeShared<FJsonValueString>(Package));
+				}
+				Data->SetArrayField(TEXT("load_failed"), Broken);
+			}
+			Data->SetBoolField(TEXT("complete"),
+				NotScanned.Num() == 0 && LoadFailed.Num() == 0 && !bLoadedOnly);
 
-			return FUplinkToolResult::Ok(Data, NotScanned.Num() > 0
-				? FString::Printf(TEXT("%d hit(s); %d candidate(s) not scanned - raise max_load for the rest"),
-					Hits.Num(), NotScanned.Num())
-				: FString::Printf(TEXT("%d hit(s) across %d blueprint(s)"), Hits.Num(), HitAssets.Num()));
+			// Every way this search can be bounded has to reach the summary
+			// line, not just the fields beside it: a bare "0 hit(s)" from a
+			// loaded_only pass is indistinguishable from "nothing uses this",
+			// which is the one answer this tool must never fake.
+			FString Summary = FString::Printf(TEXT("%d hit(s) across %d blueprint(s)"),
+				Hits.Num(), HitAssets.Num());
+			if (bLoadedOnly)
+			{
+				Summary += FString::Printf(
+					TEXT(" - loaded_only: searched the %d Blueprint(s) already in memory and opened nothing, so this is not the whole project; drop loaded_only for that"),
+					FreeCount);
+			}
+			if (NotScanned.Num() > 0)
+			{
+				Summary += FString::Printf(
+					TEXT(" - %d candidate(s) not scanned, raise max_load above %d for the rest"),
+					NotScanned.Num(), MaxLoad);
+			}
+			if (LoadFailed.Num() > 0)
+			{
+				Summary += FString::Printf(
+					TEXT("; %d Blueprint(s) would not open and were not searched - see load_failed"),
+					LoadFailed.Num());
+			}
+			return FUplinkToolResult::Ok(Data, Summary);
 		},
 		/*bTransactional=*/false);
 }

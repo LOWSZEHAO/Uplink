@@ -9,6 +9,7 @@
 #include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "EnhancedPlayerInput.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -128,7 +129,7 @@ namespace
 		UWorld* PieWorld = GEditor ? GEditor->PlayWorld.Get() : nullptr;
 		if (!PieWorld)
 		{
-			OutError = TEXT("no PIE session is running (input/control tools drive the live game — call pie_start first)");
+			OutError = TEXT("no PIE session is running (input/control tools drive the live game - call pie_start first)");
 			return Result;
 		}
 		Result.PC = PieWorld->GetFirstPlayerController();
@@ -599,7 +600,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("input_key");
-		Info.Description = TEXT("Simulate a raw key in the running game (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX). 'route' decides WHO receives it: 'game' (default) goes to the player controller, which is what gameplay input binds to; 'ui' sends a real Slate key event to the focused widget, which is the only thing a UMG menu overriding OnKeyDown will ever see - if a title screen or menu ignores your keys, this is why; 'both' does each, like a real keypress. The reply reports whether anything handled it.");
+		Info.Description = TEXT("Simulate a raw key in the running game (the engine's own simulated-input path - no OS focus needed). event 'tap' presses then releases after 'duration' seconds; 'pressed'/'released' send one edge; 'axis' sends an analog value (use 'amount', e.g. Gamepad_LeftX). 'route' decides WHO receives it: 'game' (default) reaches the player controller's own input stack; 'ui' sends a real Slate key event to the focused widget, which is the only thing a UMG menu overriding OnKeyDown will ever see - if a title screen or menu ignores your keys, this is why; 'both' does each, like a real keypress. The reply reports whether anything handled it. IMPORTANT: on a project driven by Enhanced Input - which is most UE5 games - a raw key does NOT fire the Input Actions bound to it. Measured on a real game: W held for two seconds through this tool moved the character not at all and still answered handled:true, while the same two seconds of its IA_Move through input_action moved it 350 units. Use input_action for anything gameplay binds to, and keep this for menus and for games still on the legacy input stack.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"key":{"type":"string","description":"UE key name: W, SpaceBar, LeftMouseButton, Gamepad_FaceButton_Bottom, Gamepad_LeftX, ..."},"event":{"type":"string","enum":["tap","pressed","released","axis"],"default":"tap"},"route":{"type":"string","enum":["game","ui","both"],"default":"game","description":"Who receives the key: the player controller, the focused UMG widget, or both"},"amount":{"type":"number","default":1.0},"duration":{"type":"number","description":"tap only: seconds between press and release (default 0.12)"}},"required":["key"]})json"));
 		Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit
@@ -678,6 +679,19 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 					TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 					Data->SetBoolField(TEXT("handled"), bHandled);
 					Data->SetStringField(TEXT("route"), *Route);
+
+					// handled says the controller consumed the key, not that
+					// anything acted on it - and on an Enhanced Input project a
+					// raw key consumed here still fires no Input Action, so a
+					// true there reads as success for a press that did nothing.
+					// The player input's own class is the machine-readable half
+					// of that warning; the applied-context count would be better
+					// still, but the engine keeps that accessor protected.
+					if (Cast<UEnhancedPlayerInput>(Player.PC->PlayerInput) != nullptr)
+					{
+						Data->SetBoolField(TEXT("enhancedInput"), true);
+					}
+
 					if (Route == TEXT("both"))
 					{
 						// A real key reaches the UI as well as the game.

@@ -12,6 +12,9 @@ using namespace UplinkToolUtil;
 
 namespace
 {
+	/** Errors kept per failing test; the true count is reported alongside. */
+	constexpr int32 GMaxErrorsPerTest = 5;
+
 	/**
 	 * Runs matched tests one at a time, ticking latent commands between frames.
 	 * The framework is unforgiving global state: StartTestByName silently
@@ -62,10 +65,13 @@ namespace
 				if (Test.GetDisplayName().Contains(Filter, ESearchCase::IgnoreCase)
 					|| Test.GetTestName().Contains(Filter, ESearchCase::IgnoreCase))
 				{
-					Pending.Add(Test.GetTestName());
-					if (Pending.Num() >= MaxTests)
+					// Keep counting past the cap: "ran 20" over a filter that hit
+					// two hundred tests is a different result from a clean run,
+					// and stopping the count hides which one happened.
+					++Matched;
+					if (Pending.Num() < MaxTests)
 					{
-						break;
+						Pending.Add(Test.GetTestName());
 					}
 				}
 			}
@@ -106,15 +112,38 @@ namespace
 					TArray<TSharedPtr<FJsonValue>> Errors;
 					for (const FAutomationExecutionEntry& Entry : ExecutionInfo.GetEntries())
 					{
-						if (Entry.Event.Type == EAutomationEventType::Error && Errors.Num() < 5)
+						if (Entry.Event.Type == EAutomationEventType::Error && Errors.Num() < GMaxErrorsPerTest)
 						{
 							Errors.Add(MakeShared<FJsonValueString>(Entry.Event.Message));
 						}
 					}
 					Row->SetArrayField(TEXT("errors"), Errors);
+
+					// A test that fails a hundred assertions shows five of them;
+					// without this the caller reads five and thinks that is all
+					// of them.
+					Row->SetNumberField(TEXT("error_count"), ExecutionInfo.GetErrorTotal());
 					++Failed;
 				}
 				Results.Add(MakeShared<FJsonValueObject>(Row));
+				Current.Reset();
+			}
+			else if (!Current.IsEmpty())
+			{
+				// The test we started is no longer in flight and we did not stop
+				// it - something else did. Dropping the row silently would leave
+				// a test the caller asked about missing from the report with no
+				// hint that it ever ran.
+				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+				Row->SetStringField(TEXT("test"), Current);
+				Row->SetBoolField(TEXT("passed"), false);
+				TArray<TSharedPtr<FJsonValue>> Errors;
+				Errors.Add(MakeShared<FJsonValueString>(
+					TEXT("stopped outside this tool before a result could be read - something else drove the automation framework during the run")));
+				Row->SetArrayField(TEXT("errors"), Errors);
+				Results.Add(MakeShared<FJsonValueObject>(Row));
+				++Failed;
+				Current.Reset();
 			}
 
 			if (Pending.Num() > 0 && StartUntilRunning())
@@ -122,6 +151,38 @@ namespace
 				return EUplinkToolStep::Pending;
 			}
 			return Finish(Out);
+		}
+
+		/**
+		 * Stop the test still in flight before letting go of the invocation.
+		 *
+		 * The framework is process-wide: an abandoned test leaves
+		 * GIsAutomationTesting set, so every later run_tests refuses with "an
+		 * automation test is already running outside this tool", GWarn stays
+		 * hijacked by the test message filter, and the queued latent commands
+		 * keep running against the editor after the caller has been told the
+		 * task is over.
+		 */
+		virtual void Cancel(EUplinkCancelReason Reason) override
+		{
+			Pending.Reset();
+			Current.Reset();
+			if (GIsAutomationTesting)
+			{
+				FAutomationTestFramework& Framework = FAutomationTestFramework::Get();
+
+				// Same order the framework uses when it stops a test to start
+				// another: drop the queue first, so nothing is left to run
+				// against whatever test comes next.
+				Framework.DequeueAllCommands();
+				FAutomationTestExecutionInfo Abandoned;
+				Framework.StopTest(Abandoned);
+			}
+			if (bOwnsRun)
+			{
+				bOwnsRun = false;
+				bRunActive = false;
+			}
 		}
 
 	private:
@@ -146,6 +207,7 @@ namespace
 				Row->SetArrayField(TEXT("errors"), Errors);
 				Results.Add(MakeShared<FJsonValueObject>(Row));
 				++Failed;
+				Current.Reset();
 			}
 			return false;
 		}
@@ -159,6 +221,8 @@ namespace
 			Data->SetArrayField(TEXT("results"), Results);
 			Data->SetNumberField(TEXT("ran"), Results.Num());
 			Data->SetNumberField(TEXT("failed"), Failed);
+			Data->SetNumberField(TEXT("matched"), Matched);
+			Data->SetBoolField(TEXT("truncated"), Matched > Results.Num());
 			FUplinkToolResult Result = FUplinkToolResult::Ok(Data,
 				Failed == 0 ? TEXT("all tests passed") : FString::Printf(TEXT("%d test(s) FAILED"), Failed));
 			Result.bError = Failed > 0;
@@ -169,6 +233,7 @@ namespace
 		TArray<FString> Pending;
 		TArray<TSharedPtr<FJsonValue>> Results;
 		FString Current;
+		int32 Matched = 0;
 		int32 Failed = 0;
 		bool bOwnsRun = false;
 	};
@@ -178,7 +243,7 @@ void UplinkTools::RegisterTests(FUplinkToolRegistry& Registry)
 {
 	FUplinkToolInfo Info;
 	Info.Name = TEXT("run_tests");
-	Info.Description = TEXT("Run engine/project automation tests whose name contains 'filter' and report per-test pass/fail with errors and durations. Runs up to 'max' matches sequentially; only one run_tests at a time. Be specific with the filter - some editor tests open maps or take minutes.");
+	Info.Description = TEXT("Run engine/project automation tests whose name contains 'filter' and report per-test pass/fail with errors and durations. Runs up to 'max' matches sequentially; 'matched' says how many the filter really hit and 'truncated' whether the cap left some unrun. Only one run_tests at a time. A run with any failure comes back as an ERROR carrying the full report, so a failing suite cannot read as a successful call; 'ran' counts every test reported on, including ones that never started, which count as failures. Each failing test lists at most five errors, with 'error_count' saying how many there were. Be specific with the filter - some editor tests open maps or take minutes.");
 	Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"filter":{"type":"string"},"max":{"type":"number","default":20}},"required":["filter"]})json"));
 	Info.bReadOnly = false;
 	// Twenty minutes is far too long to hold the undo buffer open, and a test

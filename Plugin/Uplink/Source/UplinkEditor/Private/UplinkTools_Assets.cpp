@@ -156,7 +156,41 @@ namespace
 		return FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 200.0)), 1, 5000);
 	}
 
-	FUplinkToolResult PackageNameList(const TArray<FName>& Names, const TCHAR* Field, int32 Max)
+	/**
+	 * The package a caller meant, from whatever they had to hand.
+	 *
+	 * asset_search reports object paths (/Game/BP_Door.BP_Door) and the
+	 * dependency graph is keyed on package names, so feeding one tool's output
+	 * to the other used to return an empty list and present it as the answer.
+	 */
+	FName ResolvePackageName(const FString& Supplied)
+	{
+		FString PackageName = Supplied;
+		PackageName.TrimStartAndEndInline();
+		int32 Dot = INDEX_NONE;
+		if (PackageName.FindChar(TEXT('.'), Dot))
+		{
+			PackageName.LeftInline(Dot);
+		}
+		return FName(*PackageName);
+	}
+
+	/**
+	 * Whether a package really reached disk.
+	 *
+	 * PromptForCheckoutAndSave short-circuits to UEditorLoadingAndSavingUtils
+	 * as soon as GIsRunningUnattendedScript is set - which is always, here -
+	 * and that path returns before it ever fills the failed-packages array it
+	 * was handed. So the array comes back empty whatever happened, and the
+	 * package's own dirty flag is the only witness left: a successful write
+	 * clears it, a refused one leaves it standing.
+	 */
+	bool PackageReachedDisk(UPackage* Package, const TArray<UPackage*>& Failed)
+	{
+		return Package && !Failed.Contains(Package) && !Package->IsDirty();
+	}
+
+	FUplinkToolResult PackageNameList(const TArray<FName>& Names, const TCHAR* Field, int32 Max, FName Package)
 	{
 		// A map or a heavily-shared material can pull in thousands of packages,
 		// so cap the list and say when it was cut rather than returning a wall
@@ -174,7 +208,29 @@ namespace
 		Data->SetArrayField(Field, Json);
 		Data->SetNumberField(TEXT("total"), Names.Num());
 		Data->SetBoolField(TEXT("truncated"), Names.Num() > Json.Num());
+		// The package the graph was actually asked about, which is not always
+		// the string that came in - an object path is trimmed back to it.
+		Data->SetStringField(TEXT("package"), Package.ToString());
 		return FUplinkToolResult::Ok(Data);
+	}
+
+	/**
+	 * The dependency graph answers "nothing" for a package it has never heard
+	 * of, which is the same answer as a real asset with no dependencies. One is
+	 * a fact and the other is a typo, so a package the registry does not carry
+	 * is refused instead.
+	 */
+	bool PackageIsInRegistry(FName PackageName, bool bFoundInGraph)
+	{
+		return bFoundInGraph || GetAssetRegistry().DoesPackageExistOnDisk(PackageName);
+	}
+
+	FString UnknownPackageError(FName PackageName, const FString& Supplied)
+	{
+		return FString::Printf(
+			TEXT("the asset registry has no package '%s'%s. A package path has no asset suffix and no extension - /Game/Maps/Arena, not /Game/Maps/Arena.Arena - and only assets saved to disk are in the dependency graph."),
+			*PackageName.ToString(),
+			PackageName.ToString() == Supplied ? TEXT("") : *FString::Printf(TEXT(" (read from '%s')"), *Supplied));
 	}
 }
 
@@ -182,8 +238,8 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("asset_search"),
-		TEXT("Search the asset registry by name substring, optionally filtered by class substring and content path prefix (default /Game)."),
-		TEXT(R"json({"type":"object","properties":{"query":{"type":"string","description":"Substring of the asset name (empty lists everything under the path)"},"class_contains":{"type":"string","description":"e.g. Blueprint, Material, StaticMesh"},"path_prefix":{"type":"string","default":"/Game"},"max":{"type":"number","default":100}}})json"),
+		TEXT("Search the asset registry by name substring, optionally filtered by class substring and content folder (default /Game, searched recursively). 'path_prefix' is a folder, not a name prefix: /Game/Props finds everything under it, /Game/Prop_ finds nothing. Says when the registry is still scanning, because an empty answer then means 'not yet' rather than 'not there'."),
+		TEXT(R"json({"type":"object","properties":{"query":{"type":"string","description":"Substring of the asset name (empty lists everything in the folder)"},"class_contains":{"type":"string","description":"Substring of the class path, e.g. Blueprint, Material, StaticMesh"},"path_prefix":{"type":"string","default":"/Game","description":"Content FOLDER, searched recursively - not a name prefix"},"max":{"type":"number","default":100,"description":"Rows returned, capped at 1000; 'total_matching' counts past it and 'truncated' says the list was cut"}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -196,8 +252,14 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			Filter.PackagePaths.Add(FName(*PathPrefix));
 			Filter.bRecursivePaths = true;
 
+			IAssetRegistry& AssetRegistry = GetAssetRegistry();
+			// The registry answers from what it has gathered so far. During the
+			// startup scan that is a fraction of the project, and a search that
+			// says "3 assets" then is not wrong so much as early.
+			const bool bScanning = AssetRegistry.IsGathering();
+
 			TArray<FAssetData> Assets;
-			GetAssetRegistry().GetAssets(Filter, Assets);
+			AssetRegistry.GetAssets(Filter, Assets);
 
 			TArray<TSharedPtr<FJsonValue>> Rows;
 			int32 Total = 0;
@@ -228,33 +290,69 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			Data->SetArrayField(TEXT("assets"), Rows);
 			Data->SetNumberField(TEXT("total_matching"), Total);
 			Data->SetBoolField(TEXT("truncated"), Total > Rows.Num());
-			return FUplinkToolResult::Ok(Data);
+			Data->SetBoolField(TEXT("scanning"), bScanning);
+
+			FString Note;
+			if (bScanning)
+			{
+				Note = TEXT("the asset registry is still scanning, so this is only what it has found so far - repeat the search once it has settled");
+			}
+			else if (Total == 0 && !AssetRegistry.PathExists(PathPrefix))
+			{
+				// A folder that does not exist and a folder that is empty read
+				// identically, and the usual cause is a name prefix passed
+				// where a folder was wanted.
+				Note = FString::Printf(
+					TEXT("the registry lists no folder '%s' - check the spelling, and remember 'path_prefix' is a folder rather than the start of an asset name"),
+					*PathPrefix);
+			}
+			return FUplinkToolResult::Ok(Data, Note);
 		});
 
 	Registry.RegisterQuick(
 		TEXT("asset_dependencies"),
-		TEXT("List the packages an asset depends on. 'package' is the package path, e.g. /Game/Maps/Arena. The reply carries 'total' and 'truncated', so a capped list is never mistaken for the whole set."),
-		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"},"max":{"type":"number","default":200}},"required":["package"]})json"),
+		TEXT("List the packages an asset depends on. 'package' is the package path, e.g. /Game/Maps/Arena (an object path is trimmed back to it). A package the registry does not carry is refused rather than answered with an empty list. The reply carries 'total' and 'truncated', so a capped list is never mistaken for the whole set."),
+		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"},"max":{"type":"number","default":200,"description":"Names returned, capped at 5000; 'total' counts them all and 'truncated' says the list was cut"}},"required":["package"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
+			const FString Supplied = GetString(Ctx.Params, TEXT("package"));
+			if (Supplied.IsEmpty())
+			{
+				return FUplinkToolResult::Error(TEXT("'package' is required - a content package path such as /Game/Maps/Arena"));
+			}
+			const FName PackageName = ResolvePackageName(Supplied);
 			TArray<FName> Dependencies;
-			GetAssetRegistry().GetDependencies(FName(*GetString(Ctx.Params, TEXT("package"))), Dependencies,
+			const bool bFound = GetAssetRegistry().GetDependencies(PackageName, Dependencies,
 				UE::AssetRegistry::EDependencyCategory::Package);
-			return PackageNameList(Dependencies, TEXT("dependencies"), ReadMax(Ctx));
+			if (!PackageIsInRegistry(PackageName, bFound))
+			{
+				return FUplinkToolResult::Error(UnknownPackageError(PackageName, Supplied));
+			}
+			return PackageNameList(Dependencies, TEXT("dependencies"), ReadMax(Ctx), PackageName);
 		});
 
 	Registry.RegisterQuick(
 		TEXT("asset_referencers"),
-		TEXT("List the packages that reference an asset. 'package' is the package path, e.g. /Game/BP_Door. The reply carries 'total' and 'truncated', so a capped list is never mistaken for the whole set."),
-		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"},"max":{"type":"number","default":200}},"required":["package"]})json"),
+		TEXT("List the packages that reference an asset. 'package' is the package path, e.g. /Game/BP_Door (an object path is trimmed back to it). A package the registry does not carry is refused rather than answered with an empty list - and note the graph is built from what is on disk, so an unsaved edit is not in it yet. The reply carries 'total' and 'truncated', so a capped list is never mistaken for the whole set."),
+		TEXT(R"json({"type":"object","properties":{"package":{"type":"string"},"max":{"type":"number","default":200,"description":"Names returned, capped at 5000; 'total' counts them all and 'truncated' says the list was cut"}},"required":["package"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
+			const FString Supplied = GetString(Ctx.Params, TEXT("package"));
+			if (Supplied.IsEmpty())
+			{
+				return FUplinkToolResult::Error(TEXT("'package' is required - a content package path such as /Game/Maps/Arena"));
+			}
+			const FName PackageName = ResolvePackageName(Supplied);
 			TArray<FName> Referencers;
-			GetAssetRegistry().GetReferencers(FName(*GetString(Ctx.Params, TEXT("package"))), Referencers,
+			const bool bFound = GetAssetRegistry().GetReferencers(PackageName, Referencers,
 				UE::AssetRegistry::EDependencyCategory::Package);
-			return PackageNameList(Referencers, TEXT("referencers"), ReadMax(Ctx));
+			if (!PackageIsInRegistry(PackageName, bFound))
+			{
+				return FUplinkToolResult::Error(UnknownPackageError(PackageName, Supplied));
+			}
+			return PackageNameList(Referencers, TEXT("referencers"), ReadMax(Ctx), PackageName);
 		});
 
 	Registry.RegisterQuick(
@@ -438,23 +536,31 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 					AsBlueprint->GeneratedClass ? AsBlueprint->GeneratedClass->GetPathName() : TEXT(""));
 			}
 
-			bool bSave = false;
-			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSave);
-			if (bSave)
+			bool bSaveRequested = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSaveRequested);
+			bool bSaved = false;
+			if (bSaveRequested)
 			{
 				TArray<UPackage*> Packages;
 				Packages.Add(Created->GetOutermost());
-				bSave = SavePackagesUnattended(Packages, /*bCheckDirty=*/false);
+				TArray<UPackage*> Failed;
+				bSaved = SavePackagesUnattended(Packages, /*bCheckDirty=*/false, &Failed)
+					&& PackageReachedDisk(Packages[0], Failed);
 			}
-			Data->SetBoolField(TEXT("saved"), bSave);
+			Data->SetBoolField(TEXT("saved"), bSaved);
 
-			return FUplinkToolResult::Ok(Data);
+			// A save that did not land leaves the asset in memory only, and the
+			// next editor restart takes it. That is worth a sentence rather
+			// than a false field the caller has to think to read.
+			return FUplinkToolResult::Ok(Data, (bSaveRequested && !bSaved)
+				? FString::Printf(TEXT("%s was created but the save did not reach disk - it exists in memory only and is lost when the editor closes. A read-only file or a source control checkout is the usual cause; fix that and call save with asset:'%s'."), *Created->GetPathName(), *Path)
+				: FString());
 		});
 
 	Registry.RegisterQuick(
 		TEXT("asset_import"),
-		TEXT("Import a file from disk into the project - FBX/OBJ meshes, textures (png/jpg/tga/exr), audio (wav), and anything else the editor's importers handle - fully automated (no dialogs, sensible defaults). 'file' is an absolute path; 'destination' a /Game/ folder. Set save:true to write the .uasset immediately."),
-		TEXT(R"json({"type":"object","properties":{"file":{"type":"string","description":"Absolute source file path"},"destination":{"type":"string","description":"e.g. /Game/Imported"},"name":{"type":"string","description":"Optional asset name (default: file name)"},"save":{"type":"boolean","default":false}},"required":["file","destination"]})json"),
+		TEXT("Import a file from disk into the project - FBX/OBJ meshes, textures (png/jpg/tga/exr), audio (wav), and anything else the editor's importers handle - fully automated (no dialogs, sensible defaults). 'file' is an absolute path; 'destination' a /Game/ folder. An asset already sitting at that path is REPLACED in place, so check with asset_search first if that is not what you want. Set save:true to write the .uasset immediately; 'saved' then reports whether it actually reached disk."),
+		TEXT(R"json({"type":"object","properties":{"file":{"type":"string","description":"Absolute source file path"},"destination":{"type":"string","description":"e.g. /Game/Imported"},"name":{"type":"string","description":"Optional asset name (default: file name). Formats routed through Interchange name their own assets and ignore this - the reply says so when that happens"},"save":{"type":"boolean","default":false}},"required":["file","destination"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -475,15 +581,20 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			Task->DestinationName = GetString(Ctx.Params, TEXT("name"));
 			Task->bAutomated = true;
 			Task->bReplaceExisting = true;
-			bool bSave = false;
-			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSave);
-			Task->bSave = bSave;
+			bool bSaveRequested = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("save")), bSaveRequested);
+			// Deliberately not Task->bSave: AssetTools drops the result of the
+			// save it runs there, so the only thing this could report back is
+			// the flag the caller passed in - a "saved" that means "asked for".
+			Task->bSave = false;
 
 			FAssetToolsModule& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 			AssetTools.Get().ImportAssetTasks({ Task });
 
 			TArray<TSharedPtr<FJsonValue>> Imported;
-			for (const UObject* Object : Task->GetObjects())
+			TArray<UPackage*> Packages;
+			bool bGotRequestedName = Task->DestinationName.IsEmpty();
+			for (UObject* Object : Task->GetObjects())
 			{
 				if (Object)
 				{
@@ -491,21 +602,51 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 					Row->SetStringField(TEXT("asset"), Object->GetPathName());
 					Row->SetStringField(TEXT("class"), Object->GetClass()->GetName());
 					Imported.Add(MakeShared<FJsonValueObject>(Row));
+					Packages.AddUnique(Object->GetOutermost());
+					bGotRequestedName = bGotRequestedName || Object->GetName() == Task->DestinationName;
 				}
 			}
 			if (Imported.Num() == 0)
 			{
 				return FUplinkToolResult::Error(TEXT("import produced no assets (unsupported format or importer error - see output_log)"));
 			}
+
+			bool bSaved = false;
+			if (bSaveRequested)
+			{
+				TArray<UPackage*> Failed;
+				bSaved = SavePackagesUnattended(Packages, /*bCheckDirty=*/false, &Failed);
+				for (UPackage* Package : Packages)
+				{
+					bSaved = bSaved && PackageReachedDisk(Package, Failed);
+				}
+			}
+
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetArrayField(TEXT("imported"), Imported);
-			Data->SetBoolField(TEXT("saved"), bSave);
-			return FUplinkToolResult::Ok(Data);
+			Data->SetBoolField(TEXT("saved"), bSaved);
+
+			TArray<FString> Notes;
+			if (bSaveRequested && !bSaved)
+			{
+				Notes.Add(TEXT("the save did not reach disk - the assets exist in memory only and are lost when the editor closes. A read-only file or a source control checkout is the usual cause; see output_log"));
+			}
+			if (!bGotRequestedName)
+			{
+				// Interchange - which handles most mesh and texture formats now -
+				// takes its names from its own pipeline and ignores the task's.
+				// The asset is real, it is just not called what was asked for,
+				// and a later lookup by that name would find nothing.
+				Notes.Add(FString::Printf(
+					TEXT("nothing came in named '%s': the importer for this format names its own assets. Use the paths in 'imported' to address them"),
+					*Task->DestinationName));
+			}
+			return FUplinkToolResult::Ok(Data, Notes.Num() ? FString::Join(Notes, TEXT("; ")) : FString());
 		});
 
 	Registry.RegisterQuick(
 		TEXT("save"),
-		TEXT("Write edited assets to disk. Authoring tools leave their work in memory and merely mark it dirty, so anything not saved is lost when the editor closes - blueprint graphs especially. With no arguments this saves everything dirty, including the level; pass 'asset' to save one package by path. 'list_only' reports what is unsaved without writing."),
+		TEXT("Write edited assets to disk. Authoring tools leave their work in memory and merely mark it dirty, so anything not saved is lost when the editor closes - blueprint graphs especially. With no arguments this saves everything dirty, including the level; pass 'asset' to save one package by path. 'list_only' reports what is unsaved without writing. 'saved' names only the packages that came back clean after the write; anything still holding changes lands in 'failed' and the call is reported as a failure."),
 		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string","description":"Package or object path; omit to save everything dirty"},"list_only":{"type":"boolean","default":false},"include_level":{"type":"boolean","default":true}}})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -537,6 +678,15 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 						TEXT("no package '%s' is loaded. Pass the path the asset was created at, e.g. /Game/Folder/Asset."),
 						*PackageName));
 				}
+				if (Package->HasAnyPackageFlags(PKG_CompiledIn) || Package == GetTransientPackage())
+				{
+					// The save path drops these without a word and still reports
+					// success, so the reply would name a package it never wrote
+					// and could never write.
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' is code or transient, not an asset on disk - there is nothing here to write. Pass a content path, e.g. /Game/Folder/Asset."),
+						*PackageName));
+				}
 				Packages.Add(Package);
 			}
 			else
@@ -556,10 +706,21 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 				TArray<TSharedPtr<FJsonValue>> Names;
 				for (const UPackage* Package : Packages)
 				{
+					// A named package that is already clean holds nothing
+					// unsaved; listing it under 'unsaved' invents work for the
+					// caller to chase.
+					if (bListOnly && !Package->IsDirty())
+					{
+						continue;
+					}
 					Names.Add(MakeShared<FJsonValueString>(Package->GetName()));
 				}
+				if (bListOnly)
+				{
+					Data->SetNumberField(TEXT("count"), Names.Num());
+				}
 				Data->SetArrayField(bListOnly ? TEXT("unsaved") : TEXT("saved"), Names);
-				return FUplinkToolResult::Ok(Data, Packages.Num() == 0
+				return FUplinkToolResult::Ok(Data, (bListOnly ? Names.Num() : Packages.Num()) == 0
 					? TEXT("nothing to save") : FString());
 			}
 
@@ -568,26 +729,41 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			TArray<UPackage*> Failed;
 			const bool bAllSaved = SavePackagesUnattended(Packages, /*bCheckDirty=*/AssetPath.IsEmpty(), &Failed);
 
-			// 'saved' is built AFTER the attempt and excludes the failures, so a
-			// package can no longer appear in both lists at once.
+			// 'saved' is built from what the packages themselves say afterwards,
+			// not from the list the save was handed: the unattended path returns
+			// before it ever fills that list, so it comes back empty however the
+			// write went. Believing it put every package in 'saved' - including
+			// the read-only one still sitting dirty in memory - under a message
+			// that read "0 of 1 package(s) failed".
 			TArray<TSharedPtr<FJsonValue>> SavedNames;
 			TArray<TSharedPtr<FJsonValue>> FailedNames;
 			for (UPackage* Package : Packages)
 			{
 				const TSharedRef<FJsonValueString> Name = MakeShared<FJsonValueString>(Package->GetName());
-				(Failed.Contains(Package) ? FailedNames : SavedNames).Add(Name);
+				(PackageReachedDisk(Package, Failed) ? SavedNames : FailedNames).Add(Name);
 			}
 			Data->SetArrayField(TEXT("saved"), SavedNames);
 			if (FailedNames.Num() > 0)
 			{
+				// The lists ride along with the refusal: a message that names a
+				// 'failed' field the reply does not carry is the same defect in
+				// miniature.
 				Data->SetArrayField(TEXT("failed"), FailedNames);
+				FUplinkToolResult Failure = FUplinkToolResult::Error(FString::Printf(
+					TEXT("save did not complete - %d of %d package(s) still hold unsaved changes and are named in 'failed'. A read-only file or a source control checkout is the usual cause: make the file writable or check it out, then call save again. A level that has never been saved (a /Temp/ package) has no file to write to yet - name it from the editor once first."),
+					FailedNames.Num(), Packages.Num()));
+				Failure.Data = Data;
+				return Failure;
 			}
-
 			if (!bAllSaved)
 			{
-				return FUplinkToolResult::Error(FString::Printf(
-					TEXT("save did not complete (%d of %d package(s) failed) - a read-only file or source control checkout is the usual cause"),
-					Failed.Num(), Packages.Num()));
+				// Every package came back clean, so the writes landed; the
+				// editor is reporting something around them - a checkout it
+				// could not make, an external package it could not add. Calling
+				// that a total failure would be the same lie pointing the other
+				// way.
+				return FUplinkToolResult::Ok(Data, FString::Printf(
+					TEXT("saved %d package(s), but the editor reported a problem during the save - see output_log"), SavedNames.Num()));
 			}
 			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("saved %d package(s)"), SavedNames.Num()));
 		});
