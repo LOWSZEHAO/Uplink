@@ -316,7 +316,7 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("viewport_annotate"),
-		TEXT("Screenshot the running game AND report where each matching actor is on screen - name, class, screen-space rect [x,y,w,h], center, distance - so what's visible is grounded in coordinates, not pixel guessing. Off-screen matches are listed with on_screen:false. PIE only (uses the player's camera). include_image:false skips the PNG for a cheap 'what can I see' query."),
+		TEXT("Screenshot the running game AND report where each matching actor is on screen - name, class, screen-space rect [x,y,w,h], center, distance - so what's visible is grounded in coordinates, not pixel guessing. Off-screen matches are listed with on_screen:false - which means the projected box does not overlap the viewport, not merely that the actor is behind you. A rect is clamped to the viewport and flagged 'clipped' when the actor extends past its edge, or 'partially_behind_camera' when some of it is behind the near plane; in both cases the rect is smaller than the actor. PIE only (uses the player's camera). include_image:false skips the PNG for a cheap 'what can I see' query."),
 		TEXT(R"json({"type":"object","properties":{"class_contains":{"type":"string"},"name_contains":{"type":"string"},"max":{"type":"number","default":25},"include_image":{"type":"boolean","default":true}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -336,6 +336,14 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 
 			const FVector CameraLocation = PC->PlayerCameraManager
 				? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
+
+			// Needed to answer "is this on screen" honestly. A projection that
+			// succeeds only means the point is in FRONT of the camera, not that
+			// it landed anywhere a player could see.
+			int32 ViewportX = 0, ViewportY = 0;
+			PC->GetViewportSize(ViewportX, ViewportY);
+			const double ViewportW = ViewportX > 0 ? static_cast<double>(ViewportX) : 0.0;
+			const double ViewportH = ViewportY > 0 ? static_cast<double>(ViewportY) : 0.0;
 
 			TArray<TSharedPtr<FJsonValue>> Annotations;
 			for (TActorIterator<AActor> It(PieWorld); It && Annotations.Num() < Max; ++It)
@@ -392,19 +400,55 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 				Row->SetStringField(TEXT("label"), Actor->GetActorLabel());
 				Row->SetStringField(TEXT("class"), Actor->GetClass()->GetName());
 				Row->SetNumberField(TEXT("distance"), FVector::Dist(CameraLocation, Origin));
-				Row->SetBoolField(TEXT("on_screen"), ProjectedCorners > 0);
-				if (ProjectedCorners > 0)
+				// A successful projection is not visibility. ProjectWorldLocation
+				// ToScreen fails only for points BEHIND the camera, so anything
+				// merely in front of it - including an actor far off to the side -
+				// came back on_screen:true with a rect starting at x=12531 on a
+				// 2065-wide viewport. And the raw min/max of eight corners spans
+				// wildly when the box straddles the frustum edge, which is how a
+				// 10452-pixel-wide rect got reported for something two metres
+				// across. On screen now means the projected box actually overlaps
+				// the viewport.
+				const bool bAnyProjected = ProjectedCorners > 0;
+				const bool bOverlapsViewport = bAnyProjected && ViewportW > 0.0 && ViewportH > 0.0
+					&& MaxPt.X >= 0.0 && MaxPt.Y >= 0.0 && Min.X <= ViewportW && Min.Y <= ViewportH;
+				Row->SetBoolField(TEXT("on_screen"), bOverlapsViewport);
+
+				// No rect for something off screen. Clamping one anyway produced a
+				// zero-size box pinned to whichever corner it went past, which
+				// reads like a real position and is somewhere a caller might aim.
+				if (bOverlapsViewport)
 				{
+					// Clamped to what a viewer could actually point at, since the
+					// whole reason to return a rect is so somebody can aim at it.
+					const double ClampedMinX = FMath::Clamp(Min.X, 0.0, ViewportW);
+					const double ClampedMinY = FMath::Clamp(Min.Y, 0.0, ViewportH);
+					const double ClampedMaxX = FMath::Clamp(MaxPt.X, 0.0, ViewportW);
+					const double ClampedMaxY = FMath::Clamp(MaxPt.Y, 0.0, ViewportH);
+
 					TArray<TSharedPtr<FJsonValue>> Rect;
-					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(Min.X)));
-					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(Min.Y)));
-					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(MaxPt.X - Min.X)));
-					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(MaxPt.Y - Min.Y)));
+					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(ClampedMinX)));
+					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(ClampedMinY)));
+					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(ClampedMaxX - ClampedMinX)));
+					Rect.Add(MakeShared<FJsonValueNumber>(FMath::RoundToInt(ClampedMaxY - ClampedMinY)));
 					Row->SetArrayField(TEXT("rect"), Rect);
+
 					TSharedRef<FJsonObject> Center = MakeShared<FJsonObject>();
-					Center->SetNumberField(TEXT("x"), FMath::RoundToInt((Min.X + MaxPt.X) * 0.5));
-					Center->SetNumberField(TEXT("y"), FMath::RoundToInt((Min.Y + MaxPt.Y) * 0.5));
+					Center->SetNumberField(TEXT("x"), FMath::RoundToInt((ClampedMinX + ClampedMaxX) * 0.5));
+					Center->SetNumberField(TEXT("y"), FMath::RoundToInt((ClampedMinY + ClampedMaxY) * 0.5));
 					Row->SetObjectField(TEXT("center"), Center);
+
+					// Both say the rect is smaller than the thing it describes,
+					// for different reasons, and a caller measuring an actor's
+					// apparent size needs to know which it is holding.
+					if (Min.X < 0.0 || Min.Y < 0.0 || MaxPt.X > ViewportW || MaxPt.Y > ViewportH)
+					{
+						Row->SetBoolField(TEXT("clipped"), true);
+					}
+					if (ProjectedCorners < 8)
+					{
+						Row->SetBoolField(TEXT("partially_behind_camera"), true);
+					}
 				}
 				Annotations.Add(MakeShared<FJsonValueObject>(Row));
 			}
@@ -412,6 +456,13 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 			FUplinkToolResult Out = FUplinkToolResult::Ok();
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetArrayField(TEXT("actors"), Annotations);
+			// The frame the rects are measured against. Without it a rect is a
+			// set of numbers with no scale - "is x=1988 near the edge?" has no
+			// answer until you know how wide the viewport is.
+			TSharedRef<FJsonObject> ViewportJson = MakeShared<FJsonObject>();
+			ViewportJson->SetNumberField(TEXT("width"), ViewportX);
+			ViewportJson->SetNumberField(TEXT("height"), ViewportY);
+			Data->SetObjectField(TEXT("viewport"), ViewportJson);
 
 			if (bIncludeImage)
 			{
