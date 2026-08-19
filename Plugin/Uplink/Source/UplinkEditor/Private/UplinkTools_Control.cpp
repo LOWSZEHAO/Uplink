@@ -878,9 +878,23 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			const FString Previous = Player.PC->GetPawn() ? Player.PC->GetPawn()->GetName() : TEXT("");
 			Player.PC->Possess(Target);
 
+			// Possess returns void and does nothing without authority, so the
+			// pawn actually held has to be read back. Reporting the requested
+			// one made a refused possession - a client controller in a
+			// multi-client session, most obviously - indistinguishable from a
+			// successful one.
+			APawn* Actual = Player.PC->GetPawn();
+			if (Actual != Target)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("possession did not take: the controller still holds '%s' rather than '%s'. ")
+					TEXT("A controller without authority over the pawn cannot possess it - check which world this is with 'worlds'."),
+					Actual ? *Actual->GetName() : TEXT("(none)"), *Target->GetName()));
+			}
+
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			Data->SetStringField(TEXT("previous_pawn"), Previous);
-			Data->SetStringField(TEXT("pawn"), Target->GetName());
+			Data->SetStringField(TEXT("pawn"), Actual->GetName());
 			return FUplinkToolResult::Ok(Data);
 		});
 

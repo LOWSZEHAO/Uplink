@@ -121,6 +121,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an agent that placed forty actors and then opened another map to check
   something lost all forty and was told the map opened.
 
+- `task_cancel` says which of the four things happened. It called the older
+  `Cancel` wrapper, which collapses `RequestCancel`'s outcomes into a bool, so
+  a task that reported it could not be interrupted safely - still running, and
+  ending on its own deadline - came back as "task not found or not running".
+  The one case where the caller most needs the truth was told the opposite.
+
+- `possess` reports the pawn the controller actually holds. `Possess` returns
+  void and does nothing without authority, so a refused possession - a client
+  controller in a multi-client session - was reported as a successful one,
+  because the reply echoed the pawn that had been asked for.
+
+- `capture_widget` and `ui_tree` honour the `wN` a path carries. The window
+  index was parsed and thrown away under a comment claiming it was already
+  resolved, so a path taken from an asset editor was walked from whichever
+  window was largest, and the screenshot came back of a different widget
+  entirely, reported as the one asked for. An explicit `window` still wins, and
+  a path naming a window that is no longer open is refused rather than walked
+  somewhere else.
+
 - `set_property` verifies the value survived and refuses when it did not. A
   Blueprint variable that is not instance editable is put back by the actor's
   construction scripts on the way out of `PostEditChangeProperty`, and the

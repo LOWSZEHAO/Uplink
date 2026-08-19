@@ -175,11 +175,27 @@ void UplinkTools::RegisterCore(FUplinkToolRegistry& Registry, FUplinkLogCapture&
 			{
 				return FUplinkToolResult::Error(Error);
 			}
-			if (!Tasks.Cancel(Id))
+			// RequestCancel distinguishes four outcomes and writes a sentence
+			// for each. The older Cancel() collapses them into a bool, so a
+			// task that refused interruption - still running, ending on its own
+			// deadline - was reported as "task not found or not running", which
+			// states the opposite of what happened.
+			FString Outcome;
+			switch (Tasks.RequestCancel(Id, Outcome))
 			{
-				return FUplinkToolResult::Error(TEXT("task not found or not running"));
+			case EUplinkCancelOutcome::Stopped:
+				return FUplinkToolResult::Ok(nullptr, TEXT("cancelled"));
+
+			case EUplinkCancelOutcome::AlreadyEnded:
+				// Nothing is running, which is what the caller wanted; saying
+				// "cancelled" would take credit for someone else's ending.
+				return FUplinkToolResult::Ok(nullptr, Outcome);
+
+			case EUplinkCancelOutcome::Refused:
+			case EUplinkCancelOutcome::UnknownTask:
+			default:
+				return FUplinkToolResult::Error(Outcome);
 			}
-			return FUplinkToolResult::Ok(nullptr, TEXT("cancelled"));
 		});
 
 	Registry.RegisterQuick(

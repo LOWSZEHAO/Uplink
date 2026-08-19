@@ -66,17 +66,56 @@ namespace
 	}
 
 	/**
-	 * Resolve which window a tool call targets:
+	 * The leading 'wN' of a path handed out by ui_tree, or INDEX_NONE when the
+	 * path carries none. The index is only meaningful against the window list
+	 * as it stood when the path was produced.
+	 */
+	int32 WindowIndexFromPath(const FString& Path)
+	{
+		TArray<FString> Steps;
+		Path.ParseIntoArray(Steps, TEXT("/"));
+		if (Steps.Num() == 0 || !Steps[0].StartsWith(TEXT("w")))
+		{
+			return INDEX_NONE;
+		}
+		const FString Digits = Steps[0].RightChop(1);
+		return Digits.IsNumeric() ? FCString::Atoi(*Digits) : INDEX_NONE;
+	}
+
+	/**
+	 * Resolve which window a tool call targets, in order:
 	 *  - 'window' title substring when given (first match)
+	 *  - the wN a ui_tree path carries, when it has one
 	 *  - otherwise the largest window on screen (in practice the main editor frame).
 	 */
-	TSharedPtr<SWindow> ResolveWindow(const FString& TitleFilter, int32& OutIndex, FString& OutError)
+	TSharedPtr<SWindow> ResolveWindow(const FString& TitleFilter, int32& OutIndex, FString& OutError,
+		int32 PathWindowIndex = INDEX_NONE)
 	{
 		const TArray<TSharedRef<SWindow>> Windows = TopLevelWindows();
 		if (Windows.Num() == 0)
 		{
 			OutError = TEXT("no top-level Slate windows exist");
 			return nullptr;
+		}
+
+		// An explicit 'window' wins; otherwise the wN a ui_tree path carries is
+		// the window that path was measured in. Ignoring it meant a path taken
+		// from an asset editor was walked from whichever window was largest -
+		// usually the main frame - and the indices below it addressed a
+		// different widget entirely, which capture_widget then screenshotted
+		// and reported as the one asked for.
+		if (TitleFilter.IsEmpty() && PathWindowIndex != INDEX_NONE)
+		{
+			if (!Windows.IsValidIndex(PathWindowIndex))
+			{
+				OutError = FString::Printf(
+					TEXT("this path names window w%d and there are %d open now. Window indices are only valid ")
+					TEXT("while the same windows are open - take a fresh path from ui_tree."),
+					PathWindowIndex, Windows.Num());
+				return nullptr;
+			}
+			OutIndex = PathWindowIndex;
+			return Windows[PathWindowIndex];
 		}
 
 		if (!TitleFilter.IsEmpty())
@@ -125,7 +164,7 @@ namespace
 		{
 			if (Step.StartsWith(TEXT("w")))
 			{
-				continue; // window prefix - already resolved
+				continue; // window prefix - resolved by ResolveWindow before this walk
 			}
 			FChildren* Children = Current->GetAllChildren();
 			const int32 Index = FCString::Atoi(*Step);
@@ -302,7 +341,7 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 			{
 				FString Error;
 				int32 WindowIndex = 0;
-				TSharedPtr<SWindow> Window = ResolveWindow(WindowFilter, WindowIndex, Error);
+				TSharedPtr<SWindow> Window = ResolveWindow(WindowFilter, WindowIndex, Error, WindowIndexFromPath(StartPath));
 				if (!Window.IsValid())
 				{
 					return FUplinkToolResult::Error(Error);
@@ -344,9 +383,14 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 				return FUplinkToolResult::Error(TEXT("Slate is not initialized"));
 			}
 
+			// Read before resolving the window: the path names the window it was
+			// measured in, and that is what decides which one this walks.
+			const FString Path = GetString(Ctx.Params, TEXT("path"));
+
 			FString Error;
 			int32 WindowIndex = 0;
-			TSharedPtr<SWindow> Window = ResolveWindow(GetString(Ctx.Params, TEXT("window")), WindowIndex, Error);
+			TSharedPtr<SWindow> Window = ResolveWindow(GetString(Ctx.Params, TEXT("window")), WindowIndex, Error,
+				WindowIndexFromPath(Path));
 			if (!Window.IsValid())
 			{
 				return FUplinkToolResult::Error(Error);
@@ -355,7 +399,6 @@ void UplinkTools::RegisterSlate(FUplinkToolRegistry& Registry)
 			TSharedRef<SWidget> Target = Window.ToSharedRef();
 			FString TargetPath = FString::Printf(TEXT("w%d"), WindowIndex);
 
-			const FString Path = GetString(Ctx.Params, TEXT("path"));
 			const FString TypeFilter = GetString(Ctx.Params, TEXT("type"));
 			if (!Path.IsEmpty())
 			{
