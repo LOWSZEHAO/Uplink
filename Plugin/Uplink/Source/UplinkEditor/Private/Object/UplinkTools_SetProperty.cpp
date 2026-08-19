@@ -9,8 +9,65 @@
 #include "UplinkValueConverter.h"
 
 #include "UObject/UnrealType.h"
+#include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 using namespace UplinkToolUtil;
+
+namespace
+{
+	/** Compare what was asked for against what is actually there, tolerating float drift. */
+	bool SameValue(const TSharedPtr<FJsonValue>& Wanted, const TSharedPtr<FJsonValue>& Landed)
+	{
+		if (!Wanted.IsValid() || !Landed.IsValid())
+		{
+			return Wanted.IsValid() == Landed.IsValid();
+		}
+		double A = 0.0, B = 0.0;
+		if (Wanted->TryGetNumber(A) && Landed->TryGetNumber(B))
+		{
+			// A double written from JSON and read back can differ in the last
+			// bits; that is not a failed write.
+			return FMath::Abs(A - B) <= 0.0001;
+		}
+		return FJsonValue::CompareEqual(*Wanted, *Landed);
+	}
+
+	/** One line of JSON, for putting a value inside a sentence. */
+	FString Describe(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid() || Value->Type == EJson::Null)
+		{
+			return TEXT("nothing");
+		}
+		if (Value->Type == EJson::String)
+		{
+			return FString::Printf(TEXT("\"%s\""), *Value->AsString());
+		}
+		if (Value->Type == EJson::Boolean)
+		{
+			return Value->AsBool() ? TEXT("true") : TEXT("false");
+		}
+		double Number = 0.0;
+		if (Value->TryGetNumber(Number))
+		{
+			return FString::SanitizeFloat(Number);
+		}
+		FString Text;
+		const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Text);
+		if (Value->Type == EJson::Object)
+		{
+			FJsonSerializer::Serialize(Value->AsObject().ToSharedRef(), Writer);
+		}
+		else if (Value->Type == EJson::Array)
+		{
+			FJsonSerializer::Serialize(Value->AsArray(), Writer);
+		}
+		return Text.IsEmpty() ? TEXT("?") : Text;
+	}
+}
 
 void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 {
@@ -78,11 +135,51 @@ void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 				OwningObject->MarkPackageDirty();
 			}
 #endif
+			// Read back through a FRESH resolve rather than the address written
+			// to. PostEditChangeProperty can rerun an actor's construction
+			// scripts, which rebuilds components - so the address the write used
+			// may no longer belong to anything, and reading it would be reading
+			// freed memory to report a number that is not there.
+			const FString PropertyPath = GetString(Ctx.Params, TEXT("property"));
+			void* ReadAddr = nullptr;
+			FString ReadError;
+			FProperty* ReadProperty = ResolvePropertyPath(Object, PropertyPath, ReadAddr, ReadError);
+			const TSharedPtr<FJsonValue> Landed = (ReadProperty && ReadAddr)
+				? UplinkValue::PropertyToJson(ReadProperty, ReadAddr)
+				: nullptr;
+
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 			// The object the value actually landed on, which is the component
 			// rather than the actor whenever the path crossed a reference.
 			Data->SetStringField(TEXT("object"), OwningObject->GetPathName());
-			Data->SetField(TEXT("value"), UplinkValue::PropertyToJson(Property, ValueAddr));
+			Data->SetStringField(TEXT("property"), PropertyPath);
+			if (Landed.IsValid())
+			{
+				Data->SetField(TEXT("value"), Landed);
+			}
+
+			// A write that did not survive must not report success. It happens
+			// for a real reason: a Blueprint variable that is not instance
+			// editable is not meant to be overridden per instance, so rerunning
+			// the construction scripts puts the class default back - and the
+			// write, the change event and the dirty flag all succeed on the way
+			// past. The silence is worse than the reset, because the next thing
+			// anybody does is trust the value.
+			const bool bLanded = SameValue(Value, Landed);
+			if (!bLanded)
+			{
+				const bool bBlueprintVariable = Property->HasAnyPropertyFlags(CPF_BlueprintVisible);
+				const bool bNotInstanceEditable =
+					!Property->HasAnyPropertyFlags(CPF_Edit) || Property->HasAnyPropertyFlags(CPF_DisableEditOnInstance);
+				const FString Why = (bBlueprintVariable && bNotInstanceEditable)
+					? TEXT(" This Blueprint variable is not instance editable, so the actor's construction scripts put the class default back. Tick 'Instance Editable' on the variable, or write the class default on the Blueprint instead of the placed actor.")
+					: FString();
+				Data->SetBoolField(TEXT("written"), false);
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("the write did not survive: '%s' on %s reads back as %s.%s"),
+					*PropertyPath, *OwningObject->GetName(), *Describe(Landed), *Why));
+			}
+			Data->SetBoolField(TEXT("written"), true);
 
 			// Writing a CDO or a component template succeeds and changes nothing
 			// anyone is looking at, because instances already in the level keep

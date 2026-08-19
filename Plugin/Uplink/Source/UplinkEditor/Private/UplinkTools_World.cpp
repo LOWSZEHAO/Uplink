@@ -7,6 +7,7 @@
 #include "UplinkToolUtil.h"
 
 #include "Editor.h"
+#include "LevelEditorSubsystem.h"
 #include "LevelEditorViewport.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
@@ -1209,4 +1210,86 @@ void UplinkTools::RegisterWorld(FUplinkToolRegistry& Registry)
 				TEXT("%s spawned with a %g x %g x %g box brush (%d polygons)"),
 				*Volume->GetName(), Size.X, Size.Y, Size.Z, PolyCount));
 		});
+
+	// Opening and creating levels went through call_function on
+	// LevelEditorSubsystem, and the raw calls have a trap in them: NewLevel
+	// creates the asset and returns true WITHOUT making it the world the editor
+	// is editing. Every spawn_actor afterwards then lands in whatever level was
+	// already open, the save writes an empty level, and not one call reports a
+	// problem. That cost an afternoon; these two exist so it cannot happen
+	// again, because they check.
+	auto CurrentMap = []() -> FString
+	{
+		const UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+		return EditorWorld ? EditorWorld->GetOutermost()->GetName() : FString();
+	};
+
+	Registry.RegisterQuick(
+		TEXT("level_open"),
+		TEXT("Open a level for editing, and confirm the editor is actually on it. The confirmation is the point: the underlying engine call can report success while the editor keeps editing the level it already had, and everything placed afterwards then goes into the wrong world without a single call complaining. Returns the map the editor ended up on."),
+		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Level asset path, e.g. /Game/Maps/Arena"}},"required":["path"],"additionalProperties":false})json"),
+		/*bReadOnly=*/false,
+		[CurrentMap](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Path = GetString(Ctx.Params, TEXT("path"));
+			ULevelEditorSubsystem* Levels = GEditor ? GEditor->GetEditorSubsystem<ULevelEditorSubsystem>() : nullptr;
+			if (!Levels)
+			{
+				return FUplinkToolResult::Error(TEXT("no level editor subsystem - is this a commandlet or a cooked build?"));
+			}
+			if (!Levels->LoadLevel(Path))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("could not open '%s' - check the path names a level asset that exists"), *Path));
+			}
+			const FString Now = CurrentMap();
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("map"), Now);
+			if (Now != Path)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("asked to open '%s' and the editor is on '%s' - anything placed now would go into the wrong level"),
+					*Path, *Now));
+			}
+			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("editing %s"), *Now));
+		},
+		/*bTransactional=*/false);
+
+	Registry.RegisterQuick(
+		TEXT("level_new"),
+		TEXT("Create an empty level AND switch the editor to it. The engine's own NewLevel does the first half only: it writes the asset, answers true, and leaves the editor editing whatever it was editing before - so actors spawned next land somewhere else entirely and the new level saves empty, silently. This creates it, opens it, and verifies the editor arrived, so a later spawn cannot go astray. It does not save; call save when the level has something in it."),
+		TEXT(R"json({"type":"object","properties":{"path":{"type":"string","description":"Where to create it, e.g. /Game/Maps/Arena"},"partitioned":{"type":"boolean","default":false,"description":"World Partition. Leave false for a small fixture level."}},"required":["path"],"additionalProperties":false})json"),
+		/*bReadOnly=*/false,
+		[CurrentMap](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Path = GetString(Ctx.Params, TEXT("path"));
+			bool bPartitioned = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("partitioned")), bPartitioned);
+
+			ULevelEditorSubsystem* Levels = GEditor ? GEditor->GetEditorSubsystem<ULevelEditorSubsystem>() : nullptr;
+			if (!Levels)
+			{
+				return FUplinkToolResult::Error(TEXT("no level editor subsystem - is this a commandlet or a cooked build?"));
+			}
+			if (!Levels->NewLevel(Path, bPartitioned))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("could not create '%s' - a level may already exist there, or the path may not be writable"), *Path));
+			}
+			// The half the engine call leaves out.
+			Levels->LoadLevel(Path);
+
+			const FString Now = CurrentMap();
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("map"), Now);
+			Data->SetBoolField(TEXT("partitioned"), bPartitioned);
+			if (Now != Path)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("created '%s' but the editor is still on '%s' - actors spawned now would go into that level instead, and this one would save empty"),
+					*Path, *Now));
+			}
+			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("created and editing %s"), *Now));
+		},
+		/*bTransactional=*/false);
 }

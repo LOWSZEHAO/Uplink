@@ -737,12 +737,29 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			// that read "0 of 1 package(s) failed".
 			TArray<TSharedPtr<FJsonValue>> SavedNames;
 			TArray<TSharedPtr<FJsonValue>> FailedNames;
+			TArray<TSharedPtr<FJsonValue>> UnnamedNames;
 			for (UPackage* Package : Packages)
 			{
-				const TSharedRef<FJsonValueString> Name = MakeShared<FJsonValueString>(Package->GetName());
-				(PackageReachedDisk(Package, Failed) ? SavedNames : FailedNames).Add(Name);
+				const FString PackageName = Package->GetName();
+				const TSharedRef<FJsonValueString> Name = MakeShared<FJsonValueString>(PackageName);
+				if (PackageReachedDisk(Package, Failed))
+				{
+					SavedNames.Add(Name);
+					continue;
+				}
+				// A /Temp/ package is a level the editor made and nobody has
+				// named yet. It has no file to write to, and it is almost never
+				// the thing the caller was saving - an empty scratch level the
+				// editor happened to be holding turned a whole scenario red for
+				// a save that had otherwise completely succeeded. Report it
+				// separately: it is a fact about the session, not a failure.
+				(PackageName.StartsWith(TEXT("/Temp/")) ? UnnamedNames : FailedNames).Add(Name);
 			}
 			Data->SetArrayField(TEXT("saved"), SavedNames);
+			if (UnnamedNames.Num() > 0)
+			{
+				Data->SetArrayField(TEXT("unnamed"), UnnamedNames);
+			}
 			if (FailedNames.Num() > 0)
 			{
 				// The lists ride along with the refusal: a message that names a
@@ -764,6 +781,12 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 				// way.
 				return FUplinkToolResult::Ok(Data, FString::Printf(
 					TEXT("saved %d package(s), but the editor reported a problem during the save - see output_log"), SavedNames.Num()));
+			}
+			if (UnnamedNames.Num() > 0)
+			{
+				return FUplinkToolResult::Ok(Data, FString::Printf(
+					TEXT("saved %d package(s); %d unnamed /Temp/ level(s) were skipped because they have no file to write to yet - they are listed in 'unnamed' and are not a failure"),
+					SavedNames.Num(), UnnamedNames.Num()));
 			}
 			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("saved %d package(s)"), SavedNames.Num()));
 		});
