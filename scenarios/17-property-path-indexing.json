@@ -1,0 +1,52 @@
+{
+  "_name": "Property paths into arrays",
+  "_purpose": "A dotted property path can index an array element and keep going through it. The interesting value in a game is usually inside one element of a list - an inventory slot, a spawn entry, a waypoint - and without indexing a caller can only fetch the whole array and pick through the JSON afterwards, which an assertion cannot do at all. Found while trying to assert on an inventory slot's count in a real project. Covers the two ways it is misused, because an out-of-range index that reports 'not found' reads as a wrong property name rather than as an empty list.",
+  "_requires": "Any project. Uses AActor.Tags, which every actor has. Editor world, cleans up after itself.",
+  "steps": [
+    { "tool": "delete_actors", "params": { "names": ["UplinkPathProbe"], "world": "editor" } },
+    {
+      "tool": "spawn_actor",
+      "params": { "class_path": "/Script/Engine.StaticMeshActor", "location": { "x": 0, "y": 0, "z": 0 }, "label": "UplinkPathProbe", "world": "editor" }
+    },
+    {
+      "_note": "Tags is a TArray<FName> on AActor - present on literally every actor, so this runs anywhere.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags", "value": ["alpha", "beta", "gamma"], "world": "editor" }
+    },
+    {
+      "_note": "the whole array still reads as before",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags", "world": "editor" },
+      "expect": { "value": ["alpha", "beta", "gamma"] }
+    },
+    {
+      "_note": "and now one element of it",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags[1]", "world": "editor" },
+      "expect": { "value": "beta" }
+    },
+    {
+      "_note": "writing through an index too",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags[2]", "value": "delta", "world": "editor" }
+    },
+    {
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags", "world": "editor" },
+      "expect": { "value": ["alpha", "beta", "delta"] }
+    },
+    {
+      "_note": "an index past the end is refused, and the message says how many there really are",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags[99]", "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "_note": "and indexing something that is not an array is refused rather than ignored",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "bHidden[0]", "world": "editor" },
+      "expect_failure": true
+    },
+    { "tool": "delete_actors", "params": { "names": ["$steps[1].name"], "world": "editor" } }
+  ]
+}

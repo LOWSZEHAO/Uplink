@@ -9,6 +9,19 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## 0.31.0
 
 ### Fixed
+- Property paths index array elements: `Items[0].ItemData.HealPercent` reads
+  through an array, into the struct in that element, across the object
+  reference it holds, and down to a float. `get_property`, `set_property` and
+  `wait_until` share one resolver, so all three gained it at once. The value
+  worth asserting on in a game is usually inside one element of a list — an
+  inventory slot, a spawn entry, a waypoint — and without this a caller could
+  only fetch the whole array and pick through the JSON afterwards, which an
+  assertion cannot do at all. Misuse is refused with the fact that identifies
+  it: an index past the end says how many elements there really are, because
+  “not found” on an empty inventory reads as a mistyped path rather than as the
+  empty inventory it is describing; indexing a non-array names the type it
+  actually is.
+
 - `wait_until`’s `property_equals` condition takes the same dotted property
   paths `get_property` and `set_property` do. It looked the name up directly on
   the class, so the one tool whose entire job is asserting was the only one that
