@@ -22,6 +22,7 @@
 #include "Components/Widget.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/App.h"
+#include "NavigationSystem.h"
 
 using namespace UplinkToolUtil;
 
@@ -431,8 +432,43 @@ namespace
 			}
 			else if (FPlatformTime::Seconds() - LastProgressAt > 3.0)
 			{
-				return Finish(Pawn, false,
-					TEXT("stalled - no path progress for 3s (is there a NavMeshBoundsVolume covering the area? spawn one and run console 'RebuildNavigation')"), Out);
+				// Standing still and pushing are different failures, and the
+				// velocity separates them. A pawn with speed and no progress has
+				// a path and is being held - a modal that pins the player, a
+				// scripted sequence, a blocking volume - and sending someone to
+				// audit their navmesh over that wastes the one clue they had.
+				// Only the motionless case is worth blaming navigation for.
+				const double Speed = Pawn->GetVelocity().Size2D();
+				FString Reason;
+				if (Speed > 1.0)
+				{
+					Reason = FString::Printf(
+						TEXT("stalled - no path progress for 3s, but the pawn is moving at %.0f uu/s, so it has a path and something is holding it in place ")
+						TEXT("(a modal that locks the player, a scripted sequence, or geometry it cannot pass). Navigation is not the problem here - check ui_live and observe."),
+						Speed);
+				}
+				else
+				{
+					// Ask the navigation system instead of guessing at it. "Is
+					// there a NavMeshBoundsVolume?" is the wrong question when
+					// six of them exist and none has generated data where the
+					// pawn stands - which is what a real project turned out to
+					// be doing, with the volumes, the RecastNavMesh and the
+					// PathFollowingComponent all present and no path produced.
+					// Projecting the pawn's own position onto the navmesh
+					// answers it in one call.
+					const UNavigationSystemV1* Nav = FNavigationSystem::GetCurrent<UNavigationSystemV1>(Pawn->GetWorld());
+					FNavLocation Projected;
+					const bool bOnNavMesh = Nav && Nav->ProjectPointToNavigation(Position, Projected);
+					Reason = Nav == nullptr
+						? TEXT("stalled - the world has no navigation system, so nothing can path here")
+						: bOnNavMesh
+							? TEXT("stalled - the pawn is standing on the navmesh but never moved, so the path to the goal could not be built. ")
+								TEXT("The goal is most likely off the navmesh, or on a disconnected island from where the pawn stands.")
+							: TEXT("stalled - the pawn is NOT standing on generated navmesh, so no path could start. ")
+								TEXT("A NavMeshBoundsVolume existing is not enough; it has to have built data here. Check its extent and run console 'RebuildNavigation'.");
+				}
+				return Finish(Pawn, false, *Reason, Out);
 			}
 			return EUplinkToolStep::Pending;
 		}
@@ -910,7 +946,7 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 	{
 		FUplinkToolInfo Info;
 		Info.Name = TEXT("navigate_to");
-		Info.Description = TEXT("Walk the player pawn to a location or actor using the game's navmesh - like a click-to-move player, no manual input math. Resolves when within 'accept_radius' of the goal; reports a stall instead of hanging if there is no path (most often: the level has no NavMeshBoundsVolume - spawn one and run console 'RebuildNavigation'). PIE only.");
+		Info.Description = TEXT("Walk the player pawn to a location or actor using the game's navmesh - like a click-to-move player, no manual input math. Resolves when within 'accept_radius' of the goal; reports a stall instead of hanging, and says which kind: a pawn that is moving but not progressing has a path and is being held by something (a modal, a scripted sequence, geometry), while one that is not moving at all never got a path - usually a missing NavMeshBoundsVolume. PIE only.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(TEXT(R"json({"type":"object","properties":{"location":{"type":"object"},"actor":{"type":"string"},"accept_radius":{"type":"number","default":100}}})json"));
 		Info.bReadOnly = false;
 		Info.bTransactional = false; // drives the session, not an undoable edit

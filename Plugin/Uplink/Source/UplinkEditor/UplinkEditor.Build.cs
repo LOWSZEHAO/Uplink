@@ -36,6 +36,9 @@ public class UplinkEditor : ModuleRules
 			// behaviour-tree tools moved to UplinkContentTools and took the rest
 			// of AIModule with them; this one call keeps it needed here.
 			"AIModule",
+			// navigate_to asks the navigation system whether the pawn is even on
+			// a navmesh before blaming one for a stall.
+			"NavigationSystem",
 		});
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
