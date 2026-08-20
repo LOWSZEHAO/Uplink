@@ -147,6 +147,14 @@ AI agent (MCP client) ──┤   (native MCP — no Node needed)   ├── Pl
 
 Every tool declares whether it only reads. Anything that writes runs in its own editor transaction unless it opted out, which is what makes its edits undoable by hand afterwards, and its parameters are checked against its published schema before it runs.
 
+## See it work
+
+```powershell
+node demo\demo.js
+```
+
+Three acts against your own editor: read what the project is and where a player starts, author a moving platform from nothing — mesh, variables, a **Timeline** with its curve, and ten wires into `SetActorLocation` — then place it, play it, and measure that it moves. The Blueprint does not exist when the script starts, and if the platform does not move the script stops rather than printing a success it did not earn. [`demo/`](demo) has the details; `--clean` removes what it left behind.
+
 ## Checks
 
 ```powershell
@@ -168,6 +176,7 @@ Plugin/Uplink/     the UE editor plugin (C++)
 bridge/            Node stdio MCP server (optional)
 scripts/           build, project-linking, checking and scenario-running helpers (PowerShell)
 scenarios/         runnable proof - a regression suite in the tool's own format
+demo/              one script, three acts: understand a project, author a Timeline, prove it moves
 CHANGELOG.md       what changed, and what changed behaviour rather than adding to it
 TOOLS.md           full tool reference (parameters, conventions, security model)
 PROMPTING.md       how to prompt an agent that is driving your editor

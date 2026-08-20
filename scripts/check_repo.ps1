@@ -386,6 +386,62 @@ Invoke-Check "Every scenario parameter is one the tool declares" {
     }
 }
 
+# Grepping a file for tool names says nothing about whether it runs. The first
+# version of this check passed happily on a demo.js with a syntax error in it,
+# which is the same failure this whole script exists to catch: a green line
+# about a file that could not work.
+$NodeExe = Get-Command node -ErrorAction SilentlyContinue
+if (-not $NodeExe) {
+    Write-Skip "The demo and bridge scripts parse" "node is not on PATH"
+}
+else {
+    Invoke-Check "The demo and bridge scripts parse" {
+        foreach ($js in @("demo/demo.js", "bridge/index.js")) {
+            $path = Join-Path $RepoRoot $js
+            if (-not (Test-Path $path)) { "$js is missing"; continue }
+
+            # node --check reports the syntax error on stderr, and Windows
+            # PowerShell turns a native command's stderr into ErrorRecords -
+            # with $ErrorActionPreference = Stop that aborts the whole script
+            # instead of reporting the failure. Send it to a file and read the
+            # exit code, which is the only reliable signal here.
+            $errFile = Join-Path ([System.IO.Path]::GetTempPath()) ("uplink-check-" + [guid]::NewGuid().ToString("N") + ".txt")
+            $previous = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            & $NodeExe.Source --check $path 2> $errFile | Out-Null
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = $previous
+
+            if ($code -ne 0) {
+                $detail = ""
+                if (Test-Path $errFile) {
+                    $detail = ((Get-Content -LiteralPath $errFile | Where-Object { $_ }) | Select-Object -First 2) -join " / "
+                }
+                "$js does not parse: $detail"
+            }
+            Remove-Item $errFile -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Invoke-Check "Every tool the demo calls is registered" {
+    # The demo is the first thing a visitor runs, and it is driven by hand-written
+    # tool names like everything else here. A rename would break it in front of
+    # whoever was watching rather than here.
+    $DemoFile = Join-Path $RepoRoot "demo/demo.js"
+    if (-not (Test-Path $DemoFile)) { "demo/demo.js is missing - the README points at it"; return }
+
+    $Text  = Get-Content -LiteralPath $DemoFile -Raw -Encoding UTF8
+    $Names = @()
+    foreach ($m in [regex]::Matches($Text, 'call\(\s*"([a-z0-9_]+)"'))          { $Names += $m.Groups[1].Value }
+    foreach ($m in [regex]::Matches($Text, 'must\(\s*"[^"]*"\s*,\s*"([a-z0-9_]+)"')) { $Names += $m.Groups[1].Value }
+
+    if ($Names.Count -eq 0) { "no tool calls found in demo/demo.js - the pattern this check looks for has changed"; return }
+    foreach ($n in ($Names | Sort-Object -Unique)) {
+        if ($ToolNames -notcontains $n) { "demo/demo.js calls '$n', which is not a registered tool" }
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Documentation. Nothing generates these files and nothing else verifies them,
 # so they are the only hand-copied surface in the repo that can rot without a
@@ -494,7 +550,7 @@ Invoke-Check "The plugin descriptor and the source tree agree on modules" {
 }
 
 Invoke-Check "No machine-specific paths are committed in the plugin source or bridge" {
-    foreach ($root in @($SourceRoot, (Join-Path $RepoRoot "bridge"))) {
+    foreach ($root in @($SourceRoot, (Join-Path $RepoRoot "bridge"), (Join-Path $RepoRoot "demo"))) {
         if (-not (Test-Path $root)) { continue }
         $files = Get-ChildItem -Path $root -Recurse -File -Include *.cpp, *.h, *.cs, *.js, *.json |
             Where-Object { $_.FullName -notmatch 'node_modules' }
@@ -537,7 +593,7 @@ else {
         if ($Terms.Count -eq 0) { return }
 
         $Targets = @()
-        foreach ($dir in @("Plugin", "bridge", "scenarios", "scripts", ".github")) {
+        foreach ($dir in @("Plugin", "bridge", "scenarios", "scripts", "demo", ".github")) {
             $path = Join-Path $RepoRoot $dir
             if (Test-Path $path) {
                 $Targets += Get-ChildItem -Path $path -Recurse -File -Include *.cpp, *.h, *.cs, *.js, *.json, *.md, *.ps1, *.yml, *.uplugin |
