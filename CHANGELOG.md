@@ -48,6 +48,26 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   because committing the list would publish what the check exists to keep out.
   Absent, the check reports as skipped rather than passed.
 
+- **`bp_modify add_node` can author a Timeline.** `kind:"timeline"` builds all
+  three objects a Timeline actually is - the `UTimelineTemplate` on the asset, a
+  float curve carrying the keyframes, and the `UK2Node_Timeline` bound to it by
+  variable name - which the editor otherwise only ever builds together through
+  its own graph action menu. `{name?, length?, loop?, autoplay?, track?, keys?}`,
+  where `track` names the float output pin and `keys` are `[{time, value}]`.
+
+  Timelines are how most Blueprint gameplay moves anything - doors, platforms,
+  lerps, fades - so an authoring tool without them cannot write a moving door.
+  Verified by authoring a platform end to end and watching it run: BeginPlay
+  stores the start location, a looping two-second timeline drives a Lerp into
+  SetActorLocation, and the placed actor oscillates between z=250 and z=450.
+
+  Two engine details the implementation has to get right, both silent when
+  wrong. Length, `loop` and `autoplay` only take effect on the template - the
+  node's copies of all three are transient caches, overwritten on every pin
+  rebuild. And `AllocateDefaultPins` walks the template's display-track order
+  rather than its float-track array, so a track added without a display entry
+  compiles into a working runtime binding with no output pin and no error.
+
 - **`observe` can gather the whole situation in one call.** `include` adds
   `screenshot` (the frame as an image block), `ui` (the UMG on screen and
   whether a click could land on it) and `events` (watched delegates that have

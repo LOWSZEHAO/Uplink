@@ -20,6 +20,9 @@
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_DynamicCast.h"
+#include "Engine/TimelineTemplate.h"
+#include "Curves/CurveFloat.h"
+#include "K2Node_Timeline.h"
 #include "K2Node_Event.h"
 #include "K2Node_ExecutionSequence.h"
 #include "K2Node_FunctionResult.h"
@@ -494,13 +497,126 @@ namespace UplinkBlueprint
 				NewNode = NewObject<UK2Node_FunctionResult>(Graph);
 			}
 		}
+		else if (Kind == TEXT("timeline"))
+		{
+			// A Timeline is not one object. It is a UTimelineTemplate owned by the
+			// Blueprint, a curve per track, and a UK2Node_Timeline in the graph
+			// that finds the template by variable name. Authoring one means
+			// building all three in the right order.
+			if (!FBlueprintEditorUtils::DoesSupportTimelines(Blueprint))
+			{
+				return FUplinkToolResult::Error(TEXT(
+					"timelines only exist on actor-based Blueprints with an event graph - "
+					"DoesSupportTimelines refuses anything else, and AddNewTimeline would return null"));
+			}
+
+			// AddNewTimeline does check(GeneratedClass) - a hard assert, not a
+			// refusal - so a Blueprint that has never been compiled would take
+			// the editor down rather than report a problem.
+			if (!Blueprint->GeneratedClass)
+			{
+				FKismetEditorUtilities::CompileBlueprint(Blueprint);
+				if (!Blueprint->GeneratedClass)
+				{
+					return FUplinkToolResult::Error(TEXT(
+						"this Blueprint has no generated class even after a compile, and adding a timeline to one asserts"));
+				}
+			}
+
+			FName TimelineVarName(*GetString(OpParams, TEXT("name")));
+			if (TimelineVarName.IsNone())
+			{
+				TimelineVarName = FBlueprintEditorUtils::FindUniqueTimelineName(Blueprint);
+			}
+			UTimelineTemplate* Template = FBlueprintEditorUtils::AddNewTimeline(Blueprint, TimelineVarName);
+			if (!Template)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("could not add a timeline called '%s' - a timeline or variable of that name already exists"),
+					*TimelineVarName.ToString()));
+			}
+
+			// Length, looping and autoplay live on the TEMPLATE. The node carries
+			// copies of all three, but they are Transient caches refreshed from
+			// here on every AllocateDefaultPins - writing them on the node is a
+			// silent no-op that is then silently overwritten.
+			Template->Modify();
+			Template->TimelineLength = static_cast<float>(GetNumber(OpParams, TEXT("length"), 2.0));
+			Template->LengthMode = TL_TimelineLength;
+			// Read into a bool first: these are one-bit fields and cannot be
+			// bound to a bool& out-parameter.
+			bool bFlag = false;
+			if (OpParams->TryGetBoolField(FStringView(TEXT("loop")), bFlag)) { Template->bLoop = bFlag; }
+			if (OpParams->TryGetBoolField(FStringView(TEXT("autoplay")), bFlag)) { Template->bAutoPlay = bFlag; }
+
+			// One float track, which is what gives the node an output pin to read
+			// the curve from.
+			const FString TrackNameStr = GetString(OpParams, TEXT("track"), TEXT("Alpha"));
+			const FName TrackName(*TrackNameStr);
+			static const TSet<FName> ReservedPins = {
+				TEXT("Play"), TEXT("PlayFromStart"), TEXT("Stop"), TEXT("Reverse"),
+				TEXT("ReverseFromEnd"), TEXT("SetNewTime"), TEXT("NewTime"),
+				TEXT("Update"), TEXT("Finished"), TEXT("Direction") };
+			if (ReservedPins.Contains(TrackName))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is one of the timeline node's own pin names, so a track cannot use it. ")
+					TEXT("Reserved: Play, PlayFromStart, Stop, Reverse, ReverseFromEnd, SetNewTime, NewTime, Update, Finished, Direction."),
+					*TrackNameStr));
+			}
+
+			FTTFloatTrack Track;
+			// SetTrackName, not assignment: TrackName is private, and the setter
+			// is what derives the PropertyName the compiler later resolves the
+			// output pin against.
+			Track.SetTrackName(TrackName, Template);
+			Track.CurveFloat = NewObject<UCurveFloat>(Blueprint->GeneratedClass, NAME_None, RF_Public);
+
+			const TArray<TSharedPtr<FJsonValue>>* Keys = nullptr;
+			if (OpParams->TryGetArrayField(FStringView(TEXT("keys")), Keys) && Keys->Num() > 0)
+			{
+				for (const TSharedPtr<FJsonValue>& Entry : *Keys)
+				{
+					const TSharedPtr<FJsonObject>* Key = nullptr;
+					if (Entry.IsValid() && Entry->TryGetObject(Key) && Key->IsValid())
+					{
+						Track.CurveFloat->FloatCurve.AddKey(
+							static_cast<float>(GetNumber(*Key, TEXT("time"), 0.0)),
+							static_cast<float>(GetNumber(*Key, TEXT("value"), 0.0)));
+					}
+				}
+			}
+			else
+			{
+				// A curve with no keys reads zero forever, so the timeline would
+				// run and drive nothing.
+				Track.CurveFloat->FloatCurve.AddKey(0.0f, 0.0f);
+				Track.CurveFloat->FloatCurve.AddKey(Template->TimelineLength, 1.0f);
+			}
+
+			const int32 TypedIndex = Template->FloatTracks.Num();
+			Template->FloatTracks.Add(Track);
+
+			// The step with no error attached to getting it wrong.
+			// AllocateDefaultPins walks TrackDisplayOrder, not FloatTracks, so a
+			// track that is never given a display entry compiles into a real
+			// property with a real runtime binding and simply has no pin.
+			Template->AddDisplayTrack(FTTTrackId(FTTTrackBase::TT_FloatInterp, TypedIndex));
+
+			UK2Node_Timeline* Node = NewObject<UK2Node_Timeline>(Graph);
+			// Before the pins are allocated, which FinalizeNewNode does next: the
+			// node reads the template through this name to know what pins to make.
+			Node->TimelineName = TimelineVarName;
+			NewNode = Node;
+		}
 		else
 		{
 			return FUplinkToolResult::Error(TEXT(
 				"unknown 'kind'. Events and calls: call_function, custom_event, event, component_bound_event. "
 				"Data: variable_get, variable_set, make_struct, break_struct, make_array, select, self. "
 				"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result. "
-				"Dispatchers: bind_dispatcher, unbind_dispatcher, call_dispatcher, clear_dispatcher {name, target?}. Parent: call_parent {function}."));
+				"Dispatchers: bind_dispatcher, unbind_dispatcher, call_dispatcher, clear_dispatcher {name, target?}. Parent: call_parent {function}. "
+				"Animation: timeline {name?, length?, loop?, autoplay?, track?, keys?}."));
 		}
 
 		if (NewNode)
