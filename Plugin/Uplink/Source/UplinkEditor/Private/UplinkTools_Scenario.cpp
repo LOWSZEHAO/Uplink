@@ -318,6 +318,23 @@ namespace
 			return EUplinkToolStep::Pending; // first step begins on the next tick
 		}
 
+		/**
+		 * Pass the cancellation down to the step still in flight.
+		 *
+		 * A scenario cancelled or timed out mid-step would otherwise destroy its
+		 * child without a word, and a step holding process-wide state - an
+		 * automation run, an input held down - keeps holding it after the
+		 * caller has been told the task is over.
+		 */
+		virtual void Cancel(EUplinkCancelReason Reason) override
+		{
+			if (Child.IsValid())
+			{
+				Child->Cancel(Reason);
+				Child.Reset();
+			}
+		}
+
 		virtual EUplinkToolStep Tick(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
 		{
 			// Begin the next step if none is active.
@@ -393,6 +410,13 @@ namespace
 			{
 				if (Elapsed > Spec.TimeoutSeconds)
 				{
+					// Tell the step it is being dropped before dropping it. A
+					// timed-out child is still holding whatever it took - a key
+					// held down, an automation run mid-flight - and destroying
+					// it silently leaves that held for every step that follows.
+					// The tools that implement Cancel were being disarmed by
+					// their own runner.
+					Child->Cancel(EUplinkCancelReason::TimedOut);
 					Child.Reset();
 					RecordStep(FUplinkToolResult::Error(FString::Printf(
 						TEXT("step timed out after %.0fs"), Spec.TimeoutSeconds)), Elapsed);

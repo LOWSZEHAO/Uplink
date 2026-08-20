@@ -34,6 +34,15 @@ namespace
 			{
 				bRunActive = false;
 			}
+			if (bFilterWidened)
+			{
+				// Back to how the framework constructs itself. There is no
+				// getter for the previous value in 5.7 or 5.8, so the default is
+				// the only thing that can honestly be restored - and the tool
+				// refuses to start while another run is in flight, so there is
+				// no concurrent owner to clobber.
+				FAutomationTestFramework::Get().SetRequestedTestFilter(EAutomationTestFlags::SmokeFilter);
+			}
 		}
 
 		virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
@@ -57,6 +66,17 @@ namespace
 				Out = FUplinkToolResult::Error(TEXT("an automation test is already running outside this tool"));
 				return EUplinkToolStep::Done;
 			}
+
+			// GetValidTestNames returns only tests whose filter flag is in the
+			// framework's RequestedTestFilter, and the framework constructs that
+			// as SmokeFilter alone (AutomationTest.cpp, both 5.7 and 5.8). Every
+			// test declares exactly one filter type, so without widening this
+			// nothing outside the smoke set is visible at all: a filter naming a
+			// real engine test came back "no tests match", against a registered
+			// count that was itself only the smoke subset. Wrong answer, wrong
+			// number, and no mention of the filter that caused either.
+			Framework.SetRequestedTestFilter(EAutomationTestFlags_FilterMask);
+			bFilterWidened = true;
 
 			TArray<FAutomationTestInfo> AllTests;
 			Framework.GetValidTestNames(AllTests);
@@ -236,6 +256,7 @@ namespace
 		int32 Matched = 0;
 		int32 Failed = 0;
 		bool bOwnsRun = false;
+		bool bFilterWidened = false;
 	};
 }
 

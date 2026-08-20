@@ -105,10 +105,14 @@ namespace
 	 * this". UPlayerInput::InputKey answers false for every analog and axis
 	 * row whatever becomes of it; answers a digital press with whether a
 	 * *legacy* ActionMapping covers the key, so false all day in an Enhanced
-	 * Input project; and answers a digital release with an unconditional true.
-	 * Only that release carries information - a false there means the event
-	 * never reached UPlayerInput at all - so a "nothing was accepted" verdict
-	 * may only be drawn from a take that contained one.
+	 * Input project; and answers a digital release true unless the key carries
+	 * a DebugExecBinding, in which case the bound command's own result comes
+	 * back instead. The engine ships a dozen or so of those (BaseInput.ini),
+	 * and they are live in every non-shipping build, the editor included - so
+	 * releasing LeftShift can answer false having reached UPlayerInput
+	 * perfectly well. Only a release carries information at all, and only for
+	 * a key with no such bind, so a "nothing was accepted" verdict may only be
+	 * drawn from a take that contained one.
 	 */
 	struct FInjectOutcome
 	{

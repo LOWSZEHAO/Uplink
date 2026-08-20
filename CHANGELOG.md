@@ -121,6 +121,39 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an agent that placed forty actors and then opened another map to check
   something lost all forty and was told the map opened.
 
+- **`run_tests` can see the whole test suite.** `GetValidTestNames` returns only
+  tests whose filter flag is in the framework's `RequestedTestFilter`, and the
+  framework constructs that as `SmokeFilter` alone (`AutomationTest.cpp`, both
+  5.7 and 5.8). Every test declares exactly one filter type, so nothing outside
+  the smoke set was ever visible: on this project the tool saw 429 tests out of
+  6432 and answered "no tests match" for filters naming perfectly real ones -
+  a wrong verdict over a wrong count, with the reason nowhere in the reply. The
+  filter is widened for the run and restored afterwards.
+
+- **An auth token containing a comma can authenticate.** The engine splits every
+  header value on commas while parsing, so `Bearer a,b` arrived as two values:
+  the first carried the prefix and a truncated secret, the second carried no
+  prefix and was skipped, and no token with a comma in it could ever match
+  however correct it was. The values are rejoined before parsing, which is the
+  exact inverse of the split. Verified against a live editor: the full token is
+  accepted, and the truncated and wrong forms are still refused.
+
+- Every `material_query` parameter row says whether the instance `overridden` it
+  or inherits it. The description promised "overridden parameters" and the reply
+  was the parent's entire declared set, undifferentiated - an instance setting
+  one of two dozen looked identical to one setting all of them.
+
+- A held input is released when its step is abandoned. `input_action`'s timed
+  hold and `input_key`'s tap press on the way in and release on a later tick, so
+  a step that timed out or was cancelled left the action injected or the key
+  down for the rest of the session, and every step afterwards ran against a pawn
+  that would not stop moving. Both now release in `Cancel`.
+
+  The runner was defeating that anyway: `run_scenario` dropped a timed-out child
+  without calling `Cancel` at all, and had no `Cancel` of its own to pass a
+  cancellation down with - so the two tools that did implement cleanup were
+  disarmed by their own runner.
+
 - `task_cancel` says which of the four things happened. It called the older
   `Cancel` wrapper, which collapses `RequestCancel`'s outcomes into a bool, so
   a task that reported it could not be interrupted safely - still running, and

@@ -171,8 +171,9 @@ namespace
 	// anything claiming an origin that is not loopback is denied.
 	//
 	// The key is lowercase because the engine lowercases every header name while
-	// parsing (HttpConnectionRequestReadContext), so a lookup for "Origin" finds
-	// nothing and the guard quietly never fires. Do not tidy the capital back in.
+	// parsing (HttpConnectionRequestReadContext). Case is not load-bearing here -
+	// FString map keys hash and compare case-insensitively, so "Origin" would find
+	// it too - but match what the map actually holds.
 	bool IsOriginAllowed(const FHttpServerRequest& Request)
 	{
 		const TArray<FString>* Origins = Request.Headers.Find(TEXT("origin"));
@@ -229,22 +230,23 @@ namespace
 		{
 			return false;
 		}
-		for (const FString& Value : *Values)
+
+		// Rejoin before parsing. The engine splits every header value on commas
+		// while reading it (HttpConnectionRequestReadContext), so a token with a
+		// comma in it arrives in pieces: the first carries the "Bearer " prefix
+		// and a truncated secret, the rest carry no prefix and are skipped, and
+		// the match could never succeed however correct the token was. Joining
+		// with the separator it was split on is the exact inverse - and a single
+		// credential is all this header is allowed to carry anyway.
+		FString Presented = FString::Join(*Values, TEXT(","));
+		Presented.TrimStartAndEndInline();
+		if (!Presented.StartsWith(TEXT("Bearer "), ESearchCase::IgnoreCase))
 		{
-			FString Presented = Value;
-			Presented.TrimStartAndEndInline();
-			if (!Presented.StartsWith(TEXT("Bearer "), ESearchCase::IgnoreCase))
-			{
-				continue;
-			}
-			Presented.RightChopInline(FCString::Strlen(TEXT("Bearer ")));
-			Presented.TrimStartAndEndInline();
-			if (SecretsMatch(Presented, RequiredToken))
-			{
-				return true;
-			}
+			return false;
 		}
-		return false;
+		Presented.RightChopInline(FCString::Strlen(TEXT("Bearer ")));
+		Presented.TrimStartAndEndInline();
+		return SecretsMatch(Presented, RequiredToken);
 	}
 }
 

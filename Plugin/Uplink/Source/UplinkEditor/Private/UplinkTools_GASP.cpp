@@ -294,7 +294,7 @@ void UplinkTools::RegisterGASP(FUplinkToolRegistry& Registry)
 			for (TFieldIterator<FProperty> It(Anim->GetClass()); It && Count < MaxValues; ++It)
 			{
 				FProperty* P = *It;
-				// Blueprint-exposed values only; skip the anim node structs themselves.
+				// Blueprint-exposed values only; anim node structs lack that flag.
 				if (!P->HasAnyPropertyFlags(CPF_BlueprintVisible) || CastField<FStructProperty>(P) == nullptr)
 				{
 					if (!P->HasAnyPropertyFlags(CPF_BlueprintVisible))

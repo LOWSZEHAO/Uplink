@@ -82,8 +82,8 @@ namespace UplinkSlateScreenshot
 		// Whether it worked or not: leave nothing armed behind us.
 		Disarm();
 
-		// ">=", not "==": D3D12 hands back Width * SampleCount rows for an MSAA
-		// target, so an exact-count test rejects a perfectly good capture.
+		// ">=", not "==": D3D12 hands back Width * SampleCount pixels per row for
+		// an MSAA target, so an exact-count test rejects a perfectly good capture.
 		if (!bTaken || Size.X <= 0 || Size.Y <= 0 || Pixels.Num() < Size.X * Size.Y)
 		{
 			return false;

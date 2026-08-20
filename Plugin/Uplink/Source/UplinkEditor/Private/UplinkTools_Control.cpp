@@ -356,6 +356,25 @@ namespace
 			return EUplinkToolStep::Done;
 		}
 
+		/**
+		 * Release on the way out.
+		 *
+		 * The injection is continuous until something stops it, and only Tick
+		 * did. A hold abandoned before its duration elapsed - a scenario step
+		 * that timed out, a cancelled task - therefore kept driving the action
+		 * for the rest of the session, so every later step ran against a pawn
+		 * still walking, and nothing said so.
+		 */
+		virtual void Cancel(EUplinkCancelReason Reason) override
+		{
+			FString Error;
+			FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/true);
+			if (Player.Input && ActionPtr.IsValid())
+			{
+				Player.Input->StopContinuousInputInjectionForAction(ActionPtr.Get());
+			}
+		}
+
 	private:
 		int32 BoundAtStart = 0;
 		TWeakObjectPtr<const UInputAction> ActionPtr;
@@ -448,6 +467,32 @@ namespace
 				? TEXT("tapped")
 				: FString::Printf(TEXT("tapped - %s"), *DescribeSlateKeyResult(UiDispatch)));
 			return EUplinkToolStep::Done;
+		}
+
+		/**
+		 * Let the key up on the way out.
+		 *
+		 * Start presses and Tick releases, so an abandoned tap leaves the key
+		 * held for the rest of the session - a stuck W is a pawn that never
+		 * stops walking, and every step after it runs against that.
+		 */
+		virtual void Cancel(EUplinkCancelReason Reason) override
+		{
+			if (Route != TEXT("ui"))
+			{
+				FString Error;
+				FPiePlayer Player = GetPiePlayer(Error, /*bNeedEnhancedInput=*/false);
+				if (Player.PC)
+				{
+					FInputKeyEventArgs Release = FInputKeyEventArgs::CreateSimulated(Key, IE_Released, 0.0f);
+					Release.DeltaTime = FApp::GetDeltaTime();
+					Player.PC->InputKey(Release);
+				}
+			}
+			if (Route != TEXT("game"))
+			{
+				SendSlateKey(Key, /*bDown=*/false, /*bWithCharacter=*/false);
+			}
 		}
 
 	private:

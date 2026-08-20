@@ -11,6 +11,7 @@
 #include "MaterialShared.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
+#include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Materials/MaterialInterface.h"
 #include "RHIDefinitions.h"
@@ -81,7 +82,7 @@ void UplinkContentTools::RegisterMaterial(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("material_query"),
-		TEXT("Read a material: its expressions, which output inputs are connected, its parameters, and - the reason this exists - its compile errors. A material that fails to compile renders black or default-grey with nothing useful in the log, so 'errors' is the first thing to check when a surface looks wrong. Works on a Material or a Material Instance (an instance also reports its parent and overridden parameters). 'recompile' forces a rebuild first so errors are current."),
+		TEXT("Read a material: its expressions, which output inputs are connected, its parameters, and - the reason this exists - its compile errors. A material that fails to compile renders black or default-grey with nothing useful in the log, so 'errors' is the first thing to check when a surface looks wrong. Works on a Material or a Material Instance; an instance reports its parent, and every parameter row carries \"overridden\" saying whether this instance sets it or inherits it. 'recompile' forces a rebuild first so errors are current."),
 		TEXT(R"json({"type":"object","properties":{"material":{"type":"string","description":"Asset path, e.g. /Game/Mats/M_Rock.M_Rock"},"expressions":{"type":"boolean","default":true},"parameters":{"type":"boolean","default":true},"recompile":{"type":"boolean","default":false},"max":{"type":"number","default":80}},"required":["material"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -175,7 +176,37 @@ void UplinkContentTools::RegisterMaterial(FUplinkToolRegistry& Registry)
 			if (bWantParameters)
 			{
 				TArray<TSharedPtr<FJsonValue>> Parameters;
-				auto AddParameters = [&Parameters, MaterialInterface, Max](const TCHAR* Kind, const TArray<FMaterialParameterInfo>& Infos)
+
+				// The list is the PARENT's declared parameters - every one an
+				// instance could set - and the value read back is the effective
+				// one, inherited or not. Which of them this instance actually
+				// overrides lives only in its own *ParameterValues arrays, so
+				// without marking them the reply cannot answer the question the
+				// description promises: an instance overriding one of a parent's
+				// two dozen parameters looked identical to one overriding all of
+				// them.
+				UMaterialInstance* AsInstance = Cast<UMaterialInstance>(MaterialInterface);
+				auto IsOverridden = [AsInstance](const TCHAR* Kind, const FMaterialParameterInfo& Info) -> bool
+				{
+					if (!AsInstance)
+					{
+						return false;
+					}
+					if (FCString::Strcmp(Kind, TEXT("scalar")) == 0)
+					{
+						return AsInstance->ScalarParameterValues.ContainsByPredicate(
+							[&Info](const FScalarParameterValue& V) { return V.ParameterInfo == Info; });
+					}
+					if (FCString::Strcmp(Kind, TEXT("vector")) == 0)
+					{
+						return AsInstance->VectorParameterValues.ContainsByPredicate(
+							[&Info](const FVectorParameterValue& V) { return V.ParameterInfo == Info; });
+					}
+					return AsInstance->TextureParameterValues.ContainsByPredicate(
+						[&Info](const FTextureParameterValue& V) { return V.ParameterInfo == Info; });
+				};
+
+				auto AddParameters = [&Parameters, MaterialInterface, Max, AsInstance, IsOverridden](const TCHAR* Kind, const TArray<FMaterialParameterInfo>& Infos)
 				{
 					for (const FMaterialParameterInfo& Info : Infos)
 					{
@@ -186,6 +217,10 @@ void UplinkContentTools::RegisterMaterial(FUplinkToolRegistry& Registry)
 						TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
 						Row->SetStringField(TEXT("name"), Info.Name.ToString());
 						Row->SetStringField(TEXT("kind"), Kind);
+						if (AsInstance)
+						{
+							Row->SetBoolField(TEXT("overridden"), IsOverridden(Kind, Info));
+						}
 
 						if (FLinearColor AsColor; FCString::Strcmp(Kind, TEXT("vector")) == 0
 							&& MaterialInterface->GetVectorParameterValue(Info, AsColor))

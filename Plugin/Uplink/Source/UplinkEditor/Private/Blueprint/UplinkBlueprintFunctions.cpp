@@ -71,10 +71,11 @@ namespace UplinkBlueprint
 				return FUplinkToolResult::Error(TEXT(
 					"ImplementNewInterface failed - usually a graph in this blueprint already has an interface function's name"));
 			}
-			// Only functions with outputs get a stub graph. Event-style ones
-			// get nothing at all, and the add_node 'event' kind cannot reach
-			// them because an interface is not in the super chain - so say
-			// which ones still need override_function.
+			// Only functions with outputs - or const/ForceAsFunction ones - get
+			// a stub graph. Event-style ones get nothing at all, and the
+			// add_node 'event' kind cannot reach them because an interface is
+			// not in the super chain - so say which ones still need
+			// override_function.
 			TArray<FString> AsGraphs, AsEvents;
 			for (TFieldIterator<UFunction> It(InterfaceClass, EFieldIteratorFlags::IncludeSuper); It; ++It)
 			{
@@ -143,13 +144,15 @@ namespace UplinkBlueprint
 				Blueprint, OverrideFuncClass, OverrideFunc->GetFName());
 			if (!EventNode)
 			{
-				// GetOverrideFunctionClass resolves to the SKELETON class once this
-				// event is implemented, and the engine's lookup demands the node's
-				// parent class be a child of that - so a second call would never
-				// find the node the first call made, and would duplicate it. The
-				// editor's Override menu never hits this, because it hides functions
-				// that are already overridden. Match the way the compiler does when
-				// it reports a duplicate event: by name.
+				// GetOverrideFunctionClass resolves to THIS blueprint's own class
+				// once the event is implemented - the skeleton declares the
+				// function and GetAuthoritativeClass maps it back - and the
+				// engine's lookup demands the node's parent class be a child of
+				// that, so a second call would never find the node the first call
+				// made, and would duplicate it. The editor's Override menu never
+				// hits this, because it hides functions that are already
+				// overridden. Match the way the compiler does when it reports a
+				// duplicate event: by name.
 				TArray<UK2Node_Event*> AllEvents;
 				FBlueprintEditorUtils::GetAllNodesOfClass<UK2Node_Event>(Blueprint, AllEvents);
 				for (UK2Node_Event* Candidate : AllEvents)

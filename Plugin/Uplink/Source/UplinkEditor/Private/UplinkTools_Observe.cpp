@@ -1,6 +1,6 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 // Observation tools: watch_events, drain_events, unwatch, wait_until,
-// get_world_state, perf_stats.
+// get_world_state, perf_stats, profile_capture.
 
 #include "UplinkTools.h"
 #include "Object/UplinkObjectPath.h"
@@ -208,11 +208,6 @@ namespace
 				return false;
 			}
 
-			// A menu is built a frame or two after the screen that owns it is
-			// added, and a key sent into that gap goes to the viewport instead.
-			// Measured on a shipping title: the same call answered handled and
-			// did nothing, twice, because nothing had focus yet. Waiting on a
-			// widget rather than on a stopwatch is the fix.
 			// Navmesh tiles are built across frames, so the mesh is not there
 			// when BeginPlay returns. Pathing into that window fails with a
 			// message about the goal being off the navmesh - which reads as a
@@ -262,6 +257,11 @@ namespace
 				return Path != nullptr && Path->IsValid() && !Path->IsPartial();
 			}
 
+			// A menu is built a frame or two after the screen that owns it is
+			// added, and a key sent into that gap goes to the viewport instead.
+			// Measured on a shipping title: the same call answered handled and
+			// did nothing, twice, because nothing had focus yet. Waiting on a
+			// widget rather than on a stopwatch is the fix.
 			if (Type == TEXT("ui_visible"))
 			{
 				const FString Needle = GetString(Condition, TEXT("contains"));
