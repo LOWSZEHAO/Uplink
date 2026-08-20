@@ -10,6 +10,7 @@
 // dialog froze every call with no way to even report it.
 
 #include "UplinkTools.h"
+#include "UplinkObservation.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
@@ -41,14 +42,10 @@ namespace
 		return FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
 	}
 
-	/**
-	 * Every live UUserWidget that is actually on screen, in the given world.
-	 *
-	 * IsInViewport means AddToViewport or AddToPlayerScreen and nothing else,
-	 * so these are the screens a player is looking at - not widgets nested
-	 * inside them (walked below) and not ones drawn on a WidgetComponent in
-	 * the world, which no viewport ever sees.
-	 */
+}
+
+namespace UplinkObservation
+{
 	void GatherLiveWidgets(UWorld* World, TArray<UUserWidget*>& Out)
 	{
 		for (TObjectIterator<UUserWidget> It; It; ++It)
@@ -69,23 +66,10 @@ namespace
 		}
 	}
 
-	/**
-	 * Every UWidget under one screen, the contents of nested UserWidgets
-	 * included.
-	 *
-	 * UWidgetTree::ForEachWidget walks panels and named slots, and a nested
-	 * UserWidget is neither, so it stops dead at every sub-widget boundary. A
-	 * menu assembled from sub-widgets - which is how most of them are built -
-	 * listed its outer boxes and hid every button inside them, while
-	 * click_widget, which enumerates all UserWidgets, could click them
-	 * perfectly well. Seen keeps a widget reachable from two screens to one
-	 * row and stops a cycle from recursing forever.
-	 *
-	 * Visit is handed the UserWidget whose tree the widget actually lives in,
-	 * not the outermost screen: that is the one carrying the variables and
-	 * functions a caller would go on to read, and for a button inside a row
-	 * widget the two are not the same object.
-	 */
+}
+
+namespace UplinkObservation
+{
 	void ForEachWidgetInScreen(UUserWidget* Screen, TSet<UWidget*>& Seen, TFunctionRef<void(UWidget*, UUserWidget*)> Visit)
 	{
 		if (!Screen || !Screen->WidgetTree)
@@ -220,7 +204,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 80.0)), 1, 500);
 
 			TArray<UUserWidget*> Roots;
-			GatherLiveWidgets(World, Roots);
+			UplinkObservation::GatherLiveWidgets(World, Roots);
 
 			TArray<TSharedPtr<FJsonValue>> Rows;
 			int32 Total = 0;
@@ -232,7 +216,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				{
 					continue;
 				}
-				ForEachWidgetInScreen(Root, Seen, [&](UWidget* Widget, UUserWidget* Owner)
+				UplinkObservation::ForEachWidgetInScreen(Root, Seen, [&](UWidget* Widget, UUserWidget* Owner)
 				{
 					if (!Widget || !Owner)
 					{

@@ -16,7 +16,13 @@
 // what an interaction is actually made of.
 
 #include "UplinkTools.h"
+#include "UplinkEventRecorder.h"
+#include "UplinkObservation.h"
+#include "UObject/UObjectIterator.h"
 #include "UplinkToolRegistry.h"
+#include "Blueprint/UserWidget.h"
+#include "Components/TextBlock.h"
+#include "Components/Widget.h"
 #include "UplinkToolUtil.h"
 
 #include "CollisionQueryParams.h"
@@ -181,18 +187,23 @@ namespace
 	}
 }
 
-void UplinkTools::RegisterSemantic(FUplinkToolRegistry& Registry)
+void UplinkTools::RegisterSemantic(FUplinkToolRegistry& Registry, FUplinkEventRecorder& Recorder)
 {
 	Registry.RegisterQuick(
 		TEXT("observe"),
 		TEXT("One snapshot of the running game from the player's position: where the pawn is and what it is doing, ")
 		TEXT("what is under the crosshair, and the nearest actors ordered by distance - each with its collision profile, ")
 		TEXT("whether it is overlapping the player right now, and the names of the events it can fire (pass one to ")
-		TEXT("watch_events). Reports facts only: there is no guess at what is 'interactable'. Pair it with ")
-		TEXT("viewport_screenshot when the agent needs to see as well as know."),
-		TEXT(R"json({"type":"object","properties":{"radius":{"type":"number","default":1500,"minimum":1,"description":"Search distance in cm"},"max":{"type":"integer","default":20,"minimum":1,"description":"How many nearby actors to report"},"class_contains":{"type":"string","description":"Only report actors whose class name contains this"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"additionalProperties":false})json"),
+		TEXT("watch_events). Reports facts only: there is no guess at what is 'interactable'. ")
+		TEXT("'include' adds the rest of the situation to the same reply - 'screenshot' the frame itself as an image, ")
+		TEXT("'ui' the UMG that is on screen with whether a click could land on it, 'events' the watched delegates that ")
+		TEXT("have fired (set up with watch_events first; reading here takes nothing away from a drain_events loop). ")
+		TEXT("Ask for all three and one call answers where the player is, what is around them, what is on screen and ")
+		TEXT("what just happened - taken at one moment. Four separate calls cannot do that: each is a round trip ")
+		TEXT("through the game thread and the game moves between them, so the answers describe four different moments."),
+		TEXT(R"json({"type":"object","properties":{"radius":{"type":"number","default":1500,"minimum":1,"description":"Search distance in cm"},"max":{"type":"integer","default":20,"minimum":1,"description":"How many nearby actors to report"},"class_contains":{"type":"string","description":"Only report actors whose class name contains this"},"include":{"type":"array","items":{"type":"string","enum":["screenshot","ui","events"]},"description":"Extra sections to gather at the same moment"},"since_seq":{"type":"number","default":0,"description":"With include:['events'], report only events from this sequence on"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"additionalProperties":false})json"),
 		/*bReadOnly=*/true,
-		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		[&Recorder](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FString WorldError;
 			UWorld* World = Ctx.ResolveWorld(WorldError);
@@ -308,7 +319,121 @@ void UplinkTools::RegisterSemantic(FUplinkToolRegistry& Registry)
 			Data->SetBoolField(TEXT("truncated"), Candidates.Num() > Nearby.Num());
 			Data->SetNumberField(TEXT("radius"), Radius);
 
-			return FUplinkToolResult::Ok(Data, FString::Printf(
+			// The rest of the situation, when it was asked for.
+			//
+			// Each of these is a call an agent was making anyway - ui_live,
+			// drain_events, viewport_screenshot - and stitching four replies
+			// costs four round trips through the game thread, during which the
+			// game has moved on, so the four answers describe four different
+			// moments. Gathered here they describe one.
+			TSet<FString> Include;
+			const TArray<TSharedPtr<FJsonValue>>* IncludeArray = nullptr;
+			if (Ctx.Params->TryGetArrayField(FStringView(TEXT("include")), IncludeArray))
+			{
+				for (const TSharedPtr<FJsonValue>& Entry : *IncludeArray)
+				{
+					Include.Add(Entry->AsString());
+				}
+			}
+
+			if (Include.Contains(TEXT("ui")))
+			{
+				TArray<TSharedPtr<FJsonValue>> Widgets;
+				TSet<UWidget*> Seen;
+
+				// The same enumeration and the same walk ui_live uses, so the
+				// two tools cannot disagree about what is on screen. A second
+				// filter here would be a second answer to one question.
+				TArray<UUserWidget*> Screens;
+				UplinkObservation::GatherLiveWidgets(World, Screens);
+				for (UUserWidget* Screen : Screens)
+				{
+					if (!Screen || !Screen->WidgetTree)
+					{
+						continue;
+					}
+					UplinkObservation::ForEachWidgetInScreen(Screen, Seen, [&Widgets](UWidget* Widget, UUserWidget* Owner)
+					{
+						if (!Widget || Widgets.Num() >= 40)
+						{
+							return;
+						}
+						const FVector2D Size = Widget->GetCachedGeometry().GetAbsoluteSize();
+						const bool bLaidOut = Size.X > 0.0 && Size.Y > 0.0;
+						if (!bLaidOut)
+						{
+							return; // exists but is not on screen, so it is not part of the situation
+						}
+						FString Text;
+						if (const UTextBlock* AsText = Cast<UTextBlock>(Widget))
+						{
+							Text = AsText->GetText().ToString();
+						}
+						TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+						Row->SetStringField(TEXT("name"), Widget->GetName());
+						Row->SetStringField(TEXT("class"), Widget->GetClass()->GetName());
+						if (!Text.IsEmpty())
+						{
+							Row->SetStringField(TEXT("text"), Text);
+						}
+						// Same test ui_live applies: Visible is the only
+						// hit-testable state, and geometry is where a click lands.
+						Row->SetBoolField(TEXT("interactive"),
+							Widget->GetVisibility() == ESlateVisibility::Visible);
+						Widgets.Add(MakeShared<FJsonValueObject>(Row));
+					});
+				}
+				Data->SetArrayField(TEXT("ui"), Widgets);
+			}
+
+			if (Include.Contains(TEXT("events")))
+			{
+				// Read-only: the cursor lives with the caller as since_seq, so
+				// looking here takes nothing away from a polling loop.
+				bool bEventsTruncated = false;
+				const TArray<FUplinkEventRecorder::FEvent> Fired =
+					Recorder.Drain(static_cast<int64>(GetNumber(Ctx.Params, TEXT("since_seq"), 0)),
+						nullptr, 25, &bEventsTruncated);
+				TArray<TSharedPtr<FJsonValue>> Rows;
+				for (const FUplinkEventRecorder::FEvent& Event : Fired)
+				{
+					TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
+					Row->SetNumberField(TEXT("seq"), static_cast<double>(Event.Seq));
+					Row->SetStringField(TEXT("object"), Event.ObjectPath);
+					Row->SetStringField(TEXT("delegate"), Event.Delegate);
+					Rows.Add(MakeShared<FJsonValueObject>(Row));
+				}
+				Data->SetArrayField(TEXT("events"), Rows);
+				Data->SetNumberField(TEXT("next_seq"), static_cast<double>(Recorder.NewestSeq()));
+			}
+
+			FUplinkToolResult Out = FUplinkToolResult::Ok(Data, FString::Printf(
 				TEXT("%d actor(s) within %.0fcm"), Candidates.Num(), Radius));
+
+			if (Include.Contains(TEXT("screenshot")))
+			{
+				FIntPoint Size;
+				FString Source;
+				FString CaptureError;
+				TArray64<uint8> Png;
+				if (UplinkObservation::CaptureViewportPng(Png, Size, Source, CaptureError))
+				{
+					Out.Png = MoveTemp(Png);
+					TSharedRef<FJsonObject> Screen = MakeShared<FJsonObject>();
+					Screen->SetNumberField(TEXT("width"), Size.X);
+					Screen->SetNumberField(TEXT("height"), Size.Y);
+					Screen->SetStringField(TEXT("source"), Source);
+					Data->SetObjectField(TEXT("screen"), Screen);
+				}
+				else
+				{
+					// The facts are still worth having, so a failed capture
+					// says so in the reply rather than failing the call - but it
+					// must say so, or a missing image reads as an empty screen.
+					Data->SetStringField(TEXT("screenshot_error"), CaptureError);
+				}
+			}
+
+			return Out;
 		});
 }

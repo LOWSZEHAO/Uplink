@@ -48,6 +48,24 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   because committing the list would publish what the check exists to keep out.
   Absent, the check reports as skipped rather than passed.
 
+- **`observe` can gather the whole situation in one call.** `include` adds
+  `screenshot` (the frame as an image block), `ui` (the UMG on screen and
+  whether a click could land on it) and `events` (watched delegates that have
+  fired) to the reply it already gives about the player and what is around
+  them. Asking for all three answers where the player is, what is around them,
+  what is on screen and what just happened - taken at one moment. The four
+  separate calls it replaces cannot do that: each is a round trip through the
+  game thread and the game moves between them, so the four answers describe
+  four different moments, and an agent stitching them is reasoning about a
+  situation that never existed.
+
+  Nothing here is a second implementation. The viewport capture behind
+  `viewport_screenshot` and the screen enumeration and widget walk behind
+  `ui_live` moved to a shared header and are called from both, so the two tools
+  cannot disagree about what is on screen - checked live with three widgets, and
+  both report the same three. Reading events takes nothing away from a
+  `drain_events` loop, because that cursor lives with the caller.
+
 ### Fixed
 - **`run_scenario` validates each step's parameters.** `ValidateParams` had one
   call site - the HTTP/MCP transport - and a scenario step went straight to the

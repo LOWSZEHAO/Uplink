@@ -17,6 +17,7 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "UnrealClient.h"
+#include "UplinkObservation.h"
 #include "UplinkSlateScreenshot.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SViewport.h"
@@ -48,9 +49,8 @@ namespace
 
 using namespace UplinkToolUtil;
 
-namespace
+namespace UplinkObservation
 {
-	/** Viewport pixels + PNG, shared by the capture tools. */
 	bool CaptureViewportPng(TArray64<uint8>& OutPng, FIntPoint& OutSize, FString& OutSource, FString& OutError)
 	{
 		FViewport* Viewport = nullptr;
@@ -467,7 +467,7 @@ void UplinkTools::RegisterCapture(FUplinkToolRegistry& Registry)
 			{
 				FIntPoint Size;
 				FString Source, Error;
-				if (!CaptureViewportPng(Out.Png, Size, Source, Error))
+				if (!UplinkObservation::CaptureViewportPng(Out.Png, Size, Source, Error))
 				{
 					return FUplinkToolResult::Error(Error);
 				}

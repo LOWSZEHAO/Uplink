@@ -53,7 +53,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterAutoplay(*Registry);
 	UplinkTools::RegisterRepair(*Registry);
 	UplinkTools::RegisterReferences(*Registry);
-	UplinkTools::RegisterSemantic(*Registry);
+	UplinkTools::RegisterSemantic(*Registry, *Recorder);
 
 	// Tools contributed by other modules: already-loaded providers now, and
 	// late-loading ones as they register their modular feature. UplinkContentTools
