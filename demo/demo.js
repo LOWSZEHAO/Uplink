@@ -86,6 +86,23 @@ async function must(label, tool, body, timeoutMs) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const beat = () => sleep(PACE);
 
+// The editor is the other half of this. Printing that a graph was authored
+// while the viewport shows something else is a demo that describes its work
+// instead of showing it.
+const openAsset = path =>
+  call("call_function", {
+    object_path: "subsystem:AssetEditorSubsystem",
+    function: "OpenEditorForAssets",
+    args: { Assets: [path] },
+  }).catch(() => {});
+
+const closeAsset = path =>
+  call("call_function", {
+    object_path: "subsystem:AssetEditorSubsystem",
+    function: "CloseAllEditorsForAsset",
+    args: { Asset: path },
+  }).catch(() => {});
+
 const say = s => console.log(s);
 const act = (n, title) => say(`\n${"=".repeat(64)}\n  ACT ${n}  ${title}\n${"=".repeat(64)}`);
 const step = s => say(`\n> ${s}`);
@@ -210,10 +227,20 @@ async function actTwo() {
   note(`${wires.length} connections, compiled clean, saved`);
   note("Timeline Update → Lerp(start, start + Z·Height) → SetActorLocation");
   await beat();
+
+  step("open it  — the graph an agent just wrote");
+  await openAsset(BP);
+  note("Timeline node, the Lerp chain, and every wire, in the Blueprint editor");
+  // Long enough to read the graph, since this is the shot act 2 is for.
+  await sleep(PACE * 3);
 }
 
 async function actThree() {
   act(3, "PROVE  —  does the Blueprint it just wrote actually work?");
+
+  // The Blueprint editor is covering the level viewport, and play happens
+  // there. Closing it is what makes the next act visible at all.
+  await closeAsset(BP);
 
   step("spawn_actor  — place one in the level");
   const spawned = await must("place the platform", "spawn_actor", {
@@ -221,6 +248,11 @@ async function actThree() {
     location: { x: 400, y: 0, z: 150 }, label: "DemoPlatform", world: "editor",
   });
   note(`${spawned.name} at z=150`);
+  await beat();
+
+  step("viewport_camera  — point the camera at it");
+  await must("frame the platform", "viewport_camera", { focus_actor: "DemoPlatform" });
+  note("framed, so the thing this act is about is on screen when it moves");
   await beat();
 
   step("pie_start  — play it");

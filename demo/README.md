@@ -42,6 +42,18 @@ wrote sixty seconds ago is now moving the world, and that the same tools can
 measure it. If the platform does not move, the script stops rather than
 printing a success it did not earn.
 
+## Recording it
+
+The script drives the editor as well as the terminal: it opens the Blueprint
+when act 2 finishes, closes it before act 3 so the level viewport is visible,
+and points the viewport camera at the platform before play. So the two payoffs
+are on screen when they happen, rather than needing to be clicked to.
+
+One thing it cannot do for you. Eleven Blueprint nodes do not fit a graph panel
+at 1:1, and zoom-to-fit is a Slate shortcut that needs the graph panel focused —
+a synthesised key lands on the window instead. When the graph opens, click it
+and press **F**. That is the only manual beat in the run.
+
 ## Running it on your own project
 
 It works anywhere with an actor-based Blueprint and a playable map. It touches
