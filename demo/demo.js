@@ -13,6 +13,9 @@
 // Reads UPLINK_URL and UPLINK_AUTH_TOKEN, the same two the Node bridge uses.
 //   node demo.js --clean    remove what a previous run left behind
 //   node demo.js --pace 2   seconds between beats (default 1.5)
+//   node demo.js --no-arrive  skip act 1, which is the cut worth making for a
+//                             short video: acts 2 and 3 cannot be separated,
+//                             because act 3 measures what act 2 built
 
 const http = require("http");
 const { URL } = require("url");
@@ -27,6 +30,7 @@ const CUBE = "/Engine/BasicShapes/Cube.Cube";
 
 const args = process.argv.slice(2);
 const CLEAN_ONLY = args.includes("--clean");
+const NO_ARRIVE = args.includes("--no-arrive");
 const PACE = (() => {
   const i = args.indexOf("--pace");
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) * 1000 : 1500;
@@ -276,12 +280,17 @@ async function actThree() {
 
   say(`\nUplink demo   —   ${status.data.project} on UE ${status.data.engine}`);
 
-  await actOne();
+  if (!NO_ARRIVE) { await actOne(); }
   await actTwo();
   await actThree();
 
   say(`\n${"=".repeat(64)}`);
-  say("  understand → author → run → observe — no leaving the conversation");
+  // Say what actually ran. Claiming the understand step after --no-arrive
+  // skipped it would be a small lie in the last line of a demo about not
+  // reporting work that did not happen.
+  say(NO_ARRIVE
+    ? "  author → run → observe — no leaving the conversation"
+    : "  understand → author → run → observe — no leaving the conversation");
   say(`${"=".repeat(64)}\n`);
   say("run with --clean to remove what this left behind.\n");
 })().catch(e => {

@@ -11,7 +11,11 @@ node demo\demo.js
 | | |
 |---|---|
 | `--pace 2` | seconds between beats, for narrating over it (default 1.5) |
+| `--no-arrive` | skip act 1 — the cut worth making for a short video |
 | `--clean` | remove what a previous run left behind, and stop |
+
+`--no-arrive` is the only cut on offer, because it is the only one that makes
+sense: act 3 measures what act 2 built, so those two cannot be separated.
 
 Reads `UPLINK_URL` and `UPLINK_AUTH_TOKEN`, the same two the [bridge](../bridge)
 uses. Needs Node 18+ and an editor with the plugin enabled; nothing else.
