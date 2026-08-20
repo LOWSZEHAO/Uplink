@@ -160,8 +160,12 @@ void FUplinkEventRecorder::Record(const FGuid& WatchId, const FString& ObjectPat
 }
 
 TArray<FUplinkEventRecorder::FEvent> FUplinkEventRecorder::Drain(
-	int64 SinceSeq, const FGuid* WatchFilter, int32 MaxEvents) const
+	int64 SinceSeq, const FGuid* WatchFilter, int32 MaxEvents, bool* bOutTruncated) const
 {
+	if (bOutTruncated)
+	{
+		*bOutTruncated = false;
+	}
 	TArray<FEvent> Out;
 	for (const FEvent& Event : Events)
 	{
@@ -175,9 +179,19 @@ TArray<FUplinkEventRecorder::FEvent> FUplinkEventRecorder::Drain(
 		}
 		Out.Add(Event);
 	}
+	// Keep the OLDEST over the cap, not the newest. This is read through a
+	// cursor: the caller polls with since_seq and resumes from next_seq, so
+	// dropping the front of the window and then advancing the cursor past it
+	// lost those events for good - a burst larger than 'max' went missing from
+	// a loop that reported nothing wrong. Returning the front and stopping the
+	// cursor after it means the next poll collects the rest.
 	if (Out.Num() > MaxEvents)
 	{
-		Out.RemoveAt(0, Out.Num() - MaxEvents);
+		Out.SetNum(MaxEvents);
+		if (bOutTruncated)
+		{
+			*bOutTruncated = true;
+		}
 	}
 	return Out;
 }

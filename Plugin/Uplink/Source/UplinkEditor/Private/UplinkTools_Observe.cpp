@@ -94,7 +94,8 @@ namespace UplinkPerf
 
 namespace
 {
-	FUplinkToolResult EventsToResult(const TArray<FUplinkEventRecorder::FEvent>& Events, int64 NextSeq)
+	FUplinkToolResult EventsToResult(const TArray<FUplinkEventRecorder::FEvent>& Events, int64 NextSeq,
+		bool bTruncated = false)
 	{
 		TArray<TSharedPtr<FJsonValue>> Rows;
 		for (const FUplinkEventRecorder::FEvent& Event : Events)
@@ -113,6 +114,7 @@ namespace
 		TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
 		Data->SetArrayField(TEXT("events"), Rows);
 		Data->SetNumberField(TEXT("next_seq"), static_cast<double>(NextSeq));
+		Data->SetBoolField(TEXT("truncated"), bTruncated);
 		return FUplinkToolResult::Ok(Data);
 	}
 
@@ -434,18 +436,26 @@ void UplinkTools::RegisterObserve(FUplinkToolRegistry& Registry, FUplinkEventRec
 
 	Registry.RegisterQuick(
 		TEXT("drain_events"),
-		TEXT("Read captured delegate events (oldest first). Pass the returned next_seq back as since_seq to read only new events."),
+		TEXT("Read captured delegate events (oldest first). Pass the returned next_seq back as since_seq to read only new events. A read capped by 'max' returns the oldest of what was waiting, sets truncated:true, and leaves next_seq just after the last event handed over - so polling picks the remainder up rather than stepping over it."),
 		TEXT(R"json({"type":"object","properties":{"since_seq":{"type":"number"},"watch_id":{"type":"string","description":"Only this watch (optional)"},"max":{"type":"number","default":100}}})json"),
 		/*bReadOnly=*/true,
 		[&Recorder](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
 			FGuid WatchId;
 			const bool bFiltered = FGuid::Parse(GetString(Ctx.Params, TEXT("watch_id")), WatchId);
+			bool bTruncated = false;
 			const TArray<FUplinkEventRecorder::FEvent> Events = Recorder.Drain(
 				static_cast<int64>(GetNumber(Ctx.Params, TEXT("since_seq"), 0)),
 				bFiltered ? &WatchId : nullptr,
-				FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 100)), 1, 500));
-			return EventsToResult(Events, Recorder.NewestSeq());
+				FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 100)), 1, 500),
+				&bTruncated);
+
+			// Resume from just after what was actually handed over, so a capped
+			// read leaves the remainder to the next call rather than skipping it.
+			const int64 NextSeq = (bTruncated && Events.Num() > 0)
+				? Events.Last().Seq + 1
+				: Recorder.NewestSeq();
+			return EventsToResult(Events, NextSeq, bTruncated);
 		});
 
 	Registry.RegisterQuick(

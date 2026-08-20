@@ -47,7 +47,8 @@ public:
 	void Record(const FGuid& WatchId, const FString& ObjectPath, const FString& Delegate, TSharedPtr<FJsonObject> Payload);
 
 	/** Events with Seq >= SinceSeq (optionally one watch only), oldest first. */
-	TArray<FEvent> Drain(int64 SinceSeq, const FGuid* WatchFilter, int32 MaxEvents) const;
+	TArray<FEvent> Drain(int64 SinceSeq, const FGuid* WatchFilter, int32 MaxEvents,
+		bool* bOutTruncated = nullptr) const;
 
 	int64 NewestSeq() const { return NextSeq; }
 	int32 EventCountForWatch(const FGuid& WatchId, int64 SinceSeq) const;

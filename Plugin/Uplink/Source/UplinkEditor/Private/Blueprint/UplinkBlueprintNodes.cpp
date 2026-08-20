@@ -159,8 +159,28 @@ namespace UplinkBlueprint
 			}
 			else
 			{
+				// The declaring class must be used here rather than ParentClass.
+				// Interface events are not reachable through the normal
+				// parent-class lookup: FindFunctionByName above accepts them,
+				// because UClass searches implemented interfaces, while the
+				// reference resolves along the UStruct super chain, which never
+				// contains one. Anchoring to ParentClass therefore produced a
+				// node that reported success and could never resolve.
+				UClass* DeclaringClass = Blueprint->ParentClass;
+				if (DeclaringClass && !FindUField<UFunction>(DeclaringClass, EventName))
+				{
+					for (const FBPInterfaceDescription& Implemented : Blueprint->ImplementedInterfaces)
+					{
+						if (Implemented.Interface && FindUField<UFunction>(Implemented.Interface, EventName))
+						{
+							DeclaringClass = Implemented.Interface;
+							break;
+						}
+					}
+				}
+
 				UK2Node_Event* Node = NewObject<UK2Node_Event>(Graph);
-				Node->EventReference.SetExternalMember(EventName, Blueprint->ParentClass);
+				Node->EventReference.SetExternalMember(EventName, DeclaringClass);
 				Node->bOverrideFunction = true;
 				NewNode = Node;
 			}

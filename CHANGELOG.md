@@ -121,6 +121,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an agent that placed forty actors and then opened another map to check
   something lost all forty and was told the map opened.
 
+- **`drain_events` no longer loses events it capped.** It kept the NEWEST `max`
+  and then set `next_seq` to the newest sequence in the recorder, so a burst
+  larger than the cap had its oldest events dropped and the cursor stepped
+  straight over them - in the polling loop the tool documents, with nothing
+  saying so. It now returns the oldest of what was waiting, sets `truncated`,
+  and leaves the cursor just after the last event handed over, so the next call
+  collects the remainder.
+
+- `add_node kind:"event"` anchors the node to the class that declares the
+  function. `UClass::FindFunctionByName` searches implemented interfaces, so an
+  interface event passed validation, and the node was then stamped with
+  `ParentClass` - which the reference resolves along the super chain, where an
+  implemented interface never appears. The call reported success and produced a
+  node that could never resolve.
+
 - **`run_tests` can see the whole test suite.** `GetValidTestNames` returns only
   tests whose filter flag is in the framework's `RequestedTestFilter`, and the
   framework constructs that as `SmokeFilter` alone (`AutomationTest.cpp`, both
