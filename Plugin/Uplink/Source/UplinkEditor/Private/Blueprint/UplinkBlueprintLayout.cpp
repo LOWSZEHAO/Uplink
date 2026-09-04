@@ -90,7 +90,7 @@ namespace UplinkBlueprint
 	void FinalizeNewNode(UEdGraph* Graph, UEdGraphNode* Node, const TSharedPtr<FJsonObject>& Op)
 	{
 		Graph->Modify();
-		Graph->AddNode(Node, /*bFromUI=*/true, /*bSelectNewNode=*/false);
+		Graph->AddNode(Node, /*bUserAction=*/true, /*bSelectNewNode=*/false);
 		Node->CreateNewGuid();
 		Node->PostPlacedNewNode();
 		Node->AllocateDefaultPins();
@@ -205,7 +205,7 @@ namespace UplinkBlueprint
 		for (const FTurn& Turn : Turns)
 		{
 			UK2Node_Knot* Knot = NewObject<UK2Node_Knot>(Graph);
-			Graph->AddNode(Knot, /*bFromUI=*/false, /*bSelectNewNode=*/false);
+			Graph->AddNode(Knot, /*bUserAction=*/false, /*bSelectNewNode=*/false);
 			Knot->CreateNewGuid();
 			Knot->PostPlacedNewNode();
 			Knot->AllocateDefaultPins();

@@ -199,14 +199,14 @@ namespace UplinkBlueprint
 			// and the family have to agree: a class the chosen node does not
 			// handle reaches the compiler as "Node @@ must have a class
 			// specified", which names neither the real cause nor the fix.
-			const TCHAR* NodeClassPath = nullptr;
+			UClass* NodeClass = nullptr;
 			if (SubsystemClass->IsChildOf(UEngineSubsystem::StaticClass()))
 			{
-				NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_GetEngineSubsystem");
+				NodeClass = UK2Node_GetEngineSubsystem::StaticClass();
 			}
 			else if (SubsystemClass->IsChildOf(UEditorSubsystem::StaticClass()))
 			{
-				NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_GetEditorSubsystem");
+				NodeClass = UK2Node_GetEditorSubsystem::StaticClass();
 			}
 			else
 			{
@@ -226,19 +226,13 @@ namespace UplinkBlueprint
 						TEXT("GameInstanceSubsystem, WorldSubsystem, LocalPlayerSubsystem, AudioEngineSubsystem, ")
 						TEXT("EngineSubsystem or EditorSubsystem."), *SubsystemClass->GetPathName()));
 				}
-				NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_GetSubsystem");
+				NodeClass = UK2Node_GetSubsystem::StaticClass();
 			}
 
-			// Found by path, not by StaticClass(): only the base is declared
-			// MinimalAPI, so the three derived node classes have no exported
-			// symbol to link against from outside BlueprintGraph.
-			UClass* NodeClass = FindObject<UClass>(nullptr, NodeClassPath);
-			if (!NodeClass)
-			{
-				return FUplinkToolResult::Error(FString::Printf(
-					TEXT("node class %s is not loaded"), NodeClassPath));
-			}
-
+			// Constructed through the base pointer with the chosen class: the
+			// three derived node classes are plain UCLASS(), so their own
+			// constructors are NO_API, but NewObject goes through the class's
+			// ClassConstructor rather than that symbol.
 			UK2Node_GetSubsystem* Node = NewObject<UK2Node_GetSubsystem>(Graph, NodeClass);
 			// Before the node is placed: AllocateDefaultPins reads the class
 			// to type the return pin, and adds a loose Class input pin when it

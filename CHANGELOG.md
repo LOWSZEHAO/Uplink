@@ -23,9 +23,10 @@ second one introduced and had to be closed.
 
   The class is set through `Initialize()` before the node is placed, because
   `AllocateDefaultPins` reads it to type the return pin and adds a loose
-  `Class` input pin when it is unset. The three derived node classes are
-  resolved by path rather than by `StaticClass()`: only the base is declared
-  `MinimalAPI`, so the others have no exported symbol to link against.
+  `Class` input pin when it is unset. It is also the only way in: `CustomClass`
+  itself is protected. The node is constructed through the base pointer with
+  the chosen class, since the three derived classes are plain `UCLASS()` and
+  their own constructors are `NO_API`.
 
 ### Fixed
 - `set_property` no longer reports correct writes as failures. It confirmed a
