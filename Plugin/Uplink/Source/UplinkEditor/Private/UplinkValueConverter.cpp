@@ -18,7 +18,96 @@ namespace UplinkValue
 			const UObject* Referenced = AsObject->GetObjectPropertyValue(ValueAddr);
 			return MakeShared<FJsonValueString>(Referenced ? Referenced->GetPathName() : FString());
 		}
+		// Containers are walked element by element so the object form above
+		// applies inside them too. Handed an array directly, the engine
+		// converter writes its objects as
+		// /Script/Engine.Material'/Game/M_X.M_X' while the very same object
+		// read on its own comes back as /Game/M_X.M_X - one tool reporting one
+		// reference in two spellings, and only the second one is a path
+		// anything else here accepts back.
+		if (const FArrayProperty* AsArray = CastField<FArrayProperty>(Property))
+		{
+			FScriptArrayHelper Helper(AsArray, ValueAddr);
+			TArray<TSharedPtr<FJsonValue>> Items;
+			Items.Reserve(Helper.Num());
+			for (int32 Index = 0; Index < Helper.Num(); ++Index)
+			{
+				Items.Add(PropertyToJson(AsArray->Inner, Helper.GetRawPtr(Index)));
+			}
+			return MakeShared<FJsonValueArray>(Items);
+		}
+		if (const FSetProperty* AsSet = CastField<FSetProperty>(Property))
+		{
+			FScriptSetHelper Helper(AsSet, ValueAddr);
+			TArray<TSharedPtr<FJsonValue>> Items;
+			Items.Reserve(Helper.Num());
+			// Sets are sparse: Num() counts live entries but the indices they
+			// sit at are not contiguous, so this walks the capacity and skips
+			// the holes rather than reading garbage out of them.
+			for (int32 Index = 0; Index < Helper.GetMaxIndex(); ++Index)
+			{
+				if (Helper.IsValidIndex(Index))
+				{
+					Items.Add(PropertyToJson(AsSet->ElementProp, Helper.GetElementPtr(Index)));
+				}
+			}
+			return MakeShared<FJsonValueArray>(Items);
+		}
 		return FJsonObjectConverter::UPropertyToJsonValue(Property, ValueAddr);
+	}
+
+	namespace
+	{
+		/** The UEnum behind an enum-typed property, whichever form it takes. */
+		const UEnum* EnumBehind(const FProperty* Property)
+		{
+			if (const FEnumProperty* AsEnum = CastField<FEnumProperty>(Property))
+			{
+				return AsEnum->GetEnum();
+			}
+			if (const FNumericProperty* AsNumeric = CastField<FNumericProperty>(Property))
+			{
+				return AsNumeric->IsEnum() ? AsNumeric->GetIntPropertyEnum() : nullptr;
+			}
+			return nullptr;
+		}
+
+		/**
+		 * Refuse a number that no enumerator answers to.
+		 *
+		 * The engine's importer calls SetIntPropertyValue with no bounds check,
+		 * so a numeric write of 99 to a six-entry enum succeeds at the memory
+		 * level and leaves the property holding a value nothing in the enum
+		 * names. Nothing logs it. It reads back as an empty string, which is
+		 * how it usually gets noticed - somewhere else, much later.
+		 *
+		 * Bitflag enums are left alone: a combination is a legitimate value
+		 * there and is deliberately absent from the names table.
+		 */
+		bool EnumValueIsInRange(const FProperty* Property, const TSharedPtr<FJsonValue>& Value, FString& OutError)
+		{
+			const UEnum* Enum = EnumBehind(Property);
+			double Number = 0.0;
+			if (!Enum || !Value.IsValid() || !Value->TryGetNumber(Number))
+			{
+				return true;
+			}
+			if (Enum->HasMetaData(TEXT("Bitflags")) || Enum->IsValidEnumValue(static_cast<int64>(Number)))
+			{
+				return true;
+			}
+
+			TArray<FString> Entries;
+			for (int32 Index = 0; Index < Enum->NumEnums() - 1 && Entries.Num() < 24; ++Index)
+			{
+				Entries.Add(FString::Printf(TEXT("%s=%lld"),
+					*Enum->GetNameStringByIndex(Index), Enum->GetValueByIndex(Index)));
+			}
+			OutError = FString::Printf(
+				TEXT("%lld is not a value of %s. Valid: %s"),
+				static_cast<int64>(Number), *Enum->GetName(), *FString::Join(Entries, TEXT(", ")));
+			return false;
+		}
 	}
 
 	bool JsonToProperty(
@@ -27,6 +116,12 @@ namespace UplinkValue
 		void* ValueAddr,
 		FString& OutError)
 	{
+		// Before the write, not after: the importer would already have put the
+		// out-of-range number in the property by the time it could be caught.
+		if (!EnumValueIsInRange(Property, Value, OutError))
+		{
+			return false;
+		}
 		if (!FJsonObjectConverter::JsonValueToUProperty(Value, Property, ValueAddr))
 		{
 			OutError = FString::Printf(

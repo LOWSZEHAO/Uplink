@@ -1,0 +1,196 @@
+{
+  "_name": "Property spelling and subsystem nodes",
+  "_purpose": "A correct write must not be reported as a failed one. set_property confirms a write by re-applying the request to what is actually there, so an enum sent as a number, or fully qualified, or an object path inside an array, all count as landed even though the property reads back in its own canonical spelling. The other half is that the check still has teeth: a number no enumerator answers to is refused outright, and a write that really is reverted still fails. Also covers get_subsystem, where the node class has to be chosen from the subsystem's family.",
+  "_reading": "The expect_failure steps pass BY being refused. The two that matter most are the out-of-range enum - which the engine's importer would otherwise write with no bounds check and no log - and the non-instance-editable variable, which is the case the whole write-confirmation exists for.",
+  "_requires": "Any project. Creates its own actor and Blueprint under /Game/UplinkScenarios and deletes them again. Editor world.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "delete_actors",
+      "params": { "names": ["UplinkSpellProbe"], "world": "editor" }
+    },
+    {
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.StaticMeshActor",
+        "location": { "x": 0, "y": 0, "z": 0 },
+        "label": "UplinkSpellProbe",
+        "world": "editor"
+      }
+    },
+
+    {
+      "_note": "An enum by its plain entry name - the spelling get_property reports, and the one that always worked.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": "AlwaysSpawn", "world": "editor" }
+    },
+    {
+      "_note": "By number. The property reads back as \"AlwaysSpawn\", which is not the number that was sent - this used to be reported as a write that did not survive.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": 1, "world": "editor" },
+      "expect": { "written": true }
+    },
+    {
+      "_note": "Fully qualified. Same value, third spelling.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": "ESpawnActorCollisionHandlingMethod::AlwaysSpawn", "world": "editor" },
+      "expect": { "written": true }
+    },
+    {
+      "_note": "All three spellings meant the same thing, and the property holds it.",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "world": "editor" },
+      "expect": { "value": "AlwaysSpawn" }
+    },
+    {
+      "_note": "REFUSED: no enumerator has value 99. The engine's importer writes it anyway with no bounds check and no log, leaving a property that reads back as an empty string.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": 99, "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "_note": "And the refusal left the property alone rather than half-writing it.",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "world": "editor" },
+      "expect": { "value": "AlwaysSpawn" }
+    },
+
+    {
+      "_note": "An object inside an array, written as a plain asset path.",
+      "tool": "set_property",
+      "params": {
+        "actor": "$steps[1].name",
+        "property": "RootComponent.OverrideMaterials",
+        "value": ["/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"],
+        "world": "editor"
+      },
+      "expect": { "written": true }
+    },
+    {
+      "_note": "It reads back in the same spelling it was written in - the same form a single object reference uses, not the export form the engine converter emits for container elements.",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "RootComponent.OverrideMaterials", "world": "editor" },
+      "expect": { "value": ["/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"] }
+    },
+
+    {
+      "_note": "Housekeeping for the Blueprint half.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_SpellProbe" }
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": { "path": "/Game/UplinkScenarios/BP_SpellProbe", "parent_class": "/Script/Engine.Actor" }
+    },
+    {
+      "_note": "A variable that is deliberately NOT instance editable, with a class default of 7.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_SpellProbe",
+        "op": "add_variable",
+        "name": "Hidden",
+        "type": "int",
+        "instance_editable": false,
+        "default": "7",
+        "compile": true
+      }
+    },
+
+    {
+      "_note": "The subsystem nodes. Three different families, so three different node classes chosen from the class alone.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_SpellProbe",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "get_subsystem",
+        "class": "/Script/EnhancedInput.EnhancedInputLocalPlayerSubsystem",
+        "y": 400
+      }
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_SpellProbe",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "get_subsystem",
+        "class": "/Script/Engine.WorldPartitionSubsystem",
+        "x": 400,
+        "y": 400
+      }
+    },
+    {
+      "_note": "An Editor subsystem uses a different node class again.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_SpellProbe",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "get_subsystem",
+        "class": "/Script/UnrealEd.EditorActorSubsystem",
+        "x": 800,
+        "y": 400,
+        "compile": true
+      }
+    },
+    {
+      "_note": "REFUSED: an Actor is not a subsystem of any family.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_SpellProbe",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "get_subsystem",
+        "class": "/Script/Engine.Actor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The graph compiles clean with all three nodes in it.",
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_SpellProbe" },
+      "expect": { "errors": 0 }
+    },
+
+    {
+      "_note": "Now the teeth. A placed instance of that Blueprint...",
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Game/UplinkScenarios/BP_SpellProbe.BP_SpellProbe_C",
+        "location": { "x": 300, "y": 0, "z": 0 },
+        "label": "UplinkSpellInstance",
+        "world": "editor"
+      }
+    },
+    {
+      "_note": "REFUSED: the variable is not instance editable, so rerunning the construction scripts puts the class default back. The write, the change event and the dirty flag all succeed on the way past - which is exactly why this is checked rather than assumed.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[18].name", "property": "Hidden", "value": 99, "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "tool": "get_property",
+      "params": { "actor": "$steps[18].name", "property": "Hidden", "world": "editor" },
+      "expect": { "value": 7 }
+    },
+
+    {
+      "_note": "Teardown.",
+      "tool": "delete_actors",
+      "params": { "names": ["UplinkSpellProbe", "UplinkSpellInstance"], "world": "editor" }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_SpellProbe" }
+      }
+    }
+  ]
+}

@@ -17,21 +17,50 @@ using namespace UplinkToolUtil;
 
 namespace
 {
-	/** Compare what was asked for against what is actually there, tolerating float drift. */
-	bool SameValue(const TSharedPtr<FJsonValue>& Wanted, const TSharedPtr<FJsonValue>& Landed)
+	/**
+	 * Did the caller's value reach the property?
+	 *
+	 * Asked of the property, not of JSON. Comparing the request against a
+	 * re-serialisation of the property fails on spelling alone: an enum sent
+	 * as 2, or as EComponentMobility::Static, reads back as "Movable" and
+	 * "Static", and an object inside an array reads back in export form
+	 * (/Script/Engine.Material'/Game/M_X.M_X'). All three of those writes land
+	 * correctly, and all three used to be reported as writes that did not
+	 * survive - which invites undoing work that was right.
+	 *
+	 * So the request is applied a second time, to a throwaway copy of what is
+	 * actually there, and the two are compared with FProperty::Identical.
+	 * Whatever spelling the writer accepts, this accepts. Starting the copy
+	 * from the landed value rather than from a default-constructed one is what
+	 * keeps a partial struct write honest: {"X":1} on a vector is a request
+	 * about X, and Y and Z must not be read as having been asked for.
+	 *
+	 * A write that was reverted still fails, which is the whole point of the
+	 * check: re-applying the request to the reverted value produces the value
+	 * that was asked for, and that differs from what is there.
+	 */
+	bool ValueReachedProperty(
+		const TSharedPtr<FJsonValue>& Wanted, FProperty* Property, const void* LandedAddr)
 	{
-		if (!Wanted.IsValid() || !Landed.IsValid())
+		if (!Wanted.IsValid() || !Property || !LandedAddr)
 		{
-			return Wanted.IsValid() == Landed.IsValid();
+			return false;
 		}
-		double A = 0.0, B = 0.0;
-		if (Wanted->TryGetNumber(A) && Landed->TryGetNumber(B))
-		{
-			// A double written from JSON and read back can differ in the last
-			// bits; that is not a failed write.
-			return FMath::Abs(A - B) <= 0.0001;
-		}
-		return FJsonValue::CompareEqual(*Wanted, *Landed);
+
+		// Properties hold constructed types - FString, TArray, structs with
+		// destructors - so the scratch value is initialised and destroyed in
+		// pairs rather than treated as raw bytes.
+		void* Scratch = FMemory::Malloc(Property->GetSize(), Property->GetMinAlignment());
+		Property->InitializeValue(Scratch);
+		Property->CopyCompleteValue(Scratch, LandedAddr);
+
+		FString ConversionError;
+		const bool bApplied = UplinkValue::JsonToProperty(Wanted, Property, Scratch, ConversionError);
+		const bool bSame = bApplied && Property->Identical(Scratch, LandedAddr);
+
+		Property->DestroyValue(Scratch);
+		FMemory::Free(Scratch);
+		return bSame;
 	}
 
 	/** One line of JSON, for putting a value inside a sentence. */
@@ -172,7 +201,7 @@ void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 			// write, the change event and the dirty flag all succeed on the way
 			// past. The silence is worse than the reset, because the next thing
 			// anybody does is trust the value.
-			const bool bLanded = SameValue(Value, Landed);
+			const bool bLanded = ValueReachedProperty(Value, ReadProperty, ReadAddr);
 			if (!bLanded)
 			{
 				const bool bBlueprintVariable = Property->HasAnyPropertyFlags(CPF_BlueprintVisible);

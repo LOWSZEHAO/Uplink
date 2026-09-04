@@ -21,6 +21,12 @@
 #include "K2Node_CustomEvent.h"
 #include "K2Node_DynamicCast.h"
 #include "K2Node_EnhancedInputAction.h"
+#include "K2Node_GetSubsystem.h"
+#include "EditorSubsystem.h"
+#include "Subsystems/EngineSubsystem.h"
+#include "Subsystems/GameInstanceSubsystem.h"
+#include "Subsystems/LocalPlayerSubsystem.h"
+#include "Subsystems/WorldSubsystem.h"
 #include "InputAction.h"
 #include "Engine/TimelineTemplate.h"
 #include "Curves/CurveFloat.h"
@@ -173,6 +179,72 @@ namespace UplinkBlueprint
 		{
 			UK2Node_CustomEvent* Node = NewObject<UK2Node_CustomEvent>(Graph);
 			Node->CustomFunctionName = FName(*GetString(OpParams, TEXT("name"), TEXT("CustomEvent")));
+			NewNode = Node;
+		}
+		else if (Kind == TEXT("get_subsystem"))
+		{
+			const FString ClassPath = GetString(OpParams, TEXT("class"));
+			UClass* SubsystemClass = ClassPath.IsEmpty()
+				? nullptr
+				: StaticLoadClass(USubsystem::StaticClass(), nullptr, *ClassPath);
+			if (!SubsystemClass)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("subsystem class not found: '%s' - pass a concrete subsystem class, ")
+					TEXT("e.g. /Script/EnhancedInput.EnhancedInputLocalPlayerSubsystem"), *ClassPath));
+			}
+
+			// Which of the four node classes to build. This mirrors the
+			// dispatch the base node's own ExpandNode does, because the node
+			// and the family have to agree: a class the chosen node does not
+			// handle reaches the compiler as "Node @@ must have a class
+			// specified", which names neither the real cause nor the fix.
+			const TCHAR* NodeClassPath = nullptr;
+			if (SubsystemClass->IsChildOf(UEngineSubsystem::StaticClass()))
+			{
+				NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_GetEngineSubsystem");
+			}
+			else if (SubsystemClass->IsChildOf(UEditorSubsystem::StaticClass()))
+			{
+				NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_GetEditorSubsystem");
+			}
+			else
+			{
+				// The base node covers the rest. AudioEngineSubsystem lives in
+				// AudioMixer and is resolved by path rather than linked, so
+				// this file does not take a module dependency for one branch.
+				const UClass* AudioBase = FindObject<UClass>(nullptr, TEXT("/Script/AudioMixer.AudioEngineSubsystem"));
+				const bool bBaseHandlesIt =
+					SubsystemClass->IsChildOf(UGameInstanceSubsystem::StaticClass())
+					|| SubsystemClass->IsChildOf(UWorldSubsystem::StaticClass())
+					|| SubsystemClass->IsChildOf(ULocalPlayerSubsystem::StaticClass())
+					|| (AudioBase && SubsystemClass->IsChildOf(AudioBase));
+				if (!bBaseHandlesIt)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' is not a subsystem this node can get. It must derive from one of: ")
+						TEXT("GameInstanceSubsystem, WorldSubsystem, LocalPlayerSubsystem, AudioEngineSubsystem, ")
+						TEXT("EngineSubsystem or EditorSubsystem."), *SubsystemClass->GetPathName()));
+				}
+				NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_GetSubsystem");
+			}
+
+			// Found by path, not by StaticClass(): only the base is declared
+			// MinimalAPI, so the three derived node classes have no exported
+			// symbol to link against from outside BlueprintGraph.
+			UClass* NodeClass = FindObject<UClass>(nullptr, NodeClassPath);
+			if (!NodeClass)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("node class %s is not loaded"), NodeClassPath));
+			}
+
+			UK2Node_GetSubsystem* Node = NewObject<UK2Node_GetSubsystem>(Graph, NodeClass);
+			// Before the node is placed: AllocateDefaultPins reads the class
+			// to type the return pin, and adds a loose Class input pin when it
+			// is unset. Setting it afterwards leaves a node that returns the
+			// abstract USubsystem and carries a pin nobody asked for.
+			Node->Initialize(SubsystemClass);
 			NewNode = Node;
 		}
 		else if (Kind == TEXT("enhanced_input"))
@@ -718,7 +790,7 @@ namespace UplinkBlueprint
 		else
 		{
 			return FUplinkToolResult::Error(TEXT(
-				"unknown 'kind'. Events and calls: call_function, custom_event {name, inputs?: [{name, type, by_ref?}] - event parameters, which appear as OUTPUT pins}, event, component_bound_event, enhanced_input {action} - an Enhanced Input event node for an Input Action asset. "
+				"unknown 'kind'. Events and calls: call_function, custom_event {name, inputs?: [{name, type, by_ref?}] - event parameters, which appear as OUTPUT pins}, event, component_bound_event, enhanced_input {action} - an Enhanced Input event node for an Input Action asset · get_subsystem {class} - Get Subsystem for a concrete subsystem class, typed to it. "
 				"Data: variable_get, variable_set, make_struct, break_struct, make_array, select, self. "
 				"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result. "
 				"Dispatchers: bind_dispatcher, unbind_dispatcher, call_dispatcher, clear_dispatcher {name, target?}. Parent: call_parent {function}. "

@@ -6,6 +6,60 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.33.0
+
+Two more gaps from the same run of real projects, and one bug the fix for the
+second one introduced and had to be closed.
+
+### Added
+- `bp_modify` `add_node` `get_subsystem` `{class}`: the *Get Subsystem* node,
+  typed to a concrete subsystem class. There are four node classes behind that
+  one menu entry, and the right one is chosen from the class's own ancestry -
+  GameInstance, World, LocalPlayer and AudioEngine subsystems share the base
+  node, Engine and Editor subsystems have their own. Picking wrong is not a
+  visible error: the node builds, and the compiler later says "Node @@ must
+  have a class specified" about a node that plainly has one. A class from no
+  subsystem family at all is refused here, with the families listed.
+
+  The class is set through `Initialize()` before the node is placed, because
+  `AllocateDefaultPins` reads it to type the return pin and adds a loose
+  `Class` input pin when it is unset. The three derived node classes are
+  resolved by path rather than by `StaticClass()`: only the base is declared
+  `MinimalAPI`, so the others have no exported symbol to link against.
+
+### Fixed
+- `set_property` no longer reports correct writes as failures. It confirmed a
+  write by re-serialising the property and diffing that against the caller's
+  JSON, which fails on spelling alone: an enum sent as `2` or as
+  `EComponentMobility::Static` reads back as `"Movable"` and `"Static"`, and an
+  object inside an array reads back in export form. Those writes all landed,
+  and all were reported as writes that did not survive - the worst kind of
+  wrong answer, because the next move is to undo work that was right.
+
+  It now re-applies the request to a throwaway copy of what is actually there
+  and compares with `FProperty::Identical`, so whatever spelling the writer
+  accepts, the check accepts. Copying the landed value first is what keeps a
+  partial struct write honest: `{"X":1}` on a vector is a request about X, and
+  Y and Z must not be read as having been asked for. A write that was genuinely
+  reverted still fails - re-applying the request to the reverted value produces
+  the value that was asked for, and that differs from what is there.
+
+- A number that no enumerator answers to is refused before the write. The
+  engine's importer calls `SetIntPropertyValue` with no bounds check, so
+  `SpawnCollisionHandlingMethod = 99` used to succeed at the memory level and
+  leave the property holding a value nothing in the enum names - reading back
+  as an empty string, discovered somewhere else much later. The old diff caught
+  it by accident, for the wrong reason, and the `Identical` check above would
+  not have: re-applying 99 to a copy of 99 matches. Bitflag enums are left
+  alone, since a combination is a legitimate value there.
+
+- `get_property` reports objects inside arrays and sets the same way it reports
+  a single object reference. A container went to the engine converter whole,
+  which writes its elements as `/Script/Engine.Material'/Game/M_X.M_X'` while
+  the same object read on its own came back as `/Game/M_X.M_X` - one tool
+  reporting one reference in two spellings, only one of which is a path
+  anything else here accepts back.
+
 ## 0.32.0
 
 Three gaps found the same way: using Uplink on real projects and hitting the
