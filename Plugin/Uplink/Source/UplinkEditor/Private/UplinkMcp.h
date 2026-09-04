@@ -7,6 +7,24 @@
 #include "HttpServerModule.h"
 #include "IHttpRouter.h"
 #include "Misc/Guid.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+
+/**
+ * Both transports write their JSON the same way. Held as a private copy in each
+ * .cpp it compiled fine until a unity blob happened to pair those two files,
+ * and then the module stopped building on a redefinition - so it lives here.
+ */
+namespace UplinkJson
+{
+	inline FString Serialize(const TSharedRef<FJsonObject>& Json)
+	{
+		FString Out;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(Json, Writer);
+		return Out;
+	}
+}
 
 class FUplinkToolRegistry;
 class FUplinkTaskManager;

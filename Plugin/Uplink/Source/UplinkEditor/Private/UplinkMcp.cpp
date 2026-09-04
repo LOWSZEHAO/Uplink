@@ -16,17 +16,9 @@
 
 namespace
 {
-	FString SerializeJson(const TSharedRef<FJsonObject>& Json)
-	{
-		FString Out;
-		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
-		FJsonSerializer::Serialize(Json, Writer);
-		return Out;
-	}
-
 	void Respond(const FHttpResultCallback& OnComplete, const TSharedRef<FJsonObject>& Json)
 	{
-		OnComplete(FHttpServerResponse::Create(SerializeJson(Json), TEXT("application/json")));
+		OnComplete(FHttpServerResponse::Create(UplinkJson::Serialize(Json), TEXT("application/json")));
 	}
 
 	TSharedRef<FJsonObject> RpcEnvelope(const TSharedPtr<FJsonValue>& Id)
@@ -274,7 +266,7 @@ bool UplinkMcp::Handle(
 					Content.Add(MakeShared<FJsonValueObject>(Image));
 				}
 				Content.Add(MakeShared<FJsonValueObject>(
-					TextContent(SerializeJson(UplinkMcp::BuildTaskJson(Task, bStillRunning)))));
+					TextContent(UplinkJson::Serialize(UplinkMcp::BuildTaskJson(Task, bStillRunning)))));
 
 				TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 				Result->SetArrayField(TEXT("content"), Content);

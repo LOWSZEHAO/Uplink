@@ -22,17 +22,9 @@
 
 namespace
 {
-	FString SerializeJson(const TSharedRef<FJsonObject>& Json)
-	{
-		FString Out;
-		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
-		FJsonSerializer::Serialize(Json, Writer);
-		return Out;
-	}
-
 	TUniquePtr<FHttpServerResponse> JsonResponse(const TSharedRef<FJsonObject>& Json)
 	{
-		return FHttpServerResponse::Create(SerializeJson(Json), TEXT("application/json"));
+		return FHttpServerResponse::Create(UplinkJson::Serialize(Json), TEXT("application/json"));
 	}
 
 	constexpr int32 MaxRequestBodyBytes = 2 * 1024 * 1024;
