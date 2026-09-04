@@ -1,0 +1,214 @@
+{
+  "_name": "Event parameters, struct members, Enhanced Input",
+  "_purpose": "Three things that could be asked for and reported as done without appearing in the editor. A custom event created with 'inputs' must actually carry those parameters; a User Defined Struct must be able to hold a member with the name it was given; and an Input Action must be placeable as a graph event at all. Each is checked by reading the result back rather than by the call returning success, because in every one of these cases the call already returned success while the asset disagreed.",
+  "_reading": "The expect_failure steps pass BY being refused. Two of them guard engine behaviour that is worse than a plain failure: renaming a struct member into the MemberVar_<n> pattern arms a check() that takes the editor down later, and removing the last member is refused by the engine at Log verbosity only.",
+  "_requires": "Any project. Creates its own Blueprint, struct and Input Action under /Game/UplinkScenarios and deletes them again. Editor world.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run. Deleting something that is not there still succeeds, so this is safe on a clean project.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_ScenarioGap" }
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/S_ScenarioGap" }
+      }
+    },
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/IA_ScenarioGap" }
+      }
+    },
+
+    {
+      "tool": "bp_create",
+      "params": { "path": "/Game/UplinkScenarios/BP_ScenarioGap", "parent_class": "/Script/Engine.Actor" }
+    },
+    {
+      "_note": "The gap itself. Before this existed the event was created and compiled with nothing on it but OutputDelegate and then, and the call still reported success.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "custom_event",
+        "name": "OnScenarioHit",
+        "inputs": [
+          { "name": "Damage", "type": "float" },
+          { "name": "Target", "type": "object:/Script/Engine.Actor" }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "Read the graph back: the two parameters must be on the node, as OUTPUT pins, alongside the event's own OutputDelegate and then.",
+      "tool": "bp_query",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap", "graph": "EventGraph" }
+    },
+    {
+      "_note": "An unusable parameter type is refused, and nothing is left in the graph. Half-built nodes matter here because a failed op is reported, not rolled back.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "custom_event",
+        "name": "OnScenarioBad",
+        "inputs": [ { "name": "X", "type": "not_a_type" } ]
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "A parameter with no name is refused rather than silently becoming an engine-generated one.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "custom_event",
+        "name": "OnScenarioBad",
+        "inputs": [ { "type": "float" } ]
+      },
+      "expect_failure": true
+    },
+
+    {
+      "tool": "asset_create",
+      "params": { "path": "/Game/UplinkScenarios/S_ScenarioGap", "class": "UserDefinedStruct" }
+    },
+    {
+      "_note": "A new struct is not empty: the factory puts one MemberVar_0 boolean in it. Asserting that here is what makes the count below meaningful.",
+      "tool": "struct_query",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap" },
+      "expect": { "count": 1 }
+    },
+    {
+      "_note": "AddVariable names the member itself, so a named member is add-then-rename. Without the rename the struct silently ends up holding MemberVar_<n> instead of what was asked for.",
+      "tool": "struct_modify",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap", "op": "add", "name": "ItemName", "type": "string" }
+    },
+    {
+      "tool": "struct_modify",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap", "op": "add", "name": "Slots", "type": "array:int" }
+    },
+    {
+      "_note": "Now the placeholder can go - only now, because a struct cannot be left with no members.",
+      "tool": "struct_modify",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap", "op": "remove", "name": "MemberVar_0" }
+    },
+    {
+      "tool": "struct_query",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap" },
+      "expect": { "count": 2 }
+    },
+    {
+      "_note": "Refused: a member under the generated MemberVar_<n> pattern collides with a later AddVariable and fails a check(), which takes the editor down rather than returning an error.",
+      "tool": "struct_modify",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap", "op": "rename", "name": "Slots", "new_name": "MemberVar_9" },
+      "expect_failure": true
+    },
+    {
+      "_note": "Refused: the name is taken. Checked before AddVariable runs, so a refusal here leaves no half-added member behind.",
+      "tool": "struct_modify",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap", "op": "add", "name": "ItemName", "type": "int" },
+      "expect_failure": true
+    },
+    {
+      "_note": "Refused: a struct cannot contain itself. The engine writes that reason to the log and returns false, so it is asked in advance to get the reason back to the caller.",
+      "tool": "struct_modify",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap", "op": "add", "name": "Recurse", "type": "struct:/Game/UplinkScenarios/S_ScenarioGap" },
+      "expect_failure": true
+    },
+    {
+      "_note": "Nothing above changed the member count.",
+      "tool": "struct_query",
+      "params": { "asset": "/Game/UplinkScenarios/S_ScenarioGap" },
+      "expect": { "count": 2 }
+    },
+
+    {
+      "tool": "asset_create",
+      "params": { "path": "/Game/UplinkScenarios/IA_ScenarioGap", "class": "InputAction" }
+    },
+    {
+      "_note": "The Enhanced Input event node. The action is resolved before the node is placed because AllocateDefaultPins reads it to type ActionValue.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "enhanced_input",
+        "action": "/Game/UplinkScenarios/IA_ScenarioGap",
+        "y": 1200,
+        "compile": true
+      }
+    },
+    {
+      "_note": "One event node per action per graph: asking again reuses it. Two of them is a compile error, so stacking a duplicate would break the blueprint rather than merely duplicating work.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "enhanced_input",
+        "action": "/Game/UplinkScenarios/IA_ScenarioGap"
+      },
+      "expect": { "reused": true }
+    },
+    {
+      "_note": "An action path that resolves to nothing is refused, rather than placing a node whose pins describe no action.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "enhanced_input",
+        "action": "/Game/UplinkScenarios/IA_DoesNotExist"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The blueprint still compiles clean after all of it.",
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_ScenarioGap" }
+    },
+
+    {
+      "_note": "Teardown.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_ScenarioGap" }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/S_ScenarioGap" }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/IA_ScenarioGap" }
+      }
+    }
+  ]
+}

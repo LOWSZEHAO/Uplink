@@ -40,6 +40,7 @@ step if you want one.
 | `17-property-path-indexing` | A dotted property path indexes an array element and keeps going through it, because the value worth asserting on is usually inside one entry of a list. Covers both misuses too: an out-of-range index reports the real length rather than "not found", which would read as a wrong property name. |
 | `18-unknown-tool` | A step naming a tool that does not exist is refused before anything runs, and the refusal names the step. The one failure a scenario reports on the call rather than on a step, which is why it has a file to itself — sharing one, it aborted the file and the steps above it never ran. |
 | `20-large-spawn` | Three hundred actors placed in one `spawn_batch`, counted in the world, and deleted again by the names the call returned — the reported count and the actual count are the same number, and the level ends where it started. |
+| `21-event-params-and-struct-members` | A custom event created with parameters really carries them, a User Defined Struct takes members under the names it was given, and an Input Action can be placed as a graph event — each read back from the asset rather than trusted from the call. Includes the two refusals that guard engine behaviour worse than a plain failure: the `MemberVar_<n>` rename that arms a `check()`, and the last-member removal the engine declines at Log verbosity. |
 
 Most of these run against any project. `05-playtest` and `13-pie-editor-world-isolation`
 need a default map with a playable pawn, which every template has;

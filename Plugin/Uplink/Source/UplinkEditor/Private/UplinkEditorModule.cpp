@@ -48,6 +48,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterRecord(*Registry, *InputRecorder);
 	UplinkTools::RegisterData(*Registry);
 	UplinkTools::RegisterTests(*Registry);
+	UplinkTools::RegisterStruct(*Registry);
 	UplinkTools::RegisterPCG(*Registry);
 	UplinkTools::RegisterGASP(*Registry);
 	UplinkTools::RegisterAutoplay(*Registry);

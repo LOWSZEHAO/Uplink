@@ -6,6 +6,50 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.32.0
+
+Three gaps found the same way: using Uplink on real projects and hitting the
+point where the graph or asset the tool had just reported success on was not the
+one the editor showed.
+
+### Added
+- `bp_modify` `add_node` `custom_event` accepts `inputs`, so an event can be
+  created with its parameters. The field was already declared on the tool (for
+  `add_function`) and already accepted by the schema, so passing it read as
+  supported and came back `"compiled"` — but the `custom_event` branch never
+  looked at it, and the event arrived with nothing on it but `OutputDelegate`
+  and `then`. The parameters are OUTPUT pins: data flows out of the event into
+  the graph, and `UK2Node_CustomEvent` refuses `EGPD_Input` outright. Each pin
+  is put to the node's own `CanCreateUserDefinedPin` first, because
+  `CreateUserDefinedPin` never consults it and returns whatever the virtual
+  `CreatePinFromUserDefinition` gives — null on the base class, which would
+  record the parameter with no pin on the node to show for it.
+
+- `struct_query` and `struct_modify`: read a User Defined Struct's members and
+  add, remove, rename, retype or default them. `asset_create` could already make
+  the struct asset, but nothing could put a member in it, so every struct came
+  out holding only the factory's `MemberVar_0` placeholder. Members are
+  addressed by the name the struct editor shows — the stored field name is
+  `Damage_2_<32 hex digits>`, which nothing can be expected to predict.
+
+- `bp_modify` `add_node` `enhanced_input` `{action}`: the Enhanced Input event
+  node for an Input Action asset. There was no way to author one at all, which
+  left the modern input path unreachable from the graph tools. The action is
+  resolved before the node is placed, because `AllocateDefaultPins` reads it to
+  type the `ActionValue` pin and to create the action pin at all. A second call
+  for the same action reuses the existing node rather than stacking a duplicate
+  the compiler rejects, which is what the editor's own spawner does.
+
+### Fixed
+- `struct_modify` refuses two edits the engine handles badly rather than
+  passing them through. `AddVariable` generates `MemberVar_<n>` from a counter
+  on the asset and then `check()`s that the name is free, so a member sitting
+  under one of those names takes the editor down once the counter reaches it —
+  renaming into that pattern is refused instead. And `RemoveVariable` will not
+  leave a struct with no members: it early-outs at a count of one and says so
+  only at Log verbosity, so the refusal is now explained rather than reported
+  as a bare failure.
+
 ## 0.31.0
 
 ### Added

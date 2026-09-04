@@ -22,6 +22,10 @@ public class UplinkEditor : ModuleRules
 			"LevelEditor",
 			"InputCore",
 			"EnhancedInput",
+			// UK2Node_EnhancedInputAction, for add_node's enhanced_input kind.
+			// An UncookedOnly module, which is fine for an editor-only module
+			// like this one; EnhancedInput itself is enabled by default.
+			"InputBlueprintNodes",
 			"BlueprintGraph",
 			"UMG",
 			"UMGEditor",

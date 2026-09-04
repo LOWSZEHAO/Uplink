@@ -30,6 +30,7 @@ namespace UplinkTools
 	void RegisterRecord(FUplinkToolRegistry& Registry, FUplinkInputRecorder& Recorder);
 	void RegisterData(FUplinkToolRegistry& Registry);
 	void RegisterTests(FUplinkToolRegistry& Registry);
+	void RegisterStruct(FUplinkToolRegistry& Registry);
 	void RegisterPCG(FUplinkToolRegistry& Registry);
 	void RegisterGASP(FUplinkToolRegistry& Registry);
 	void RegisterAutoplay(FUplinkToolRegistry& Registry);

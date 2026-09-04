@@ -20,6 +20,8 @@
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_DynamicCast.h"
+#include "K2Node_EnhancedInputAction.h"
+#include "InputAction.h"
 #include "Engine/TimelineTemplate.h"
 #include "Curves/CurveFloat.h"
 #include "K2Node_Timeline.h"
@@ -46,6 +48,71 @@ using namespace UplinkToolUtil;
 
 namespace UplinkBlueprint
 {
+	/**
+	 * Custom event parameters, added once the node is in the graph so that
+	 * AllocateDefaultPins has already run.
+	 *
+	 * They are OUTPUT pins: the data flows out of the event into the graph.
+	 * UK2Node_CustomEvent::CanCreateUserDefinedPin refuses EGPD_Input outright
+	 * ("Cannot add input pins to custom event node!"), so a caller asking for
+	 * an input direction is an error rather than something to quietly correct.
+	 *
+	 * Returns an empty string on success, otherwise the reason.
+	 */
+	FString AddCustomEventParams(UK2Node_CustomEvent* Node, const TSharedPtr<FJsonObject>& OpParams)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
+		if (!OpParams->TryGetArrayField(FStringView(TEXT("inputs")), Inputs))
+		{
+			return FString();
+		}
+
+		for (const TSharedPtr<FJsonValue>& Value : *Inputs)
+		{
+			const TSharedPtr<FJsonObject>* Obj = nullptr;
+			if (!Value->TryGetObject(Obj) || !Obj->IsValid())
+			{
+				continue;
+			}
+			const FString PinName = GetString(*Obj, TEXT("name"));
+			if (PinName.IsEmpty())
+			{
+				return TEXT("every entry in 'inputs' needs a 'name'");
+			}
+
+			FString Error;
+			FEdGraphPinType PinType;
+			if (!MakePinType(GetString(*Obj, TEXT("type"), TEXT("float")), PinType, Error))
+			{
+				return FString::Printf(TEXT("input '%s': %s"), *PinName, *Error);
+			}
+			bool bByRef = false;
+			(*Obj)->TryGetBoolField(FStringView(TEXT("by_ref")), bByRef);
+			PinType.bIsReference = bByRef;
+
+			// Ask the node itself, so a type it will not take reports the
+			// engine's own reason instead of becoming a pin that never appears.
+			FText Refusal;
+			if (!Node->CanCreateUserDefinedPin(PinType, EGPD_Output, Refusal))
+			{
+				return FString::Printf(TEXT("input '%s': %s"), *PinName, *Refusal.ToString());
+			}
+			if (!Node->CreateUserDefinedPin(FName(*PinName), PinType, EGPD_Output))
+			{
+				// CreateUserDefinedPin hands back whatever the virtual
+				// CreatePinFromUserDefinition returns. A null means the entry
+				// went into UserDefinedPins with no pin on the node to show
+				// for it - recorded, invisible, and compiled into nothing.
+				return FString::Printf(TEXT("input '%s': the node did not create the pin"), *PinName);
+			}
+		}
+
+		// What the editor does after the same edit, so pin order and state
+		// match a parameter added by hand in the details panel.
+		Node->ReconstructNode();
+		return FString();
+	}
+
 	FUplinkToolResult ApplyAddNodeOp(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& OpParams,
 		TMap<FString, FString>& NodeRefs, TSharedRef<FJsonObject> Data)
 	{
@@ -107,6 +174,45 @@ namespace UplinkBlueprint
 			UK2Node_CustomEvent* Node = NewObject<UK2Node_CustomEvent>(Graph);
 			Node->CustomFunctionName = FName(*GetString(OpParams, TEXT("name"), TEXT("CustomEvent")));
 			NewNode = Node;
+		}
+		else if (Kind == TEXT("enhanced_input"))
+		{
+			// The action has to be resolved before the node is placed:
+			// AllocateDefaultPins reads InputAction to type the ActionValue pin
+			// and to create the action pin at all, and FinalizeNewNode is what
+			// calls it. Setting the action afterwards leaves a node whose pins
+			// describe no action.
+			const FString ActionPath = GetString(OpParams, TEXT("action"));
+			const UInputAction* Action = LoadObject<UInputAction>(nullptr, *ActionPath);
+			if (!Action)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("input action not found: '%s' - pass an Input Action asset path, e.g. /Game/Input/Actions/IA_Jump"),
+					*ActionPath));
+			}
+
+			// One event node per action per graph. A second one is a compile
+			// error, and the editor's own spawner reuses rather than stacking,
+			// so match that instead of producing a graph that will not build.
+			for (UEdGraphNode* GraphNode : Graph->Nodes)
+			{
+				UK2Node_EnhancedInputAction* Existing = Cast<UK2Node_EnhancedInputAction>(GraphNode);
+				if (Existing && Existing->InputAction == Action)
+				{
+					Existing->Modify();
+					Existing->SetEnabledState(ENodeEnabledState::Enabled);
+					Data->SetObjectField(TEXT("node"), NodeToJson(Existing));
+					Data->SetBoolField(TEXT("reused"), true);
+					ResultNode = Existing;
+					break;
+				}
+			}
+			if (!ResultNode)
+			{
+				UK2Node_EnhancedInputAction* Node = NewObject<UK2Node_EnhancedInputAction>(Graph);
+				Node->InputAction = Action;
+				NewNode = Node;
+			}
 		}
 		else if (Kind == TEXT("event"))
 		{
@@ -612,7 +718,7 @@ namespace UplinkBlueprint
 		else
 		{
 			return FUplinkToolResult::Error(TEXT(
-				"unknown 'kind'. Events and calls: call_function, custom_event, event, component_bound_event. "
+				"unknown 'kind'. Events and calls: call_function, custom_event {name, inputs?: [{name, type, by_ref?}] - event parameters, which appear as OUTPUT pins}, event, component_bound_event, enhanced_input {action} - an Enhanced Input event node for an Input Action asset. "
 				"Data: variable_get, variable_set, make_struct, break_struct, make_array, select, self. "
 				"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result. "
 				"Dispatchers: bind_dispatcher, unbind_dispatcher, call_dispatcher, clear_dispatcher {name, target?}. Parent: call_parent {function}. "
@@ -622,6 +728,18 @@ namespace UplinkBlueprint
 		if (NewNode)
 		{
 			FinalizeNewNode(Graph, NewNode, OpParams);
+			if (UK2Node_CustomEvent* EventNode = Cast<UK2Node_CustomEvent>(NewNode))
+			{
+				const FString ParamError = AddCustomEventParams(EventNode, OpParams);
+				if (!ParamError.IsEmpty())
+				{
+					// A failed op is reported, not rolled back, so take the
+					// half-built event back out rather than leaving it in the
+					// graph for the caller to find later.
+					Graph->RemoveNode(EventNode);
+					return FUplinkToolResult::Error(ParamError);
+				}
+			}
 			Data->SetObjectField(TEXT("node"), NodeToJson(NewNode));
 			ResultNode = NewNode;
 		}
