@@ -6,6 +6,36 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.34.0
+
+### Added
+- `bp_modify` `add_node` `variable_get` / `variable_set` take `class`: the
+  object the variable lives on. Both node kinds called
+  `VariableReference.SetSelfMember`, so a variable node could only ever be
+  about the blueprint it sat in. That left an ordinary Blueprint node
+  unreachable - reading `PlayerState` off the `NewPlayer` controller handed to
+  `OnPostLogin`, where the target is a parameter and not self. Passing `class`
+  makes the reference external, which is what gives the node its Target pin.
+  Omitted, the node is about this blueprint exactly as before.
+
+  The reference goes in through `SetFromField` rather than
+  `SetExternalMember`, for two reasons. It reads the DECLARING class off the
+  property, so passing `PlayerController` for a variable declared on
+  `Controller` still resolves rather than pointing at a class that does not
+  own it. And it fills in the member guid, which is what keeps a reference to
+  a *Blueprint* variable alive when that variable is renamed; the two-argument
+  `SetExternalMember` leaves the guid invalid.
+
+  Legality is checked before the node is built, through
+  `IsPropertyReadableInBlueprint` / `IsPropertyWritableInBlueprint` - the same
+  answers the editor uses, so private and protected are judged from this
+  blueprint rather than in the abstract. This is checked up front because the
+  compiler does not say it loudly: `UK2Node_Variable::ValidateNodeDuringCompilation`
+  reports an unresolved variable as a WARNING, so a node referring to nothing
+  leaves the blueprint compiling with zero errors. A set of a
+  `BlueprintReadOnly` property is refused with that as the reason, and an
+  unknown name is refused with the class's blueprint-visible variables listed.
+
 ## 0.33.0
 
 Two more gaps from the same run of real projects, and one bug the fix for the

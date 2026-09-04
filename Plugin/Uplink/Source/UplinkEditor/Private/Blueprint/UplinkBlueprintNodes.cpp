@@ -412,18 +412,90 @@ namespace UplinkBlueprint
 		else if (Kind == TEXT("variable_get") || Kind == TEXT("variable_set"))
 		{
 			const FName VarName(*GetString(OpParams, TEXT("name")));
-			if (Kind == TEXT("variable_get"))
+			const bool bSetter = Kind == TEXT("variable_set");
+			UK2Node_Variable* Node = bSetter
+				? static_cast<UK2Node_Variable*>(NewObject<UK2Node_VariableSet>(Graph))
+				: static_cast<UK2Node_Variable*>(NewObject<UK2Node_VariableGet>(Graph));
+
+			// 'class' names the object the variable lives on. Without it the
+			// node is about this blueprint, which is the common case and stays
+			// the default.
+			const FString OwnerPath = GetString(OpParams, TEXT("class"));
+			if (OwnerPath.IsEmpty())
 			{
-				UK2Node_VariableGet* Node = NewObject<UK2Node_VariableGet>(Graph);
 				Node->VariableReference.SetSelfMember(VarName);
-				NewNode = Node;
 			}
 			else
 			{
-				UK2Node_VariableSet* Node = NewObject<UK2Node_VariableSet>(Graph);
-				Node->VariableReference.SetSelfMember(VarName);
-				NewNode = Node;
+				UClass* OwnerClass = StaticLoadClass(UObject::StaticClass(), nullptr, *OwnerPath);
+				if (!OwnerClass)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("class not found: '%s' - the class the variable lives on, ")
+						TEXT("e.g. /Script/Engine.Controller or /Game/BP_Door.BP_Door_C"), *OwnerPath));
+				}
+
+				FProperty* Property = FindFProperty<FProperty>(OwnerClass, VarName);
+				if (!Property)
+				{
+					TArray<FString> Candidates;
+					for (TFieldIterator<FProperty> It(OwnerClass, EFieldIteratorFlags::IncludeSuper);
+						It && Candidates.Num() < 40; ++It)
+					{
+						if (It->HasAnyPropertyFlags(CPF_BlueprintVisible))
+						{
+							Candidates.AddUnique(It->GetName());
+						}
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("no variable '%s' on %s. Blueprint-visible ones: %s"),
+						*VarName.ToString(), *OwnerClass->GetName(), *FString::Join(Candidates, TEXT(", "))));
+				}
+
+				// Asked before the node is built, because the compiler does not
+				// answer this loudly: an unresolved or illegal variable node is
+				// reported as a WARNING, so the blueprint still compiles and
+				// bp_compile still says zero errors over a graph that is broken.
+				if (bSetter)
+				{
+					const FBlueprintEditorUtils::EPropertyWritableState Writable =
+						FBlueprintEditorUtils::IsPropertyWritableInBlueprint(Blueprint, Property);
+					if (Writable != FBlueprintEditorUtils::EPropertyWritableState::Writable)
+					{
+						const TCHAR* Why =
+							Writable == FBlueprintEditorUtils::EPropertyWritableState::BlueprintReadOnly
+								? TEXT("it is BlueprintReadOnly")
+								: Writable == FBlueprintEditorUtils::EPropertyWritableState::Private
+									? TEXT("it is private and not accessible from this blueprint")
+									: TEXT("it is not blueprint visible");
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("'%s' on %s cannot be set from a blueprint: %s. Use variable_get to read it."),
+							*VarName.ToString(), *OwnerClass->GetName(), Why));
+					}
+				}
+				else
+				{
+					const FBlueprintEditorUtils::EPropertyReadableState Readable =
+						FBlueprintEditorUtils::IsPropertyReadableInBlueprint(Blueprint, Property);
+					if (Readable != FBlueprintEditorUtils::EPropertyReadableState::Readable)
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("'%s' on %s cannot be read from a blueprint: %s."),
+							*VarName.ToString(), *OwnerClass->GetName(),
+							Readable == FBlueprintEditorUtils::EPropertyReadableState::Private
+								? TEXT("it is private and not accessible from this blueprint")
+								: TEXT("it is not blueprint visible")));
+					}
+				}
+
+				// SetFromField rather than SetExternalMember: it takes the
+				// DECLARING class off the property, so passing a subclass -
+				// PlayerController for a variable declared on Controller - still
+				// resolves, and it fills in the member guid, which is what keeps
+				// a reference to a Blueprint variable alive across a rename.
+				Node->VariableReference.SetFromField<FProperty>(Property, /*bIsConsideredSelfContext=*/false);
 			}
+			NewNode = Node;
 		}
 		else if (Kind == TEXT("call_parent"))
 		{
@@ -785,7 +857,7 @@ namespace UplinkBlueprint
 		{
 			return FUplinkToolResult::Error(TEXT(
 				"unknown 'kind'. Events and calls: call_function, custom_event {name, inputs?: [{name, type, by_ref?}] - event parameters, which appear as OUTPUT pins}, event, component_bound_event, enhanced_input {action} - an Enhanced Input event node for an Input Action asset · get_subsystem {class} - Get Subsystem for a concrete subsystem class, typed to it. "
-				"Data: variable_get, variable_set, make_struct, break_struct, make_array, select, self. "
+				"Data: variable_get / variable_set {name, class?} - class names the object the variable lives on and gives the node a Target pin; omit it for this blueprint. make_struct, break_struct, make_array, select, self. "
 				"Flow: branch, sequence, cast, switch_enum, switch_int, switch_string, macro (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, FlipFlop...), function_result. "
 				"Dispatchers: bind_dispatcher, unbind_dispatcher, call_dispatcher, clear_dispatcher {name, target?}. Parent: call_parent {function}. "
 				"Animation: timeline {name?, length?, loop?, autoplay?, track?, keys?}."));

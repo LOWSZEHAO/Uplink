@@ -1,0 +1,132 @@
+{
+  "_name": "Variables on another object",
+  "_purpose": "A variable node can be about an object other than the blueprint it sits in. The case that found this: reading PlayerState off the NewPlayer controller handed to OnPostLogin, where the target is an event parameter and not self. Passing 'class' makes the reference external, which is what gives the node its Target pin; omitting it keeps the old self-context behaviour, and this file pins down both so neither drifts into the other.",
+  "_reading": "The compile assertions check warnings as well as errors, and that is the point: UK2Node_Variable reports a variable it cannot resolve as a WARNING, so a node referring to nothing still leaves the blueprint compiling with zero errors. Zero warnings is what actually proves the reference resolved.",
+  "_requires": "Any project. Creates one Blueprint under /Game/UplinkScenarios and deletes it again. Uses AController::PlayerState, which every project has.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_VarTarget" }
+      }
+    },
+    {
+      "tool": "bp_create",
+      "params": { "path": "/Game/UplinkScenarios/BP_VarTarget", "parent_class": "/Script/Engine.GameModeBase" }
+    },
+
+    {
+      "_note": "The whole point, in one batch: the PostLogin event, a Get for a variable that lives on the CONTROLLER, and the event's NewPlayer parameter wired into that node's Target pin.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_VarTarget",
+        "ops": [
+          { "op": "add_node", "graph": "EventGraph", "kind": "event", "name": "K2_PostLogin", "ref": "evt", "x": 0, "y": 0 },
+          { "op": "add_node", "graph": "EventGraph", "kind": "variable_get", "name": "PlayerState", "class": "/Script/Engine.Controller", "ref": "ps", "x": 400, "y": 100 },
+          { "op": "connect", "from_node": "@evt", "from_pin": "NewPlayer", "to_node": "@ps", "to_pin": "self" }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "Zero warnings, not just zero errors - an unresolved variable reference is only ever a warning, so this is the assertion that proves the external reference actually resolved.",
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_VarTarget" },
+      "expect": { "errors": 0, "warnings": 0 }
+    },
+
+    {
+      "_note": "A subclass is accepted and self-corrects: PlayerState is declared on Controller, not on PlayerController, and the reference is taken from the property's declaring class rather than from whatever class was passed.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_VarTarget",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "variable_get",
+        "name": "PlayerState",
+        "class": "/Script/Engine.PlayerController",
+        "x": 400,
+        "y": 400,
+        "compile": true
+      }
+    },
+    {
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_VarTarget" },
+      "expect": { "errors": 0, "warnings": 0 }
+    },
+
+    {
+      "_note": "REFUSED: PlayerState is BlueprintReadOnly on AController, so a Set of it is not a legal Blueprint node. Left to the compiler this is an error on a node that was already placed; refused here it never gets built.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_VarTarget",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "variable_set",
+        "name": "PlayerState",
+        "class": "/Script/Engine.Controller"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "REFUSED: no such variable on that class. This is the case the compiler would only warn about.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_VarTarget",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "variable_get",
+        "name": "NoSuchVariable",
+        "class": "/Script/Engine.Controller"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "REFUSED: the class itself does not resolve.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_VarTarget",
+        "op": "add_node",
+        "graph": "EventGraph",
+        "kind": "variable_get",
+        "name": "PlayerState",
+        "class": "/Script/Nope.NoSuchClass"
+      },
+      "expect_failure": true
+    },
+
+    {
+      "_note": "And with no 'class' the node is still about this blueprint: a variable of its own, got and set, exactly as before.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_VarTarget",
+        "ops": [
+          { "op": "add_variable", "name": "ScenarioCount", "type": "int" },
+          { "op": "add_node", "graph": "EventGraph", "kind": "variable_get", "name": "ScenarioCount", "x": 0, "y": 800 },
+          { "op": "add_node", "graph": "EventGraph", "kind": "variable_set", "name": "ScenarioCount", "x": 400, "y": 800 }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "Everything above, in one graph, still clean.",
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_VarTarget" },
+      "expect": { "errors": 0, "warnings": 0 }
+    },
+
+    {
+      "_note": "Teardown.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_VarTarget" }
+      }
+    }
+  ]
+}
