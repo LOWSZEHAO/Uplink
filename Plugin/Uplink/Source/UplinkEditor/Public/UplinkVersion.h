@@ -11,4 +11,4 @@
 // at 0.26.0 while the plugin shipped 0.29.0, quietly telling every client the
 // wrong version for four releases. scripts/check_repo.ps1 compares all four
 // now; bump them together.
-#define UPLINK_VERSION TEXT("0.35.0")
+#define UPLINK_VERSION TEXT("0.36.0")

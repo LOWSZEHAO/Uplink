@@ -68,6 +68,28 @@
     },
 
     {
+      "_note": "REFUSED: AActor::DataLayers is UE_DEPRECATED with meta=(DeprecatedProperty). It takes a write and hands it straight back on a read, so every check a caller can make agrees the edit worked while the engine stopped consulting the field releases ago. That is the shape of bug that survives for weeks.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "DataLayers", "value": [], "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "_note": "force is the way through, for the case where writing it really is what was meant.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "DataLayers", "value": [], "force": true, "world": "editor" }
+    },
+    {
+      "_note": "A read is annotated rather than refused - reading is how you find out what a stale asset still holds.",
+      "tool": "get_property",
+      "params": { "actor": "$steps[1].name", "property": "DataLayers", "world": "editor" },
+      "expect": { "deprecated": true }
+    },
+    {
+      "_note": "And a live property is untouched by the guard, which is tested by metadata rather than by name.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "Tags", "value": ["alpha"], "world": "editor" }
+    },
+    {
       "_note": "An object inside an array, written as a plain asset path.",
       "tool": "set_property",
       "params": {
@@ -182,12 +204,12 @@
     {
       "_note": "REFUSED: the variable is not instance editable, so rerunning the construction scripts puts the class default back. The write, the change event and the dirty flag all succeed on the way past - which is exactly why this is checked rather than assumed.",
       "tool": "set_property",
-      "params": { "actor": "$steps[20].name", "property": "Hidden", "value": 99, "world": "editor" },
+      "params": { "actor": "$steps[24].name", "property": "Hidden", "value": 99, "world": "editor" },
       "expect_failure": true
     },
     {
       "tool": "get_property",
-      "params": { "actor": "$steps[20].name", "property": "Hidden", "world": "editor" },
+      "params": { "actor": "$steps[24].name", "property": "Hidden", "world": "editor" },
       "expect": { "value": 7 }
     },
 

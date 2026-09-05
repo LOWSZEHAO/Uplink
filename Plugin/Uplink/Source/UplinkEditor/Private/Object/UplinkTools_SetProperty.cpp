@@ -102,8 +102,8 @@ void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("set_property"),
-		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value', matching get_property. In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit. A named object reference that resolves to nothing is refused rather than written as null."),
-		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property","value"]})json"),
+		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value', matching get_property. In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit. A named object reference that resolves to nothing is refused rather than written as null. A property the engine has deprecated is refused too, with its deprecation message - it would take the write and read straight back while nothing acts on it - pass force:true to write one anyway."),
+		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"force":{"type":"boolean","default":false,"description":"Write a deprecated property anyway"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property","value"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -139,6 +139,25 @@ void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 			if (!Value.IsValid())
 			{
 				return FUplinkToolResult::Error(TEXT("'value' is required"));
+			}
+
+			// A retired property takes the write and hands it straight back on
+			// a read, which is exactly how a wrong value survives: every check
+			// a caller can make says the edit worked, while the engine has long
+			// since stopped reading the field. Refused rather than warned,
+			// because a warning attached to a success is the thing that gets
+			// skimmed past - force is there for when writing it really is what
+			// was meant.
+			FString DeprecationMessage;
+			bool bForce = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("force")), bForce);
+			if (!bForce && IsDeprecatedProperty(Property, DeprecationMessage))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' on %s is deprecated, so writing it changes nothing the engine reads.%s%s ")
+					TEXT("Pass force:true to write it anyway."),
+					*GetString(Ctx.Params, TEXT("property")), *OwningObject->GetClass()->GetName(),
+					DeprecationMessage.IsEmpty() ? TEXT("") : TEXT(" "), *DeprecationMessage));
 			}
 
 			const bool bEditorObject = !Ctx.IsPieWorld();

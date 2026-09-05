@@ -6,6 +6,45 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.36.0
+
+Three found while using Uplink on a real project. The third is the one that
+cost weeks.
+
+### Fixed
+- `set_property` refuses a property the engine has deprecated, and
+  `get_property` reports one. A field marked `UE_DEPRECATED` with
+  `meta=(DeprecatedProperty)` took the write, returned success, and handed the
+  value straight back on the next read - so every check a caller can make
+  agreed the edit had worked, while the engine had stopped consulting the
+  field releases ago. That is the shape of bug that survives, because nothing
+  ever contradicts it. The refusal carries the author's own
+  `DeprecationMessage`, which usually names the replacement; `force:true`
+  writes one anyway, and reads are annotated rather than refused, since
+  reading is how you find out what a stale asset still holds. Tested by
+  metadata rather than by name, so a live property with "Deprecated" in its
+  name is untouched.
+
+- `input_map` answers `applied` from every playing world instead of one.
+  It resolved the Enhanced Input subsystem through `GEditor->PlayWorld`, which
+  is assigned once per PIE instance as each is created (PlayLevel.cpp) - so in
+  a multi-instance session it holds whichever came last, arbitrarily, and one
+  world out of several. Asking it about a world with no local player of its
+  own, as a server has none, left the subsystem null and reported every
+  context unapplied while a real key was driving the game through one of them.
+  Every playing world's local players are consulted now, `applied_in` names
+  which worlds a context is applied in, `inspected_worlds` names the ones
+  looked at, and `world` scopes the question the way it does in every other
+  tool.
+
+- `set_pin_default` takes an enum's authored name. A pin stores the
+  enumerator's own name, which for a User Defined Enum is the
+  `NewEnumerator<n>` it was born with and never the name the node draws - so
+  the only spelling a person has was declined, and the pin kept what it had.
+  The value is translated to the stored name before the schema sees it. A name
+  that is already the stored one passes through, every non-enum pin is
+  untouched, and a name that is neither is still refused.
+
 ## 0.35.0
 
 ### Added

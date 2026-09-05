@@ -155,8 +155,30 @@ namespace UplinkBlueprint
 			}
 			else // set_pin_default
 			{
-				const FString Value = GetString(OpParams, TEXT("value"));
+				FString Value = GetString(OpParams, TEXT("value"));
 				const FName Category = Pin->PinType.PinCategory;
+
+				// An enum pin stores the enumerator's own name, which for a
+				// User Defined Enum is the NewEnumerator<n> it was born with -
+				// never the authored name the node draws and the only one a
+				// person has. Translating here is what lets "Halted" through;
+				// without it the schema declines it and the pin keeps whatever
+				// it had. A name that is already the stored one, and every
+				// non-enum pin, passes through untouched.
+				if (const UEnum* PinEnum = Cast<UEnum>(Pin->PinType.PinSubCategoryObject.Get()))
+				{
+					if (PinEnum->GetIndexByNameString(Value) == INDEX_NONE)
+					{
+						for (int32 Index = 0; Index < PinEnum->NumEnums() - 1; ++Index)
+						{
+							if (PinEnum->GetDisplayNameTextByIndex(Index).ToString().Equals(Value, ESearchCase::IgnoreCase))
+							{
+								Value = PinEnum->GetNameStringByIndex(Index);
+								break;
+							}
+						}
+					}
+				}
 				const bool bObjectLike = Category == UEdGraphSchema_K2::PC_Object
 					|| Category == UEdGraphSchema_K2::PC_Class
 					|| Category == UEdGraphSchema_K2::PC_Interface;

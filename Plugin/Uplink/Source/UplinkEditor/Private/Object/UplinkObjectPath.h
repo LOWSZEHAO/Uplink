@@ -28,4 +28,18 @@ namespace UplinkObject
 		FString& OutError,
 		UObject** OutOwningObject = nullptr,
 		FProperty** OutMemberProperty = nullptr);
+
+	/**
+	 * Is this property one the engine has retired?
+	 *
+	 * Tested by metadata, not by the name: plenty of live properties have
+	 * "Deprecated" somewhere in their name, and plenty of retired ones do not.
+	 * UHT writes the DeprecatedProperty key from UPROPERTY(meta=(...)), which
+	 * is the same thing the details panel reads to grey the row out.
+	 *
+	 * OutMessage receives the author's DeprecationMessage when there is one,
+	 * because it usually names the replacement and is the whole reason a caller
+	 * can act on being told.
+	 */
+	bool IsDeprecatedProperty(const FProperty* Property, FString& OutMessage);
 }

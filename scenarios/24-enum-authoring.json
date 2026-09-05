@@ -111,6 +111,30 @@
     },
 
     {
+      "_note": "The Set node and its pin default in ONE batch, because a 'ref' handle only resolves inside the batch that defined it. The default is given by the AUTHORED name: the pin stores NewEnumerator<n>, which is not a name anyone has, so without translating it the schema declines the value and the pin silently keeps what it had.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_EnumUser",
+        "ops": [
+          { "op": "add_node", "graph": "EventGraph", "kind": "variable_set", "name": "State", "ref": "setstate", "x": 0, "y": 700 },
+          { "op": "set_pin_default", "graph": "EventGraph", "node": "@setstate", "pin": "State", "value": "Stopped" }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "REFUSED: a name that is neither the authored nor the stored one. Translating the authored name did not cost the check its teeth.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_EnumUser",
+        "ops": [
+          { "op": "add_node", "graph": "EventGraph", "kind": "variable_set", "name": "State", "ref": "bad", "x": 0, "y": 900 },
+          { "op": "set_pin_default", "graph": "EventGraph", "node": "@bad", "pin": "State", "value": "NotAnEntry" }
+        ]
+      },
+      "expect_failure": true
+    },
+    {
       "_note": "Addressed by the STORED name rather than the authored one. That is the spelling a Switch node's case pins carry, so a caller who read a pin can act on it here without a translation step - and it is the spelling that does not move when the entry is renamed or the editor runs in another language.",
       "tool": "enum_modify",
       "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "rename", "name": "NewEnumerator0", "new_name": "Waiting" }

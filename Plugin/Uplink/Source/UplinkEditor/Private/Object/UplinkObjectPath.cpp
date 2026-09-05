@@ -155,3 +155,24 @@ FProperty* UplinkObject::ResolvePropertyPath(
 	}
 	return nullptr;
 }
+
+bool UplinkObject::IsDeprecatedProperty(const FProperty* Property, FString& OutMessage)
+{
+	OutMessage.Reset();
+	if (!Property)
+	{
+		return false;
+	}
+#if WITH_EDITORONLY_DATA
+	static const FName DeprecatedKey(TEXT("DeprecatedProperty"));
+	static const FName MessageKey(TEXT("DeprecationMessage"));
+	if (!Property->HasMetaData(DeprecatedKey))
+	{
+		return false;
+	}
+	OutMessage = Property->GetMetaData(MessageKey);
+	return true;
+#else
+	return false;
+#endif
+}

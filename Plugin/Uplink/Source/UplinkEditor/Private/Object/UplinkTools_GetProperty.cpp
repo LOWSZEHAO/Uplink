@@ -16,7 +16,7 @@ void UplinkObject::RegisterGetProperty(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("get_property"),
-		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path' (also accepts 'subsystem:<Class>' for live subsystem instances), or 'actor' (name/label) plus optional 'component'. 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value' - useful because a few engine structs will not serialise as a whole but their members read fine."),
+		TEXT("Read any UPROPERTY of an object as JSON. Target by 'object_path' (also accepts 'subsystem:<Class>' for live subsystem instances), or 'actor' (name/label) plus optional 'component'. A property the engine has deprecated is reported with 'deprecated' and its message, because a value read off one looks authoritative while nothing acts on it. 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value' - useful because a few engine structs will not serialise as a whole but their members read fine."),
 		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -54,6 +54,20 @@ void UplinkObject::RegisterGetProperty(FUplinkToolRegistry& Registry)
 			Data->SetStringField(TEXT("property"), GetString(Ctx.Params, TEXT("property")));
 			Data->SetStringField(TEXT("type"), Property->GetCPPType());
 			Data->SetField(TEXT("value"), Value);
+			// Reading one of these is half of how a wrong value survives: the
+			// number comes back looking authoritative while the engine stopped
+			// consulting the field releases ago. Reported rather than refused,
+			// because reading it is how you find out what a stale asset still
+			// holds.
+			FString DeprecationMessage;
+			if (IsDeprecatedProperty(Property, DeprecationMessage))
+			{
+				Data->SetBoolField(TEXT("deprecated"), true);
+				if (!DeprecationMessage.IsEmpty())
+				{
+					Data->SetStringField(TEXT("deprecation_message"), DeprecationMessage);
+				}
+			}
 			return FUplinkToolResult::Ok(Data);
 		});
 }

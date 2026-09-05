@@ -464,7 +464,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 	InRegistry.RegisterQuick(
 		TEXT("input_map"),
 		TEXT("Enhanced Input mapping contexts with their actions and the keys bound to them, and - during play - which of them are actually applied to the player. Use it to find the real move/interact/confirm actions instead of searching assets by name and hoping. 'applied' is only computed for the contexts the scan covers, so a context that lives in a plugin is not merely unapplied, it is unseen: pass path_prefix '/' to scan every mounted root when the game's input comes from somewhere other than /Game."),
-		TEXT(R"json({"type":"object","properties":{"path_prefix":{"type":"string","default":"/Game","description":"Package path to scan; '/' or empty means every mounted root, plugins included"},"applied_only":{"type":"boolean","default":false,"description":"Only contexts currently applied to the player (PIE)"},"max":{"type":"number","default":20}}})json"),
+		TEXT(R"json({"type":"object","properties":{"path_prefix":{"type":"string","default":"/Game","description":"Package path to scan; '/' or empty means every mounted root, plugins included"},"applied_only":{"type":"boolean","default":false,"description":"Only contexts currently applied to a local player (PIE)"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"},"max":{"type":"number","default":20}}})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -473,17 +473,52 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			Ctx.Params->TryGetBoolField(FStringView(TEXT("applied_only")), bAppliedOnly);
 			const int32 Max = FMath::Clamp(static_cast<int32>(GetNumber(Ctx.Params, TEXT("max"), 20.0)), 1, 100);
 
-			// The live subsystem tells us which contexts are actually in force.
-			UEnhancedInputLocalPlayerSubsystem* Input = nullptr;
-			bool bPieRunning = false;
-			if (UWorld* PieWorld = GEditor ? GEditor->PlayWorld.Get() : nullptr)
+			// Every playing world, not GEditor->PlayWorld. That pointer is
+			// assigned once per PIE instance as each is created, so in a
+			// multi-instance session it ends up on whichever came last -
+			// arbitrary, and one world out of several. Asking it about a world
+			// with no local player of its own, as a dedicated server has none,
+			// left Input null and reported every context unapplied while a real
+			// key was driving the game through one of them.
+			struct FPlayerInput
 			{
-				bPieRunning = true;
-				if (const APlayerController* PC = PieWorld->GetFirstPlayerController())
+				FString WorldId;
+				UEnhancedInputLocalPlayerSubsystem* Subsystem = nullptr;
+			};
+			TArray<FPlayerInput> Inputs;
+
+			// 'world' scopes the answer the same way it does everywhere else;
+			// omitted, every playing world is inspected.
+			const FString WantedWorld = GetString(Ctx.Params, TEXT("world"));
+			bool bPieRunning = false;
+			for (const FUplinkWorldEntry& Entry : UplinkWorlds::Enumerate())
+			{
+				if (!Entry.bPlayWorld || !Entry.World)
 				{
-					if (ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
+					continue;
+				}
+				bPieRunning = true;
+				if (!WantedWorld.IsEmpty() && Entry.Id != WantedWorld)
+				{
+					continue;
+				}
+				const UGameInstance* GameInstance = Entry.World->GetGameInstance();
+				if (!GameInstance)
+				{
+					continue;
+				}
+				// The world's own local players. A server world legitimately
+				// has none, and that is different from not having looked.
+				for (ULocalPlayer* LocalPlayer : GameInstance->GetLocalPlayers())
+				{
+					if (!LocalPlayer)
 					{
-						Input = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer);
+						continue;
+					}
+					if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+						ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
+					{
+						Inputs.Add({ Entry.Id, Subsystem });
 					}
 				}
 			}
@@ -519,7 +554,19 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				{
 					continue;
 				}
-				const bool bApplied = Input && Input->HasMappingContext(Context);
+				// Applied anywhere is still 'applied', which is what the field
+				// has always meant; 'applied_in' says where, because in a
+				// multi-instance session "the game is using it" and "this
+				// client is using it" are different questions.
+				TArray<TSharedPtr<FJsonValue>> AppliedIn;
+				for (const FPlayerInput& Player : Inputs)
+				{
+					if (Player.Subsystem->HasMappingContext(Context))
+					{
+						AppliedIn.AddUnique(MakeShared<FJsonValueString>(Player.WorldId));
+					}
+				}
+				const bool bApplied = AppliedIn.Num() > 0;
 				if (bAppliedOnly && !bApplied)
 				{
 					continue;
@@ -560,6 +607,10 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
 				Row->SetStringField(TEXT("context"), Asset.GetObjectPathString());
 				Row->SetBoolField(TEXT("applied"), bApplied);
+				if (AppliedIn.Num() > 0)
+				{
+					Row->SetArrayField(TEXT("applied_in"), AppliedIn);
+				}
 				Row->SetArrayField(TEXT("actions"), Actions);
 				Rows.Add(MakeShared<FJsonValueObject>(Row));
 			}
@@ -573,13 +624,25 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			Data->SetNumberField(TEXT("returned"), Rows.Num());
 			Data->SetBoolField(TEXT("truncated"), bTruncated);
 			Data->SetStringField(TEXT("scanned"), PathPrefix.IsEmpty() ? FString(TEXT("/")) : PathPrefix);
-			Data->SetBoolField(TEXT("livePlayer"), Input != nullptr);
+			Data->SetBoolField(TEXT("livePlayer"), Inputs.Num() > 0);
+			// Which worlds the answer actually came from. A session can hold
+			// several, and "applied" means nothing without knowing where it was
+			// asked - a dedicated server world has no local player to ask at
+			// all, and that is not the same as a context being unapplied.
+			TArray<TSharedPtr<FJsonValue>> Inspected;
+			for (const FPlayerInput& Player : Inputs)
+			{
+				Inspected.AddUnique(MakeShared<FJsonValueString>(Player.WorldId));
+			}
+			Data->SetArrayField(TEXT("inspected_worlds"), Inspected);
 
 			FString Message;
-			if (!Input)
+			if (Inputs.Num() == 0)
 			{
 				Message = bPieRunning
-					? TEXT("play is running but has no local player yet, so 'applied' is unknown - ask again once a player controller exists")
+					? (WantedWorld.IsEmpty()
+						? TEXT("play is running but no world has a local player yet, so 'applied' is unknown - ask again once a player controller exists")
+						: FString::Printf(TEXT("world '%s' has no local player, so 'applied' is unknown there - a server world has none; call worlds to see the others"), *WantedWorld))
 					: TEXT("no running player, so 'applied' is unknown - start play to see which contexts are in force");
 			}
 			else if (bAppliedOnly && Rows.Num() == 0)
