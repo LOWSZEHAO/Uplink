@@ -43,6 +43,12 @@
       "expect": { "value": "AlwaysSpawn" }
     },
     {
+      "_note": "REFUSED: a boolean is not an enum value. FJsonValueBoolean answers TryGetNumber with 1, so without this true lands on whichever entry is numbered 1 and reports success.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": true, "world": "editor" },
+      "expect_failure": true
+    },
+    {
       "_note": "REFUSED: no enumerator has value 99. The engine's importer writes it anyway with no bounds check and no log, leaving a property that reads back as an empty string.",
       "tool": "set_property",
       "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": 99, "world": "editor" },
@@ -170,12 +176,12 @@
     {
       "_note": "REFUSED: the variable is not instance editable, so rerunning the construction scripts puts the class default back. The write, the change event and the dirty flag all succeed on the way past - which is exactly why this is checked rather than assumed.",
       "tool": "set_property",
-      "params": { "actor": "$steps[18].name", "property": "Hidden", "value": 99, "world": "editor" },
+      "params": { "actor": "$steps[19].name", "property": "Hidden", "value": 99, "world": "editor" },
       "expect_failure": true
     },
     {
       "tool": "get_property",
-      "params": { "actor": "$steps[18].name", "property": "Hidden", "world": "editor" },
+      "params": { "actor": "$steps[19].name", "property": "Hidden", "world": "editor" },
       "expect": { "value": 7 }
     },
 

@@ -87,9 +87,28 @@ namespace UplinkValue
 		bool EnumValueIsInRange(const FProperty* Property, const TSharedPtr<FJsonValue>& Value, FString& OutError)
 		{
 			const UEnum* Enum = EnumBehind(Property);
-			double Number = 0.0;
-			if (!Enum || !Value.IsValid() || !Value->TryGetNumber(Number))
+			if (!Enum || !Value.IsValid())
 			{
+				return true;
+			}
+
+			// Booleans first, and refused rather than converted. FJsonValueBoolean
+			// answers TryGetNumber with 1 or 0, so true on an enum property would
+			// otherwise pass the range check below and land on whichever entry
+			// happens to be numbered 1 - a write that reports success and sets
+			// something nobody named.
+			if (Value->Type == EJson::Boolean)
+			{
+				OutError = FString::Printf(
+					TEXT("%s is the enum %s, not a bool - true and false would read as entries 1 and 0. ")
+					TEXT("Pass an entry name or its number."), *Property->GetName(), *Enum->GetName());
+				return false;
+			}
+
+			double Number = 0.0;
+			if (Value->Type != EJson::Number || !Value->TryGetNumber(Number))
+			{
+				// A name; the importer resolves it and refuses what it cannot.
 				return true;
 			}
 			if (Enum->HasMetaData(TEXT("Bitflags")) || Enum->IsValidEnumValue(static_cast<int64>(Number)))

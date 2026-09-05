@@ -44,6 +44,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   at the graph found no pin called that, and no way to tell which one was
   theirs.
 
+### Fixed
+- `set_property` refuses a JSON boolean on an enum property instead of
+  converting it. `FJsonValueBoolean::TryGetNumber` answers with 1 or 0, so
+  `true` passed the range check added in 0.33.0 and landed on whichever entry
+  happened to be numbered 1: setting `SpawnCollisionHandlingMethod` to `true`
+  reported success and left it reading `AlwaysSpawn`. Found by auditing that
+  guard rather than by anything failing.
+
 ## 0.34.0
 
 ### Added
