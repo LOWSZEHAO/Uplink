@@ -167,7 +167,17 @@ namespace UplinkBlueprint
 				// non-enum pin, passes through untouched.
 				if (const UEnum* PinEnum = Cast<UEnum>(Pin->PinType.PinSubCategoryObject.Get()))
 				{
-					if (PinEnum->GetIndexByNameString(Value) == INDEX_NONE)
+					// An enum pin cannot be emptied. The schema turns "" into
+					// the first entry's name and stores that, so asking to
+					// clear one moves it to entry 0 - and comparing the reply
+					// against "" then called that landed write a failure, which
+					// is the worst of both: the pin changed and the caller was
+					// told it had not.
+					if (Value.IsEmpty())
+					{
+						Value = PinEnum->GetNameStringByIndex(0);
+					}
+					else if (PinEnum->GetIndexByNameString(Value) == INDEX_NONE)
 					{
 						for (int32 Index = 0; Index < PinEnum->NumEnums() - 1; ++Index)
 						{

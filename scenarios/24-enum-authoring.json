@@ -123,6 +123,17 @@
       }
     },
     {
+      "_note": "An empty value on an enum pin is a SUCCESS, not a failure. The pin cannot be emptied - the schema stores the first entry's name instead - so reporting this as declined would say the graph was untouched while the pin had moved to entry 0.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_EnumUser",
+        "ops": [
+          { "op": "add_node", "graph": "EventGraph", "kind": "variable_set", "name": "State", "ref": "clearme", "x": 400, "y": 900 },
+          { "op": "set_pin_default", "graph": "EventGraph", "node": "@clearme", "pin": "State", "value": "" }
+        ]
+      }
+    },
+    {
       "_note": "REFUSED: a name that is neither the authored nor the stored one. Translating the authored name did not cost the check its teeth.",
       "tool": "bp_modify",
       "params": {

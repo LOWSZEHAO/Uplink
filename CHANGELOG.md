@@ -37,6 +37,15 @@ cost weeks.
   looked at, and `world` scopes the question the way it does in every other
   tool.
 
+- `set_pin_default` no longer calls an empty value on an enum pin a failure. An
+  enum pin cannot be emptied: `GetPinDefaultValuesFromString` turns "" into the
+  first entry's name and stores that. Comparing the reply against "" then
+  reported the write as declined - while the pin had in fact moved to entry 0.
+  The pin changed and the caller was told it had not, which is the worse half
+  of the two. The value is normalised to entry 0's name up front, so the answer
+  matches what the engine did. Found by auditing the write path, not by a
+  failure.
+
 - `set_pin_default` takes an enum's authored name. A pin stores the
   enumerator's own name, which for a User Defined Enum is the
   `NewEnumerator<n>` it was born with and never the name the node draws - so
