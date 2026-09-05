@@ -45,6 +45,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   theirs.
 
 ### Fixed
+- `set_property` refuses the trailing `_MAX` marker on an enum property. UHT
+  appends one to every UENUM; `IsValidEnumValue` says yes to it, and it wrote
+  and reloaded happily, leaving a property reading `ESomething_MAX` - which
+  looks like an answer and is not one. It is a count, not a state, and no
+  editor dropdown offers it: the enum pin widget and the switch node both stop
+  at `NumEnums() - 1`, and that same bound is what is applied here. Every real
+  value, and every name, is unaffected.
+
+- `enum_modify` accepts either name an entry has. It matched only the authored
+  one, so a caller who read `NewEnumerator0` off a Switch node's case pin had
+  to call `enum_query` to translate before acting on it. The authored name is
+  still tried first, since it is what a person means; the stored name is tried
+  second, and is also the spelling that does not move when an entry is renamed
+  or the editor runs in another language.
+
 - `set_property` refuses a JSON boolean on an enum property instead of
   converting it. `FJsonValueBoolean::TryGetNumber` answers with 1 or 0, so
   `true` passed the range check added in 0.33.0 and landed on whichever entry

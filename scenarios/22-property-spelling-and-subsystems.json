@@ -55,6 +55,12 @@
       "expect_failure": true
     },
     {
+      "_note": "REFUSED: 5 is the trailing _MAX marker UHT appends to every UENUM. IsValidEnumValue says yes to it and it writes and reloads happily, but no editor dropdown offers it - the enum pin and the switch node both stop at NumEnums() - 1 - and a property holding it reads back as ESpawnActorCollisionHandlingMethod_MAX, which looks like an answer and is not one.",
+      "tool": "set_property",
+      "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "value": 5, "world": "editor" },
+      "expect_failure": true
+    },
+    {
       "_note": "And the refusal left the property alone rather than half-writing it.",
       "tool": "get_property",
       "params": { "actor": "$steps[1].name", "property": "SpawnCollisionHandlingMethod", "world": "editor" },
@@ -176,12 +182,12 @@
     {
       "_note": "REFUSED: the variable is not instance editable, so rerunning the construction scripts puts the class default back. The write, the change event and the dirty flag all succeed on the way past - which is exactly why this is checked rather than assumed.",
       "tool": "set_property",
-      "params": { "actor": "$steps[19].name", "property": "Hidden", "value": 99, "world": "editor" },
+      "params": { "actor": "$steps[20].name", "property": "Hidden", "value": 99, "world": "editor" },
       "expect_failure": true
     },
     {
       "tool": "get_property",
-      "params": { "actor": "$steps[19].name", "property": "Hidden", "world": "editor" },
+      "params": { "actor": "$steps[20].name", "property": "Hidden", "world": "editor" },
       "expect": { "value": 7 }
     },
 

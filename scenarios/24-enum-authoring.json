@@ -111,6 +111,16 @@
     },
 
     {
+      "_note": "Addressed by the STORED name rather than the authored one. That is the spelling a Switch node's case pins carry, so a caller who read a pin can act on it here without a translation step - and it is the spelling that does not move when the entry is renamed or the editor runs in another language.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "rename", "name": "NewEnumerator0", "new_name": "Waiting" }
+    },
+    {
+      "tool": "enum_query",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+      "expect": { "count": 3 }
+    },
+    {
       "_note": "A rename changes only the name it shows under - the value stays put.",
       "tool": "enum_modify",
       "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "rename", "name": "Stopped", "new_name": "Halted" }

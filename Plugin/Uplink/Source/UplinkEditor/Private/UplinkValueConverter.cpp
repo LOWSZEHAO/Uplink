@@ -111,9 +111,29 @@ namespace UplinkValue
 				// A name; the importer resolves it and refuses what it cannot.
 				return true;
 			}
-			if (Enum->HasMetaData(TEXT("Bitflags")) || Enum->IsValidEnumValue(static_cast<int64>(Number)))
+			if (Enum->HasMetaData(TEXT("Bitflags")))
 			{
 				return true;
+			}
+			if (Enum->IsValidEnumValue(static_cast<int64>(Number)))
+			{
+				// Valid is not the same as selectable. UHT appends a
+				// <Enum>_MAX sentinel to every UENUM, IsValidEnumValue says yes
+				// to it, and it writes and reloads happily - but it is a count,
+				// not a state, and no editor dropdown offers it: the enum pin
+				// and the switch node both stop at NumEnums() - 1. A property
+				// left holding it reads back as ESomething_MAX, which looks
+				// like an answer and is not one.
+				const int32 Index = Enum->GetIndexByValue(static_cast<int64>(Number));
+				if (Index != Enum->NumEnums() - 1)
+				{
+					return true;
+				}
+				OutError = FString::Printf(
+					TEXT("%lld is %s's trailing _MAX marker, not one of its values - the editor never offers it. ")
+					TEXT("Valid: 0 to %d."),
+					static_cast<int64>(Number), *Enum->GetName(), FMath::Max(0, Enum->NumEnums() - 2));
+				return false;
 			}
 
 			TArray<FString> Entries;

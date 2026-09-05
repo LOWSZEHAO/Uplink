@@ -42,12 +42,29 @@ namespace
 		return FMath::Max(0, Enum->NumEnums() - 1);
 	}
 
-	/** Entries are addressed by the name the enum editor shows. */
+	/**
+	 * Entries answer to either name they have.
+	 *
+	 * The authored one is what a person means and is tried first. The stored
+	 * NewEnumerator<n> is tried second because it is what the rest of the
+	 * editor hands back - a Switch's case pins are named after it - so a caller
+	 * who read a pin can say that here instead of calling enum_query to
+	 * translate. It is also the spelling that does not move: the authored name
+	 * is an FText, so on an editor running in another culture it can read
+	 * differently while the stored name cannot.
+	 */
 	int32 FindEntryByName(const UUserDefinedEnum* Enum, const FString& Name)
 	{
 		for (int32 Index = 0; Index < VisibleCount(Enum); ++Index)
 		{
 			if (Enum->GetDisplayNameTextByIndex(Index).ToString().Equals(Name, ESearchCase::IgnoreCase))
+			{
+				return Index;
+			}
+		}
+		for (int32 Index = 0; Index < VisibleCount(Enum); ++Index)
+		{
+			if (Enum->GetNameStringByIndex(Index).Equals(Name, ESearchCase::IgnoreCase))
 			{
 				return Index;
 			}
@@ -84,7 +101,7 @@ void UplinkTools::RegisterEnum(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("enum_query"),
-		TEXT("Read a User Defined Enum's entries: display name, value, index, and the stored raw name. 'name' is what enum_modify addresses an entry by, and what set_property and a Blueprint show. The trailing _MAX entry every enum carries is not reported, because it is not one of yours. There is no other way to read this - UEnum's name table is not a UPROPERTY, so get_property cannot reach it."),
+		TEXT("Read a User Defined Enum's entries: index, value, and both names each entry has. 'name' is the authored one, which a Blueprint shows and a person means. 'raw_name' is the stored NewEnumerator<n>, which is what a Switch node's case pins are named after and what does not change when the entry is renamed or the editor runs in another language. enum_modify accepts either, so a name read off a pin can go straight back in. The trailing _MAX marker every enum carries is not reported, because it is not one of yours. There is no other way to read this - UEnum's name table is not a UPROPERTY, so get_property cannot reach it."),
 		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string","description":"User Defined Enum asset path"}},"required":["asset"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -111,7 +128,7 @@ void UplinkTools::RegisterEnum(FUplinkToolRegistry& Registry)
 
 	Registry.RegisterQuick(
 		TEXT("enum_modify"),
-		TEXT("Edit a User Defined Enum's entries. op: add {name} | remove {name} | rename {name, new_name} | move {name, index}. A newly created enum has NO entries at all, so a switch on it has no cases and a variable of its type has nothing to hold - add them here first. WARNING: remove and move renumber every entry, because the engine re-sequences values to 0..n-1 after either. Anything already storing one of those values - a placed actor's property, a saved game - keeps the old number and so means a different entry afterwards. Adding is safe; it only appends. Marked dirty, not saved."),
+		TEXT("Edit a User Defined Enum's entries. op: add {name} | remove {name} | rename {name, new_name} | move {name, index}. An existing entry can be named by either the authored name or the stored raw_name enum_query reports, so the name off a Switch's case pin works here directly. A newly created enum has NO entries at all, so a switch on it has no cases and a variable of its type has nothing to hold - add them here first. WARNING: remove and move renumber every entry, because the engine re-sequences values to 0..n-1 after either. Anything already storing one of those values - a placed actor's property, a saved game - keeps the old number and so means a different entry afterwards. Adding is safe; it only appends. Marked dirty, not saved."),
 		TEXT(R"json({"type":"object","properties":{"asset":{"type":"string"},"op":{"type":"string","enum":["add","remove","rename","move"]},"name":{"type":"string"},"new_name":{"type":"string"},"index":{"type":"number","description":"move: target position, 0-based"}},"required":["asset","op","name"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -127,7 +144,7 @@ void UplinkTools::RegisterEnum(FUplinkToolRegistry& Registry)
 			if (Name.IsEmpty())
 			{
 				return FUplinkToolResult::Error(
-					TEXT("'name' is required - the entry's display name, as enum_query reports it"));
+					TEXT("'name' is required - the entry's name, as enum_query reports it (either spelling)"));
 			}
 
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
