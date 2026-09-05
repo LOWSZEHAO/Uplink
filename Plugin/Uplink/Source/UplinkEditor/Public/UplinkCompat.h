@@ -37,6 +37,16 @@ namespace UplinkCompat
 #endif
 	}
 
+	// FPointerEvent's pressed-button set is a lifetime rule, not a shim, so it
+	// is recorded rather than wrapped: 5.8 holds it by value, 5.7 holds a
+	// const TSet<FKey>* to whatever the constructor was handed (Events.h:1028).
+	// The signatures are identical, so a temporary compiles clean on both and
+	// only 5.7 reads freed memory - and only once the event reaches a widget
+	// that asks IsMouseButtonDown(), which is most of the editor's lists and
+	// trees. Whatever set is passed must outlive every copy of the event: use
+	// FTouchKeySet::StandardSet / ::EmptySet for plain left-click, or a named
+	// local that outlives the routing call for any other button.
+
 	// UE 5.8 replaced the bIncludeNestedObjects bool on the ForEachObjectWith*
 	// and GetObjectsWith* family with an EGetObjectsFlags enum, and deprecated
 	// the bool overload. The enum does not exist on 5.7, so the argument itself

@@ -1107,13 +1107,21 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 				ClickPos = FVector2f(PosVector.X, PosVector.Y);
 			}
 
+			// The pressed-button set has to outlive every copy of the event.
+			// 5.8 stores it by value, but 5.7 stores a const TSet<FKey>* to
+			// whatever was passed, so a temporary here dies at the semicolon and
+			// leaves the event pointing at freed memory - read by anything that
+			// calls IsMouseButtonDown() while the event routes, which includes
+			// STableViewBase and so every list and tree in the editor. The
+			// engine's own statics have static lifetime and hold exactly the two
+			// values this needs.
 			const FPointerEvent MouseDown(
-				0, ClickPos, ClickPos, TSet<FKey>{ EKeys::LeftMouseButton },
+				0, ClickPos, ClickPos, FTouchKeySet::StandardSet,
 				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
 			const bool bDownHandled = FSlateApplication::Get().ProcessMouseButtonDownEvent(nullptr, MouseDown);
 
 			const FPointerEvent MouseUp(
-				0, ClickPos, ClickPos, TSet<FKey>(),
+				0, ClickPos, ClickPos, FTouchKeySet::EmptySet,
 				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
 			const bool bUpHandled = FSlateApplication::Get().ProcessMouseButtonUpEvent(MouseUp);
 
