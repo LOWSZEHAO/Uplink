@@ -28,7 +28,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.34.0 — 113 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.35.0 — 115 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. Audits keep finding shipped calls that reported success while doing the wrong thing - most recently a scenario runner that never validated its own step parameters, so every regression scenario ran unchecked, and a test runner that could see 429 of 6432 tests and answered "no tests match" for the rest. Both had been green for months. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -93,7 +93,7 @@ Worth reading before you point an agent at real work.
 
 ## The toolset
 
-113 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
+115 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
 
 | Layer | Tools |
 |---|---|

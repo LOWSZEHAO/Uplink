@@ -6,6 +6,44 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.35.0
+
+### Added
+- `enum_query` and `enum_modify`: read a User Defined Enum's entries and add,
+  remove, rename or reorder them. `asset_create` could already make the enum
+  asset - it picks `EnumFactory` and reports success - but
+  `FEnumEditorUtils::CreateUserDefinedEnum` builds it by calling `SetEnums`
+  with an EMPTY name array, and nothing could put an entry in it afterwards.
+  So the asset existed, a variable could be typed to it, and a `switch_enum`
+  on it came back with no case pins at all. An enum you can reference and
+  cannot fill is worse than one you cannot make.
+
+  `AddNewEnumeratorForUserDefinedEnum` takes no name and returns void, so a
+  named entry is add-then-rename and the entry count is the only evidence the
+  add happened - the same shape as `FStructureEditorUtils::AddVariable`. An
+  entry keeps the `NewEnumerator<n>` it was born with as its stored name while
+  renaming changes only the display name, so both are reported: `name` is what
+  a person authored, `raw_name` is what a saved asset and a switch pin see.
+
+  `move` bounds its target index here rather than leaving it to the engine.
+  `MoveEnumeratorInUserDefinedEnum` tests the index against `NumEnums()`,
+  which counts the hidden trailing `_MAX`, and then inserts into a list built
+  by `CopyEnumeratorsWithoutMax` - so the one index its own check admits and
+  its array cannot hold runs off the end.
+
+  `remove` and `move` are reported as renumbering: both end with
+  `Names[i].Value = i` across the whole list, so every entry after the edit
+  changes value. Anything already holding one of those numbers - a placed
+  actor's property, a save - keeps the number and therefore means a different
+  entry. `add` only appends and is safe.
+
+- `bp_query` reports `shown_as` on a pin whose editor label differs from the
+  name `connect` addresses it by. This is how a Switch on a User Defined Enum
+  reads: its case pins are named after the stored `NewEnumerator<n>` while the
+  node draws the authored name, so a caller who added "Closed" and then looked
+  at the graph found no pin called that, and no way to tell which one was
+  theirs.
+
 ## 0.34.0
 
 ### Added

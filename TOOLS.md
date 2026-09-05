@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 113 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 115 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -145,7 +145,7 @@ Every list is capped, because this is read in an agent's context window. Gatheri
 | Tool | What it does |
 |---|---|
 | `bp_create` | New Blueprint asset. It exists in memory and is marked dirty — call `save`, or an editor restart discards it. `{path, parent_class?}` (a full class path, e.g. `/Script/Engine.Pawn`; defaults to Actor). |
-| `bp_query` | Parent class, compile status, implemented interfaces, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. Big graphs page: `offset` skips into a graph, `total_nodes` reports its true size, `next_offset` is the cursor for the next call. `{blueprint, graph?, max_nodes?, offset?}` |
+| `bp_query` | Parent class, compile status, implemented interfaces, variables, and per-graph nodes with pins/defaults/connections. Node guids are the handles `bp_modify` uses. A pin also reports `shown_as` when the label the editor draws differs from the name `connect` addresses it by — a Switch on a User Defined Enum names its cases after the stored `NewEnumerator<n>` and shows the authored one, so without it a caller who wrote "Closed" finds no pin called that. Big graphs page: `offset` skips into a graph, `total_nodes` reports its true size, `next_offset` is the cursor for the next call. `{blueprint, graph?, max_nodes?, offset?}` |
 | `bp_modify` | One edit — or a whole batch: `{blueprint, ops: [{op:..., ...}, ...], compile?, save?}` builds an entire event graph in a single call. Give `add_node` ops a `ref` name and later ops address that node as `@ref` in `from_node`/`to_node`/`node`. A failed op stops the batch and reports `failedAt` and `applied`, since earlier ops stay applied. `save` writes the blueprint to disk, and is skipped when `compile` reported errors so a broken asset is not what gets persisted. |
 | `bp_add_component` | Add a component to an actor Blueprint's construction script, like the editor's Add Component button. `class` is a short engine name (`StaticMeshComponent`, `BoxComponent`) or a full path (needed for anything outside the common set, e.g. `/Script/HeadMountedDisplay.MotionControllerComponent`); `parent` attaches under an existing component. Template conveniences: `location`/`rotation`/`scale`, `static_mesh`, `collision_profile`, and `properties` as a generic name→JSON map. The component becomes a Blueprint variable — after a compile its delegates bind with `bp_modify component_bound_event`. `{blueprint, class, name, parent?, …, compile?}` |
 | `bp_compile` | Compile and return errors/warnings/messages. `{blueprint}` |
@@ -289,6 +289,8 @@ See the editor itself — every window and panel, not just viewports. `ui_tree` 
 | `datatable_modify` | `add_row` `{row, values?}` · `update_row` `{row, values}` · `remove_row` `{row}` · `rename_row` `{row, new_name}` — `values` maps columns to JSON. |
 | `struct_query` | A User Defined Struct's members: display name, resolved type, and the guid-suffixed field name behind it. `{asset}` |
 | `struct_modify` | `add` `{name, type}` · `remove` `{name}` · `rename` `{name, new_name}` · `retype` `{name, type}` · `set_default` `{name, default}` — `type` uses the same vocabulary as blueprint variables. A new struct arrives with one `MemberVar_0` placeholder and can never be left empty. |
+| `enum_query` | A User Defined Enum's entries: display name, value, index, and the stored raw name. The trailing `_MAX` every enum carries is not reported. There is no other way to read this — `UEnum`'s name table is not a UPROPERTY, so `get_property` cannot reach it. `{asset}` |
+| `enum_modify` | `add` `{name}` · `remove` `{name}` · `rename` `{name, new_name}` · `move` `{name, index}`. A newly created enum has **no entries at all**, so a switch on it has no cases — add them here. `remove` and `move` renumber every entry, so anything already storing one of those values means a different entry afterwards; `add` only appends and is safe. |
 
 ## Project & session
 

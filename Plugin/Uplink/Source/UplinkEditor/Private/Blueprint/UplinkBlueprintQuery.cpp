@@ -33,6 +33,17 @@ namespace UplinkBlueprint
 			}
 			TSharedRef<FJsonObject> PinJson = MakeShared<FJsonObject>();
 			PinJson->SetStringField(TEXT("name"), Pin->PinName.ToString());
+			// Only when it differs, and never instead of the name: 'name' is
+			// what connect addresses, and the two part company exactly where it
+			// matters most. A Switch on a User Defined Enum names its case pins
+			// after the stored entry - NewEnumerator0 - and shows the authored
+			// one, so a caller who wrote "Closed" finds nothing called that and
+			// no way to tell which pin is theirs.
+			if (!Pin->PinFriendlyName.IsEmpty()
+				&& !Pin->PinFriendlyName.ToString().Equals(Pin->PinName.ToString()))
+			{
+				PinJson->SetStringField(TEXT("shown_as"), Pin->PinFriendlyName.ToString());
+			}
 			PinJson->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("in") : TEXT("out"));
 			PinJson->SetStringField(TEXT("category"), Pin->PinType.PinCategory.ToString());
 			if (!Pin->DefaultValue.IsEmpty())

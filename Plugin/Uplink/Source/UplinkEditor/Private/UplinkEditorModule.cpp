@@ -49,6 +49,7 @@ void FUplinkEditorModule::StartupModule()
 	UplinkTools::RegisterData(*Registry);
 	UplinkTools::RegisterTests(*Registry);
 	UplinkTools::RegisterStruct(*Registry);
+	UplinkTools::RegisterEnum(*Registry);
 	UplinkTools::RegisterPCG(*Registry);
 	UplinkTools::RegisterGASP(*Registry);
 	UplinkTools::RegisterAutoplay(*Registry);

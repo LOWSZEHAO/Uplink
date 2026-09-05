@@ -1,0 +1,158 @@
+{
+  "_name": "Enum authoring",
+  "_purpose": "An enum you can create must also be an enum you can fill. asset_create already made the asset and reported success, but the engine builds a User Defined Enum with an empty name array, so it arrived with no entries: a variable could be typed to it and a switch on it had no case pins. This walks the whole path - create, add entries, read them back, use it in a graph - and then pins the refusals and the renumbering that remove and move cause.",
+  "_reading": "The switch assertions are the ones that matter. Case pins are named after the stored NewEnumerator<n>, not the authored name, so 'shown_as' is what tells a caller which pin is theirs. A switch with only execute and Selection is what an unfillable enum used to produce.",
+  "_requires": "Any project. Creates an enum and a Blueprint under /Game/UplinkScenarios and deletes them again.",
+  "steps": [
+    {
+      "_note": "Housekeeping: clear debris from an aborted earlier run.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_EnumUser" }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/E_Scenario" }
+      }
+    },
+
+    {
+      "tool": "asset_create",
+      "params": { "path": "/Game/UplinkScenarios/E_Scenario", "class": "UserDefinedEnum" }
+    },
+    {
+      "_note": "A freshly created enum has NO entries. Not one placeholder - none. This is what made the asset useless before there was any way to add to it.",
+      "tool": "enum_query",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+      "expect": { "count": 0 }
+    },
+
+    {
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "add", "name": "Idle" }
+    },
+    {
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "add", "name": "Running" }
+    },
+    {
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "add", "name": "Stopped" }
+    },
+    {
+      "_note": "Three entries, and the trailing _MAX the engine adds is not one of them.",
+      "tool": "enum_query",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+      "expect": { "count": 3 }
+    },
+
+    {
+      "_note": "REFUSED: a name already in use. Checked before the entry is added, so a refusal leaves no NewEnumerator<n> behind.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "add", "name": "Idle" },
+      "expect_failure": true
+    },
+    {
+      "_note": "REFUSED: no such entry.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "rename", "name": "Nope", "new_name": "X" },
+      "expect_failure": true
+    },
+    {
+      "_note": "REFUSED: renaming onto another entry's name.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "rename", "name": "Idle", "new_name": "Running" },
+      "expect_failure": true
+    },
+    {
+      "_note": "REFUSED: index 3 is the hidden _MAX slot. The engine's own bounds check admits it and then inserts past the end of a list that excludes _MAX, so this one is bounded here instead.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "move", "name": "Idle", "index": 3 },
+      "expect_failure": true
+    },
+    {
+      "_note": "Nothing above changed the enum.",
+      "tool": "enum_query",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+      "expect": { "count": 3 }
+    },
+
+    {
+      "_note": "The enum is now usable: a variable typed to it, and a switch that actually has cases.",
+      "tool": "bp_create",
+      "params": { "path": "/Game/UplinkScenarios/BP_EnumUser", "parent_class": "/Script/Engine.Actor" }
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkScenarios/BP_EnumUser",
+        "ops": [
+          { "op": "add_variable", "name": "State", "type": "enum:/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+          { "op": "add_node", "graph": "EventGraph", "kind": "switch_enum", "enum": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "x": 400, "y": 300 }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "_note": "The switch's case pins carry the stored names and report the authored ones as shown_as. Before entries could be added, this node had only execute and Selection.",
+      "tool": "bp_query",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_EnumUser", "graph": "EventGraph" }
+    },
+    {
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_EnumUser" },
+      "expect": { "errors": 0 }
+    },
+
+    {
+      "_note": "A rename changes only the name it shows under - the value stays put.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "rename", "name": "Stopped", "new_name": "Halted" }
+    },
+    {
+      "tool": "enum_query",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+      "expect": { "count": 3 }
+    },
+    {
+      "_note": "A remove does NOT: the engine re-sequences every value to 0..n-1 afterwards, so anything already storing one of those numbers now means a different entry. Reported rather than left to be discovered.",
+      "tool": "enum_modify",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario", "op": "remove", "name": "Running" }
+    },
+    {
+      "tool": "enum_query",
+      "params": { "asset": "/Game/UplinkScenarios/E_Scenario.E_Scenario" },
+      "expect": { "count": 2 }
+    },
+    {
+      "_note": "The blueprint that uses it still compiles after the enum changed under it.",
+      "tool": "bp_compile",
+      "params": { "blueprint": "/Game/UplinkScenarios/BP_EnumUser" },
+      "expect": { "errors": 0 }
+    },
+
+    {
+      "_note": "Teardown.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_EnumUser" }
+      }
+    },
+    {
+      "tool": "call_function",
+      "params": {
+        "object_path": "subsystem:EditorAssetSubsystem",
+        "function": "DeleteAsset",
+        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/E_Scenario" }
+      }
+    }
+  ]
+}
