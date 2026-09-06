@@ -7,6 +7,7 @@
 #include "UplinkPieManager.h"
 #include "UplinkServer.h"
 #include "UplinkTaskManager.h"
+#include "UplinkModalPump.h"
 #include "UplinkToolProvider.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkTools.h"
@@ -27,6 +28,10 @@ void FUplinkEditorModule::StartupModule()
 	LogCapture = MakeUnique<FUplinkLogCapture>();
 	Registry = MakeUnique<FUplinkToolRegistry>();
 	Tasks = MakeUnique<FUplinkTaskManager>();
+
+	// A modal dialog runs its own loop and ticks no FTSTicker, so without this
+	// the server stops answering the moment the editor asks a question.
+	UplinkModalPump::Initialize(*Tasks);
 	Pie = MakeUnique<FUplinkPieManager>(LogCapture.Get());
 	Recorder = MakeUnique<FUplinkEventRecorder>();
 	InputRecorder = MakeUnique<FUplinkInputRecorder>();
@@ -99,6 +104,9 @@ void FUplinkEditorModule::ShutdownModule()
 		IModularFeatures::Get().OnModularFeatureRegistered().Remove(ProviderRegisteredHandle);
 		ProviderRegisteredHandle.Reset();
 	}
+	// Before Tasks is reset: the pump holds a raw pointer to it.
+	UplinkModalPump::Shutdown();
+
 	Server.Reset();
 	InputRecorder.Reset();
 	Recorder.Reset();

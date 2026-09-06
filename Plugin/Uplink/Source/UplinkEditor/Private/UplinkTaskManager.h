@@ -185,6 +185,15 @@ public:
 	/** True once the task will not step again and its Result is final. */
 	static bool IsTerminal(EUplinkTaskStatus Status);
 
+	/**
+	 * One step for every live task. Registered on the core ticker, and also
+	 * called by the modal-loop pump: a modal dialog runs its own loop and does
+	 * not tick FTSTicker, so without that second caller every task in flight
+	 * when a dialog opens sits until its deadline. Re-entrant callers are
+	 * safe - see the guard at the top.
+	 */
+	bool TickTasks(float DeltaTime);
+
 private:
 	struct FEntry
 	{
@@ -194,6 +203,14 @@ private:
 		bool bStarted = false;
 		bool bReadOnly = true;
 		bool bTransactional = true;
+
+		/**
+		 * True while this entry is inside StepEntry. A tool step that opens a
+		 * modal dialog does not return until the dialog closes, and the pump
+		 * that keeps Uplink answering meanwhile walks this list again - it must
+		 * not step an invocation that is already on the stack.
+		 */
+		bool bStepping = false;
 
 		/** True while this task holds an open editor transaction. */
 		bool bTransactionOpen = false;
@@ -217,8 +234,6 @@ private:
 		};
 		TArray<FPendingWaiter> Waiters;
 	};
-
-	bool TickTasks(float DeltaTime);
 
 	/** Start whatever queued tasks can now hold everything they need. */
 	void PumpPending();
@@ -275,6 +290,14 @@ private:
 
 	/** Guards against starting a task from inside another task's start. */
 	bool bPumping = false;
+
+	/**
+	 * True while TickTasks is walking. A modal dialog opens from inside a
+	 * tool's own step, so the modal-loop pump calls TickTasks from a stack
+	 * that is already inside it. Entries are held by pointer, but the inner
+	 * walk can purge the very entry the outer walk holds a reference to.
+	 */
+	bool bTicking = false;
 
 	FTSTicker::FDelegateHandle TickerHandle;
 

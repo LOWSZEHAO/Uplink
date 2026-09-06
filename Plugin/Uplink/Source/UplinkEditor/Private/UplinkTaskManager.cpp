@@ -292,6 +292,16 @@ bool FUplinkTaskManager::IsTerminal(EUplinkTaskStatus Status)
 
 bool FUplinkTaskManager::TickTasks(float DeltaTime)
 {
+	// A modal dialog opens from inside a tool step, so the modal-loop pump
+	// re-enters this from a stack that is already walking. Refusing outright
+	// would be simpler and would also mean no task can step while a dialog is
+	// open - which is most of what the pump exists for. Two things are unsafe
+	// on the inner pass and only two: stepping an entry whose invocation is
+	// already on the stack, and purging one the outer pass holds a reference
+	// to. Both are handled below; everything else walks normally.
+	const bool bReentrant = bTicking;
+	TGuardValue<bool> TickGuard(bTicking, true);
+
 	const double Now = FPlatformTime::Seconds();
 
 	// Walk a copy of the keys. Stepping a task runs tool code, and tool code
@@ -351,15 +361,16 @@ bool FUplinkTaskManager::TickTasks(float DeltaTime)
 			{
 				// Queued tasks are started by the pump, never here: starting is
 				// where locks are taken, and that decision belongs in one place.
-				if (Entry.bStarted)
+				if (Entry.bStarted && !Entry.bStepping)
 				{
 					StepEntry(Entry);
 				}
 				FlushWaiters(Entry, /*bDeadlinesOnly=*/true);
 			}
 		}
-		else if (Entry.Waiters.Num() == 0 && Now - Entry.Task.FinishedAt > ResultRetentionSeconds)
+		else if (!bReentrant && Entry.Waiters.Num() == 0 && Now - Entry.Task.FinishedAt > ResultRetentionSeconds)
 		{
+			// Retention cleanup only, so the outer pass can do it a frame later.
 			ToPurge.Add(Id);
 		}
 	}
@@ -447,6 +458,11 @@ void FUplinkTaskManager::StepEntry(FEntry& Entry)
 	{
 		return;
 	}
+
+	// Marked for the whole call, not just the invocation's Tick: a step that
+	// opens a modal dialog stays on the stack for as long as the dialog is up,
+	// and the pump walks the task list repeatedly underneath it.
+	TGuardValue<bool> StepGuard(Entry.bStepping, true);
 
 	FUplinkToolResult Out;
 	EUplinkToolStep Step;
