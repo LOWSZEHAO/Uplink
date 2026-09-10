@@ -6,6 +6,50 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.2
+
+The subsystems this had no tools for turned out to need documentation rather
+than tools. Everything below came from checking that claim rather than making
+it.
+
+### Fixed
+- `sequence_query` called a spawnable a possessable. Since 5.4 the two are not
+  separate lists: a binding added by `AddSpawnableFromClass` is filed as a
+  possessable carrying a spawnable *custom binding*, so asking the old two
+  questions answers "possessable" for something the sequence creates for
+  itself - and a caller reading that would go looking in the level for an actor
+  that is not there. The custom binding now decides, and is reported as
+  `binding_class`.
+- `asset_create` refused to create at a path that had only ever been looked up.
+  A failed load leaves an empty `UPackage` behind, and the existence check asked
+  whether any object was there rather than whether an asset was - so an agent
+  that checked for a widget, was told it did not exist, and then tried to make
+  one was told it already existed. There was no way out but a different name.
+- `find_functions` answered a disabled plugin with silence. It searches loaded
+  classes, and a disabled plugin has loaded none, so a query for
+  `GameplayAbility` on a project where the plugin is off returned an empty list
+  that reads as "the engine cannot do this". It now names the plugin and points
+  at `plugin_enable`. Containment alone missed the case that prompted it -
+  `GameplayAbility` is not a substring of `GameplayAbilities` - so it falls back
+  to edit distance.
+
+### Changed
+- `widget_tree` reports each widget's `path`, and for anything inside a panel
+  its `slot_path` and `slot_class`. Those are real object paths: `set_property`
+  already reached a widget in a Widget Blueprint's tree and the slot that
+  positions it, but only if you could write `:WidgetTree.` in the middle of a
+  path, which nobody guesses. Authoring a layout is now one call after reading
+  the tree.
+
+### Documentation
+- Worked recipes for UMG layout and Sequencer authoring, and a note on how every
+  other subsystem is reached - Control Rig, MetaSounds, data layers and World
+  Partition, physics assets - which is `find_functions` and `call_function`, the
+  same two calls in every case.
+- The two places that genuinely stop: Behaviour Tree and StateTree graph
+  authoring have no scripting surface in the engine at all, and packaging is a
+  commandlet rather than an in-editor call.
+
 ## 0.37.1
 
 Four things found by testing 0.37.0 rather than by shipping it.

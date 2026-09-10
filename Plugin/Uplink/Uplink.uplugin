@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 6,
-	"VersionName": "0.37.1",
+	"Version": 7,
+	"VersionName": "0.37.2",
 	"FriendlyName": "Uplink",
 	"Description": "Direct data link between an AI agent (MCP) and the Unreal Editor — assets, Blueprints, materials and every reflected UFUNCTION, with undoable, verifiable edits.",
 	"Category": "Editor",
