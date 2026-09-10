@@ -175,8 +175,10 @@ Every list is capped, because this is read in an agent's context window. Gatheri
 
 | Tool | What it does |
 |---|---|
-| `widget_tree` | A Widget Blueprint's hierarchy: name, class, parent, root flag, and `is_variable` (only variables can have events bound). `{blueprint, max?}` |
+| `widget_tree` | A Widget Blueprint's hierarchy: name, class, parent, root flag, and `is_variable` (only variables can have events bound). Each row also carries `path`, and for anything inside a panel `slot_path` and `slot_class` — real object paths, so `set_property` writes the widget through the first and its layout through the second. `{blueprint, max?}` |
 | `widget_add` | Construct a widget into the tree, marked as a variable so its events are immediately bindable with `bp_modify component_bound_event`. `{blueprint, class, name, parent?}` |
+
+Layout is authored with `set_property` against the paths `widget_tree` returns — see the worked recipe below.
 
 ## Animation & cinematics
 
@@ -384,6 +386,67 @@ Set it back to `true` when you are done; it is the editor's own preference, not 
 ```
 
 Expression object paths come back from each create call; set their fields (e.g. a Constant3Vector's `Constant`) with `set_property`, and check the result with `material_query`. Set the material's own `MaterialDomain` / `BlendMode` / `ShadingModel` with `set_property` before wiring — a post-process material rejects the SceneColor node, and a Surface one rejects `SceneTexture:PostProcessInput0`, so the domain decides which nodes are legal.
+
+**Worked recipe — UMG layout.** A widget in a Widget Blueprint's tree is an
+ordinary named object, and so is the slot that positions it, so both are
+`set_property` targets. `widget_tree` hands back `path`, `slot_path` and
+`slot_class` for every widget so the paths do not have to be constructed:
+
+```json
+// text on the widget itself
+{ "object_path": "/Game/UI/WBP_Menu.WBP_Menu:WidgetTree.Title",
+  "property": "Text", "value": "Start" }
+
+// position and size live on the SLOT, and which properties exist depends
+// on the panel - slot_class says which
+{ "object_path": "/Game/UI/WBP_Menu.WBP_Menu:WidgetTree.Root.CanvasPanelSlot_0",
+  "property": "LayoutData.Offsets.Left", "value": 250 }
+```
+
+A canvas slot has `LayoutData` (`Offsets`, `Anchors`, `Alignment`), `ZOrder` and
+`bAutoSize`; a box slot has `Padding`, `Size.Value` and the two alignments. The
+designer reflects the change on the next open — there is no separate layout
+tool because there is nothing for one to do.
+
+**Worked recipe — Sequencer authoring** (every call verified). The read side is
+`sequence_query`; authoring is the scripting extensions:
+
+```json
+// new asset:      asset_create {path, class:"LevelSequence"}
+// a spawnable:    MovieSceneSequenceExtensions.AddSpawnableFromClass {Sequence, ClassToSpawn}
+// a possessable:  MovieSceneSequenceExtensions.AddPossessable {Sequence, ObjectToPossess}
+// a track on it:  MovieSceneBindingExtensions.AddTrack {InBinding, TrackType}
+// a section:      MovieSceneTrackExtensions.AddSection {Track}
+```
+
+`AddSpawnableFromClass` returns an `FMovieSceneBindingProxy`, which is passed
+straight back as `InBinding` — `call_function` takes struct arguments as JSON
+objects, so the `{bindingId, sequence}` it returned goes back verbatim. Track
+and section object paths come back from their own calls, and their properties
+(a section's range, a transform channel) are `set_property` targets from there.
+
+Since 5.4 a spawnable is a possessable carrying a spawnable *custom binding*
+rather than a separate list, which is why `sequence_query` reports `kind`
+alongside `binding_class` — the old two-list question answers "possessable" for
+something the sequence spawns for itself.
+
+**Everything else with an editor scripting library** is found the same way, and
+`find_functions` is the whole method: Control Rig (`ControlRigBlueprintLibrary`),
+MetaSounds (`MetaSoundBuilderSubsystem`, `MetaSoundBuilderBase`), data layers
+and World Partition (`DataLayerEditorSubsystem`, `UWorld::GetDataLayerManager`),
+physics assets, cloth, Niagara beyond the dedicated tools. If Epic exposed it to
+Blueprint or Python, `call_function` reaches it.
+
+**Where that stops.** Behaviour Tree and StateTree *graph* authoring have no
+scripting surface at all — you can run one and read a running pawn's brain with
+`ai_query`, but the engine offers no callable way to build the graph, so neither
+this plugin nor Epic's own MCP can. Packaging is a commandlet rather than an
+in-editor call. And a **disabled plugin loads no classes**, so a search for its
+functions comes back empty rather than absent — `find_functions` now says which
+plugin that was and points at `plugin_enable`, because "no results" for the
+Gameplay Ability System reads as "the engine cannot do this" and is the exact
+opposite of true.
+
 
 ---
 

@@ -8,6 +8,7 @@
 #include "UplinkToolUtil.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "Components/PanelSlot.h"
 #include "Components/PanelWidget.h"
 #include "Components/Widget.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -33,7 +34,7 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("widget_tree"),
-		TEXT("List a Widget Blueprint's widget hierarchy: name, class, parent, and whether each widget is a variable (only variables can have events bound via bp_modify component_bound_event). The reply carries 'total' and 'truncated' so a capped list is never mistaken for the whole tree."),
+		TEXT("List a Widget Blueprint's widget hierarchy: name, class, parent, and whether each widget is a variable (only variables can have events bound via bp_modify component_bound_event). Each row also carries 'path' and, for anything inside a panel, 'slot_path' and 'slot_class' - those are real object paths, so set_property writes a widget's own properties through the first and its layout through the second: a canvas child's position is 'LayoutData.Offsets.Left' on the slot, a box child's is 'Padding' or 'Size.Value'. That is how layout is authored here; there is no separate layout tool. The reply carries 'total' and 'truncated' so a capped list is never mistaken for the whole tree."),
 		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string","description":"Widget Blueprint asset path"},"max":{"type":"number","default":200}},"required":["blueprint"]})json"),
 		/*bReadOnly=*/true,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
@@ -70,6 +71,23 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 					Row->SetStringField(TEXT("name"), Widget->GetName());
 					Row->SetStringField(TEXT("class"), Widget->GetClass()->GetPathName());
 					Row->SetBoolField(TEXT("is_variable"), Widget->bIsVariable);
+
+					// A widget in a tree is an ordinary named object, so
+					// set_property already reaches it - but only if you can write
+					// the path, and the ':WidgetTree.' in the middle of it is not
+					// something anyone guesses. Handing it back turns authoring
+					// layout into one more call instead of a research problem.
+					Row->SetStringField(TEXT("path"), Widget->GetPathName());
+					if (const UPanelSlot* Slot = Widget->Slot)
+					{
+						// The layout lives on the slot, not the widget, and which
+						// properties exist depends on the panel: a canvas slot has
+						// LayoutData and ZOrder, a box slot has Padding and Size.
+						// The class is reported so the caller knows which.
+						Row->SetStringField(TEXT("slot_path"), Slot->GetPathName());
+						Row->SetStringField(TEXT("slot_class"), Slot->GetClass()->GetPathName());
+					}
+
 					if (Widget == Root)
 					{
 						Row->SetBoolField(TEXT("is_root"), true);
