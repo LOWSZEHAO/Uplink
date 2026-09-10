@@ -303,4 +303,74 @@ namespace UplinkToolUtil
 		}
 		return ContainsMatch;
 	}
+
+	/**
+	 * Edit distance, for "did you mean". A containment test is enough when a
+	 * caller writes a shorter or longer form of a real name, and useless for the
+	 * commonest miss of all - a name spelt almost right. 'bp_modfy' contains
+	 * nothing and is contained by nothing, so a containment-only suggester
+	 * answers a typo with silence.
+	 *
+	 * Two rows rather than a full matrix: the inputs here are tool and parameter
+	 * names, and the whole table is never wanted.
+	 */
+	inline int32 EditDistance(const FString& A, const FString& B)
+	{
+		const int32 LenA = A.Len();
+		const int32 LenB = B.Len();
+		if (LenA == 0 || LenB == 0)
+		{
+			return FMath::Max(LenA, LenB);
+		}
+
+		TArray<int32> Prev;
+		TArray<int32> Curr;
+		Prev.SetNumUninitialized(LenB + 1);
+		Curr.SetNumUninitialized(LenB + 1);
+		for (int32 J = 0; J <= LenB; ++J)
+		{
+			Prev[J] = J;
+		}
+
+		for (int32 I = 1; I <= LenA; ++I)
+		{
+			Curr[0] = I;
+			for (int32 J = 1; J <= LenB; ++J)
+			{
+				const bool bSame = FChar::ToLower(A[I - 1]) == FChar::ToLower(B[J - 1]);
+				Curr[J] = FMath::Min3(
+					Prev[J] + 1,                       // deletion
+					Curr[J - 1] + 1,                   // insertion
+					Prev[J - 1] + (bSame ? 0 : 1));    // substitution
+			}
+			Swap(Prev, Curr);
+		}
+		return Prev[LenB];
+	}
+
+	/**
+	 * The closest of Candidates to Name, or empty when nothing is close enough
+	 * to be worth saying. The cutoff scales with length so a three-letter name
+	 * does not "match" every other three-letter name.
+	 */
+	inline FString NearestName(const FString& Name, const TArray<FString>& Candidates)
+	{
+		FString Best;
+		int32 BestDistance = MAX_int32;
+		for (const FString& Candidate : Candidates)
+		{
+			const bool bRelated = Candidate.Contains(Name, ESearchCase::IgnoreCase)
+				|| Name.Contains(Candidate, ESearchCase::IgnoreCase);
+			const int32 Distance = bRelated
+				? FMath::Abs(Candidate.Len() - Name.Len())
+				: EditDistance(Name, Candidate);
+			if (Distance < BestDistance)
+			{
+				BestDistance = Distance;
+				Best = Candidate;
+			}
+		}
+		const int32 Cutoff = FMath::Max(2, Name.Len() / 3);
+		return BestDistance <= Cutoff ? Best : FString();
+	}
 }

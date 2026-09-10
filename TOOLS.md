@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 115 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 118 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -278,6 +278,7 @@ See the editor itself — every window and panel, not just viewports. `ui_tree` 
 | `asset_create` | Create an empty asset of any class the content browser's Add button offers — Widget Blueprints, Materials, Material Instances, Data Tables, Curves — which is everything `bp_create` cannot make. The factory is chosen the way the Add menu would and reported back with any runners-up, so a surprising pick is visible rather than silent; `factory` overrides it. `parent_class` sets the base class for Blueprint-shaped factories, `properties` configures the factory itself (`{"InitialParent": "/Game/M_Glass.M_Glass"}` for a material instance). Blueprint results are compiled before returning, so `Path.Path_C` resolves. Never prompts. `{path, class, parent_class?, factory?, properties?, save?}` |
 | `asset_import` | Import a disk file into the project — FBX/OBJ, textures, audio, anything the editor imports — fully automated, no dialogs. `{file, destination, name?, save?}` |
 | `save` | Write edited assets to disk. No arguments saves everything dirty including the level; `asset` saves one package by path; `list_only` reports what is unsaved without writing. Never prompts — these tools run unattended, and a modal dialog would hang the editor. `{asset?, list_only?, include_level?}` |
+| `asset_modify` | Duplicate, rename, move or delete an asset. Deleting is refused while anything still references it — the referencers are named so the call can be made honestly rather than leaving dangling pointers — and `force` deletes anyway. Renames and moves go through the editor's own rename path, so a redirector is left behind and existing references keep resolving; the result is read back from the asset registry rather than reported from the call. None of it is undoable. `{op, asset, to?, force?}` |
 
 ## Tests & data
 
@@ -318,6 +319,20 @@ See the editor itself — every window and panel, not just viewports. `ui_tree` 
 Both property tools take a **dotted path** that steps through structs *and* object references, so a path can cross from an actor into a component and on into that component's structs: `RootComponent.RelativeLocation.X`. A dead end names the class it stopped at, and a null link says which segment was null. (Dotted paths are also the way to read the few engine structs that refuse to serialise as a whole.)
 
 **Named object references are checked.** A path that resolves to nothing is refused rather than written as null — that failure mode once produced a material with no parent that rendered black with nothing in the logs. Unknown argument names are rejected with the expected parameter list.
+
+## Finding the tools themselves
+
+A server's tool list is not free. Every MCP client re-reads it on connect and carries it for the rest of the session — all 118 schemas here come to roughly **34,000 tokens**, a sixth of a 200k window, paid for again on every metered turn. So by default `tools/list` answers with three tools rather than all of them, and the rest are fetched on demand. That is ~650 tokens instead of ~34,000.
+
+| Tool | What it does |
+|---|---|
+| `list_areas` | Every tool this editor serves, by name, grouped into subject areas with a one-line summary each. Names only, no schemas, so it is cheap to call and cheap to keep. This is the entry point. |
+| `describe_tools` | Full description and input schema for the tools you name, a whole `area`, or everything matching a `search` word. Ask for the few you are about to use — the schemas are the expensive part. A name it does not serve is refused with the nearest match, not answered emptily. `{names?, area?, search?}` |
+| `call_tool` | Run one tool by name with its own parameters in `params`. The reply is exactly what that tool returns called directly: same validation, same undo transaction, same task id. `{tool, params?}` |
+
+`call_tool` is unwrapped in the dispatch layer rather than implemented as a tool, so the tool it names is submitted as itself — the timeout, the transaction, the traits and the task's reported name all belong to the real tool, not to a wrapper.
+
+Set `UPLINK_TOOL_LIST=flat` before launching the editor to get the old behaviour, where every tool is registered natively and `tools/list` returns all of them. Clients that would rather pay once than round-trip should use it; the three tools above stay registered either way, so anything written against them keeps working.
 
 ## Discovery
 

@@ -1,6 +1,8 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 #include "UplinkToolRegistry.h"
+#include "UplinkFacade.h"
+#include "UplinkToolUtil.h"
 #include "UplinkCompat.h"
 #include "UplinkEditorModule.h"
 #include "UplinkToolProvider.h"
@@ -375,6 +377,13 @@ const FUplinkToolProvenance* FUplinkToolRegistry::FindProvenance(const FString& 
 
 TArray<TSharedPtr<FJsonValue>> FUplinkToolRegistry::BuildMcpToolList() const
 {
+	// Three entries instead of a hundred-odd schemas, unless the caller asked
+	// for the flat list. See UplinkFacade.h for the cost this is avoiding.
+	if (UplinkFacade::IsEnabled())
+	{
+		return UplinkFacade::BuildToolList(*this);
+	}
+
 	TArray<TSharedPtr<FJsonValue>> Out;
 	for (const auto& Pair : Tools)
 	{
@@ -789,24 +798,13 @@ bool FUplinkToolRegistry::ValidateParams(
 	FString Suggestions;
 	for (const FString& Bad : Unknown)
 	{
-		const FString* Closest = nullptr;
-		int32 BestDistance = MAX_int32;
-		for (const FString& Candidate : Accepted)
+		// Containment alone answered a plain misspelling with silence:
+		// "quary" neither contains nor is contained by "query". NearestName
+		// falls back to edit distance, which is what a typo actually is.
+		const FString Closest = UplinkToolUtil::NearestName(Bad, Accepted);
+		if (!Closest.IsEmpty())
 		{
-			// Cheap nearness: a shared prefix or one containing the other is
-			// what a typo or a wrong-but-related name usually looks like.
-			const bool bRelated = Candidate.Contains(Bad, ESearchCase::IgnoreCase)
-				|| Bad.Contains(Candidate, ESearchCase::IgnoreCase);
-			const int32 Distance = bRelated ? FMath::Abs(Candidate.Len() - Bad.Len()) : MAX_int32;
-			if (Distance < BestDistance)
-			{
-				BestDistance = Distance;
-				Closest = &Candidate;
-			}
-		}
-		if (Closest)
-		{
-			Suggestions += FString::Printf(TEXT(" Did you mean '%s' instead of '%s'?"), **Closest, *Bad);
+			Suggestions += FString::Printf(TEXT(" Did you mean '%s' instead of '%s'?"), *Closest, *Bad);
 		}
 	}
 

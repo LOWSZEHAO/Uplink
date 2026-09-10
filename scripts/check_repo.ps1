@@ -295,6 +295,53 @@ Invoke-Check "Trait table rows name registered tools, are unique and sorted" {
 }
 
 # ---------------------------------------------------------------------------
+# The area table. Every tool must be filed exactly once: an unfiled tool is
+# invisible to a client browsing by area, and a filed name that no longer
+# registers sends one looking for a tool that is gone.
+# ---------------------------------------------------------------------------
+
+Invoke-Check "Area table files every registered tool exactly once" {
+    $AreaFile = Join-Path $RepoRoot "Plugin/Uplink/Source/UplinkEditor/Private/UplinkToolAreas.cpp"
+    if (-not (Test-Path $AreaFile)) { "area table not found at $AreaFile"; return }
+
+    $Text = Get-Content -LiteralPath $AreaFile -Encoding UTF8 -Raw
+
+    # The rows are { TEXT("name"), TEXT("summary"), TEXT("a b c") TEXT(" d e") }.
+    # Only the third field is a tool list, so anchor on the areas array and take
+    # the runs of lowercase words - names and summaries never look like that.
+    $AreaNames = @()
+    $ToolRefs  = @()
+    foreach ($m in [regex]::Matches($Text, '\{\s*\r?\n\s*TEXT\("([a-z_]+)"\),(.*?)\r?\n\s*\},', 'Singleline')) {
+        $AreaNames += $m.Groups[1].Value
+        $Body = $m.Groups[2].Value
+        # Tool-list literals are the TEXT("...") runs made only of tool-shaped
+        # words; summaries contain spaces plus punctuation and capitals.
+        foreach ($lit in [regex]::Matches($Body, 'TEXT\("([a-z0-9_ ]+)"\)')) {
+            $ToolRefs += ($lit.Groups[1].Value -split '\s+' | Where-Object { $_ -ne "" })
+        }
+    }
+
+    if ($AreaNames.Count -eq 0) { "no area rows parsed - the table format changed and this check has stopped looking at anything"; return }
+
+    $Facade = @("list_areas", "describe_tools", "call_tool")
+
+    $Seen = @{}
+    foreach ($t in $ToolRefs) {
+        if ($Seen.ContainsKey($t)) { "UplinkToolAreas.cpp lists '$t' in more than one area" }
+        $Seen[$t] = $true
+        if ($ToolNames -notcontains $t) {
+            "UplinkToolAreas.cpp files '$t', which is not a registered tool - a rename left the row behind and callers browsing by area are sent after a tool that is gone"
+        }
+    }
+    foreach ($t in $ToolNames) {
+        if ($Facade -contains $t) { continue }
+        if (-not $Seen.ContainsKey($t)) {
+            "'$t' is registered but appears in no area - it would be invisible to a client browsing by area, which is how tools are found once the list is not flat"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Scenarios. These are the regression suite, so a scenario that has quietly
 # stopped testing what it says it tests is worse than one that fails.
 # ---------------------------------------------------------------------------

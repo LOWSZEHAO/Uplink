@@ -1,6 +1,8 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
 
 #include "UplinkMcp.h"
+#include "UplinkFacade.h"
+#include "UplinkToolUtil.h"
 #include "UplinkEditorModule.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkTaskManager.h"
@@ -58,15 +60,55 @@ namespace
 UplinkDispatch::FDispatchOutcome UplinkDispatch::Begin(
 	FUplinkToolRegistry& Registry,
 	FUplinkTaskManager& Tasks,
-	const FString& ToolName,
-	const TSharedPtr<FJsonObject>& Params)
+	const FString& InToolName,
+	const TSharedPtr<FJsonObject>& InParams)
 {
 	FDispatchOutcome Outcome;
+
+	// call_tool is unwrapped here rather than implemented as a tool of its own,
+	// so the tool it names is submitted as itself. Everything below - parameter
+	// validation, the timeout, the transaction, the traits, the task's reported
+	// name - then applies to the real tool. Implemented as a tool instead, it
+	// would have had to start a second task and wait on it from inside the
+	// first, and every one of those facts would have described the wrapper.
+	FString ToolName = InToolName;
+	TSharedPtr<FJsonObject> Params = InParams;
+	if (ToolName == UplinkFacade::CallToolName)
+	{
+		FString Inner;
+		if (!Params.IsValid() || !Params->TryGetStringField(FStringView(TEXT("tool")), Inner) || Inner.IsEmpty())
+		{
+			Outcome.RefusalMessage = FString::Printf(
+				TEXT("%s needs 'tool': the name of the tool to run. %s lists the names."),
+				*UplinkFacade::CallToolName, *UplinkFacade::ListAreasName);
+			return Outcome;
+		}
+		if (Inner == UplinkFacade::CallToolName)
+		{
+			Outcome.RefusalMessage = FString::Printf(
+				TEXT("%s cannot call itself"), *UplinkFacade::CallToolName);
+			return Outcome;
+		}
+		ToolName = Inner;
+
+		const TSharedPtr<FJsonObject>* InnerParams = nullptr;
+		Params = (Params->TryGetObjectField(FStringView(TEXT("params")), InnerParams) && InnerParams)
+			? *InnerParams
+			: MakeShared<FJsonObject>();
+	}
 
 	const FUplinkToolDef* Def = Registry.Find(ToolName);
 	if (!Def)
 	{
-		Outcome.RefusalMessage = FString::Printf(TEXT("unknown tool '%s'"), *ToolName);
+		TArray<FString> Registered;
+		for (const auto& Pair : Registry.All())
+		{
+			Registered.Add(Pair.Key);
+		}
+		const FString Closest = UplinkToolUtil::NearestName(ToolName, Registered);
+		Outcome.RefusalMessage = Closest.IsEmpty()
+			? FString::Printf(TEXT("unknown tool '%s'. %s lists every name."), *ToolName, *UplinkFacade::ListAreasName)
+			: FString::Printf(TEXT("unknown tool '%s' - did you mean '%s'?"), *ToolName, *Closest);
 		return Outcome;
 	}
 

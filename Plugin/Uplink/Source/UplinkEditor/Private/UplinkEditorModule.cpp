@@ -8,6 +8,7 @@
 #include "UplinkServer.h"
 #include "UplinkTaskManager.h"
 #include "UplinkModalPump.h"
+#include "UplinkFacade.h"
 #include "UplinkToolProvider.h"
 #include "UplinkToolRegistry.h"
 #include "UplinkTools.h"
@@ -87,6 +88,9 @@ void FUplinkEditorModule::StartupModule()
 	// After every provider has had its turn, so a plugin's own tools are
 	// annotated too and a trait naming a tool nobody registered is reported
 	// once, here, rather than looking like a missing tool later.
+	// Last, so list_areas sees every tool the build actually registered.
+	UplinkFacade::RegisterTools(*Registry);
+
 	Registry->ApplyTraits();
 
 	Server = MakeUnique<FUplinkServer>(*Registry, *Tasks);

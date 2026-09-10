@@ -18,6 +18,7 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "ObjectTools.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 
@@ -789,5 +790,191 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 					SavedNames.Num(), UnnamedNames.Num()));
 			}
 			return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("saved %d package(s)"), SavedNames.Num()));
+		});
+
+	Registry.RegisterQuick(
+		TEXT("asset_modify"),
+		TEXT("Duplicate, rename, move or delete an asset. 'op' is one of duplicate, rename, move, delete. duplicate and move take 'to' (a full object path for duplicate, a destination folder for move); rename takes 'to' as the new name only. Deleting is refused while anything still references the asset - the referencers are named so the call can be made honestly instead of leaving dangling pointers, and force:true deletes anyway. Renames and moves go through the editor's own asset-rename path, which leaves a redirector behind so existing references keep resolving. None of this is undoable: the package on disk has already moved by the time the call returns."),
+		TEXT(R"json({"type":"object","properties":{"op":{"type":"string","enum":["duplicate","rename","move","delete"]},"asset":{"type":"string","description":"Object or package path, e.g. /Game/Foo/BP_Bar"},"to":{"type":"string","description":"duplicate: full destination path. rename: the new name. move: destination folder."},"force":{"type":"boolean","default":false,"description":"delete: proceed even though the asset is still referenced"}},"required":["op","asset"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			const FString Op = GetString(Ctx.Params, TEXT("op"));
+			const FString AssetPath = GetString(Ctx.Params, TEXT("asset"));
+			const FString To = GetString(Ctx.Params, TEXT("to"));
+			bool bForce = false;
+			Ctx.Params->TryGetBoolField(FStringView(TEXT("force")), bForce);
+
+			if (AssetPath.IsEmpty())
+			{
+				return FUplinkToolResult::Error(TEXT("'asset' is required"));
+			}
+
+			// Resolved through the asset registry rather than LoadObject, so a
+			// path that names nothing is refused before anything is loaded, and
+			// the message can say which half of the path is wrong.
+			FAssetRegistryModule& AssetRegistryModule =
+				FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+			IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+			FString ObjectPath = AssetPath;
+			if (!ObjectPath.Contains(TEXT(".")))
+			{
+				ObjectPath = FString::Printf(TEXT("%s.%s"), *AssetPath, *FPackageName::GetLongPackageAssetName(AssetPath));
+			}
+			const FAssetData Existing = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
+			if (!Existing.IsValid())
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no asset at '%s'. asset_search finds one by name."), *AssetPath));
+			}
+
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("op"), Op);
+			Data->SetStringField(TEXT("asset"), Existing.GetObjectPathString());
+
+			FAssetToolsModule& AssetToolsModule =
+				FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+			IAssetTools& AssetTools = AssetToolsModule.Get();
+
+			if (Op == TEXT("delete"))
+			{
+				// Referencers first. ObjectTools::DeleteAssets would put a modal
+				// in front of a human here; over HTTP there is nobody to answer
+				// it, so the check is done up front and the answer is a refusal
+				// that names what would break.
+				TArray<FName> Referencers;
+				AssetRegistry.GetReferencers(Existing.PackageName, Referencers);
+				Referencers.Remove(Existing.PackageName);
+
+				TArray<TSharedPtr<FJsonValue>> RefJson;
+				for (const FName& Ref : Referencers)
+				{
+					RefJson.Add(MakeShared<FJsonValueString>(Ref.ToString()));
+				}
+				Data->SetArrayField(TEXT("referencers"), RefJson);
+
+				if (Referencers.Num() > 0 && !bForce)
+				{
+					FUplinkToolResult Refusal = FUplinkToolResult::Error(FString::Printf(
+						TEXT("%d package(s) still reference this asset, and deleting it would leave them pointing at nothing - they are named in 'referencers'. Repoint them first, or pass force:true to delete anyway."),
+						Referencers.Num()));
+					Refusal.Data = Data;
+					return Refusal;
+				}
+
+				UObject* Object = Existing.GetAsset();
+				if (!Object)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' is in the registry but would not load, so it cannot be deleted through the editor"), *AssetPath));
+				}
+
+				const int32 Deleted = ObjectTools::DeleteObjects({ Object }, /*bShowConfirmation=*/false);
+				Data->SetNumberField(TEXT("deleted"), Deleted);
+				if (Deleted == 0)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("the editor refused to delete '%s' - it is usually a read-only file, a source control checkout, or the asset being open in an editor window"), *AssetPath));
+				}
+				return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("deleted %s"), *Existing.GetObjectPathString()));
+			}
+
+			if (To.IsEmpty())
+			{
+				return FUplinkToolResult::Error(FString::Printf(TEXT("'%s' needs 'to'"), *Op));
+			}
+
+			UObject* Object = Existing.GetAsset();
+			if (!Object)
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is in the registry but would not load"), *AssetPath));
+			}
+
+			// One shape for all three: a destination package path and a name.
+			FString DestPackagePath;
+			FString DestName;
+			if (Op == TEXT("rename"))
+			{
+				if (To.Contains(TEXT("/")))
+				{
+					return FUplinkToolResult::Error(
+						TEXT("rename takes a name, not a path - use op 'move' to change folder, or 'duplicate' to write elsewhere"));
+				}
+				DestPackagePath = FPackageName::GetLongPackagePath(Existing.PackageName.ToString());
+				DestName = To;
+			}
+			else if (Op == TEXT("move"))
+			{
+				DestPackagePath = To;
+				DestPackagePath.RemoveFromEnd(TEXT("/"));
+				DestName = Existing.AssetName.ToString();
+			}
+			else if (Op == TEXT("duplicate"))
+			{
+				DestPackagePath = To.Contains(TEXT("/"))
+					? FPackageName::GetLongPackagePath(To)
+					: FPackageName::GetLongPackagePath(Existing.PackageName.ToString());
+				DestName = FPackageName::GetLongPackageAssetName(To);
+			}
+			else
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("unknown op '%s' - one of duplicate, rename, move, delete"), *Op));
+			}
+
+			if (!DestPackagePath.StartsWith(TEXT("/")))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is not a mounted path - destinations start with /Game/ (or another mount point)"), *DestPackagePath));
+			}
+
+			const FString DestObjectPath = FString::Printf(TEXT("%s/%s.%s"), *DestPackagePath, *DestName, *DestName);
+			if (AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(DestObjectPath)).IsValid())
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("an asset already exists at '%s' - overwriting it silently is not something this tool will do"), *DestObjectPath));
+			}
+			Data->SetStringField(TEXT("to"), DestObjectPath);
+
+			if (Op == TEXT("duplicate"))
+			{
+				UObject* Copy = AssetTools.DuplicateAsset(DestName, DestPackagePath, Object);
+				if (!Copy)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("the editor refused to duplicate '%s' to '%s'"), *AssetPath, *DestObjectPath));
+				}
+				// Read back rather than trusting the call: the object the editor
+				// returns is in memory, and what a caller asked for is an asset
+				// at a path.
+				Data->SetStringField(TEXT("created"), Copy->GetPathName());
+				return FUplinkToolResult::Ok(Data, FString::Printf(
+					TEXT("duplicated to %s - unsaved, call save to write it"), *Copy->GetPathName()));
+			}
+
+			TArray<FAssetRenameData> Renames;
+			Renames.Emplace(Object, DestPackagePath, DestName);
+			if (!AssetTools.RenameAssets(Renames))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("the editor refused to %s '%s' to '%s' - a read-only file, a source control checkout, or the asset being open are the usual causes"),
+					*Op, *AssetPath, *DestObjectPath));
+			}
+
+			// RenameAssets returns true having queued work, so the claim is
+			// checked against the registry rather than reported from the call.
+			const FAssetData Moved = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(DestObjectPath));
+			Data->SetBoolField(TEXT("verified"), Moved.IsValid());
+			if (!Moved.IsValid())
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("the editor reported the %s succeeded, but nothing is registered at '%s' afterwards - treat the asset as unmoved and check output_log"),
+					*Op, *DestObjectPath));
+			}
+			return FUplinkToolResult::Ok(Data, FString::Printf(
+				TEXT("%sd to %s - a redirector was left behind so existing references still resolve; unsaved, call save to write it"),
+				*Op, *DestObjectPath));
 		});
 }
