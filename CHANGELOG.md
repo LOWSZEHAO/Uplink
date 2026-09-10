@@ -6,6 +6,64 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.36.1
+
+Found while getting the demo ready to record. None of them is in the demo's
+own path; the demo is just where the editor was watched closely enough.
+
+### Fixed
+- `input_key` and `input_action` read freed memory on 5.7. `FPointerEvent`
+  stores its pressed-button set by value on 5.8 and as a `const TSet<FKey>*`
+  on 5.7, behind an identical constructor signature, so the temporary the
+  call site passed was gone before the event was delivered. The engine's own
+  `FTouchKeySet::StandardSet` and `EmptySet` have static lifetime and are
+  exactly the two values needed, so the fix carries no `#if`.
+- `navigate_to`'s synthetic click was filed as a touch. `FPointerEvent`'s
+  first parameter is the pointer index, `0` is `ETouchIndex::Touch1`, and the
+  mouse is `FSlateApplicationBase::CursorPointerIndex`. Capture, drag
+  detection and the last-widget-under-pointer bookkeeping are all keyed by
+  that index.
+- Uplink stopped answering while any editor dialog was open.
+  `AddModalWindow` runs its own loop that ticks the platform, Slate and the
+  renderer but never `FTSTicker`, which is what drives the HTTP server - so a
+  prompt raised by an agent's own call, "save these assets?" on a level
+  change for one, left every request timing out until a person clicked the
+  dialog. The server and the task manager now tick from Slate's
+  `ModalLoopTickEvent`, and only those two: ticking the whole core ticker
+  from inside a modal loop would run every deferred callback in a context
+  the engine chose to pause them in.
+- `add_node` ignored `x` and `y` when it reused a node instead of creating
+  one. A new Actor Blueprint ships three disabled placeholder events at the
+  origin; a `kind: event` op matching one of them enabled it in place,
+  answered `reused: true`, and left it exactly where the rest of the graph
+  was about to be laid out - so the overlap avoidance then pushed the real
+  nodes aside to dodge it. A reused node now moves to the position the op
+  gave it.
+- Every node Uplink created was missing `RF_Transactional`. The editor's own
+  spawner sets it on each node it places, and two things hang off it.
+  `Modify()` records an object into the undo buffer only when the flag is
+  set, so a node could be added inside a named transaction and still have
+  every later edit to it - a pin default, a position - land outside undo,
+  which is not what the README promises. And the Blueprint editor runs
+  `UpdateTransactionalFlags` on every open, sets the flag on any node
+  lacking it, and marks the Blueprint dirty for having had to - so a graph
+  that had just been compiled and saved greeted the person opening it with
+  "Blueprint requires updating. Please resave." Found by bisecting that
+  toast: a fresh Blueprint given only a component, only a variable, or only
+  an event stayed `BS_UpToDate` through opening; one given a Timeline did
+  not, and the event case only passed because it had reused the editor's
+  placeholder. Nodes and reroute knots now carry the flag from creation.
+
+### Demo
+- `demo/demo.js` opens the Blueprint on its Event Graph, framed. A Blueprint
+  that has never been opened carries `bIsNewlyCreated`, and the editor
+  answers that flag by bringing the Viewport forward whatever
+  `LastEditedDocuments` asks for - so the shot act 2 ends on was a grey cube
+  while the terminal narrated a graph. Both are now set on the asset before
+  it is opened; the template's placeholder events are removed first so
+  nothing gets nudged; and `--lead N` counts down before act 1 so a
+  recording can begin on the demo rather than on a hand reaching for a key.
+
 ## 0.36.0
 
 Three found while using Uplink on a real project. The third is the one that
