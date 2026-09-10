@@ -362,6 +362,16 @@ Object and class arguments accept asset/class paths as strings. The same pattern
 
 **Subsystems**: `object_path` accepts `subsystem:<Class>` to resolve live subsystem instances, whose real object paths are unguessable. Editor and engine subsystems resolve anytime; game-instance/world/local-player subsystems resolve against the chosen world (`world:"pie"` during play). Example — open any asset's editor: `call_function {object_path:"subsystem:AssetEditorSubsystem", function:"OpenEditorForAssets", args:{Assets:["/Game/Path/Asset"]}}` — then `capture_widget` can screenshot the editor it opened. Note the CDO guard: instance methods must be called on instances like these, never through `Default__` paths, which would run without a valid instance and can take the editor down.
 
+
+**Worked recipe — stop the editor throttling itself while an agent drives it.** An unfocused editor drops to a few frames a second, which makes a scripted playtest crawl and every `wait_until` unreliable. The setting is a plain `UPROPERTY(config)`, so `set_property` reaches it and the editor reacts as it would to a Details-panel edit — no tool needed:
+
+```json
+{ "object_path": "/Script/UnrealEd.Default__EditorPerformanceSettings",
+  "property": "bThrottleCPUWhenNotForeground",
+  "value": false }
+```
+
+Set it back to `true` when you are done; it is the editor's own preference, not a per-session flag. Note that the engine throttles anyway when every editor window is minimised, whatever this says — that check is separate.
 **Worked recipe — material graph authoring** (every call verified):
 
 ```json
