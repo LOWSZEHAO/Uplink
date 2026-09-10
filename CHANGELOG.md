@@ -6,6 +6,40 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.1
+
+Four things found by testing 0.37.0 rather than by shipping it.
+
+### Fixed
+- `streaming_control` refused every ordinary call against a running game. Play
+  duplicates each level under a `UEDPIE_<n>_` prefix, so the sublevel the editor
+  calls `/Game/Maps/Sub` is `/Game/Maps/UEDPIE_0_Sub` once the game starts, and
+  matching the literal package name meant only that second name worked - a name
+  the caller cannot know before starting play and that changes with the
+  instance. Worse, the refusal read as a missing level. Both sides of the match
+  now have the prefix stripped, so one name works in either world and a caller
+  who does paste the prefixed one out of `streaming_status` is not punished for
+  it. `scenarios/25-sublevel-streaming.json` builds its own two-level fixture
+  and walks all four ops in both worlds so this cannot come back quietly.
+- A refused delete blamed the wrong thing. `asset_modify` checks referencers in
+  the asset registry, which only knows packages already on disk, so a Blueprint
+  created this session and not yet saved is invisible to it - and that is the
+  ordinary case for an agent, which has just made the thing now holding the
+  reference. The delete then failed inside the editor and was reported as "a
+  read-only file, a source control checkout, or the asset being open in an
+  editor window", none of which was true. It now asks the engine what is
+  actually holding the object and names it, and says separately when the undo
+  buffer is what is holding it.
+- `list_areas` answered 117 where the docs say 119, and left the reader to work
+  out that the three tools doing the asking are not among the ones being listed.
+  It now says so, and reports `area_count` alongside `tool_count`.
+- `check_repo` reported a scenario parameter named `''`. A step with no
+  parameters is written `"params": {}`, and PowerShell's `.Name` on an object
+  with no properties is `$null`, which `@()` wraps into a one-element array
+  holding it - so the check complained about nothing, for any tool that declares
+  any parameters. No scenario had hit it before because none had passed an empty
+  params object to such a tool.
+
 ## 0.37.0
 
 The tool list stopped being free, so it stopped being sent.
