@@ -1116,12 +1116,12 @@ void UplinkTools::RegisterControl(FUplinkToolRegistry& Registry)
 			// engine's own statics have static lifetime and hold exactly the two
 			// values this needs.
 			const FPointerEvent MouseDown(
-				0, ClickPos, ClickPos, FTouchKeySet::StandardSet,
+				FSlateApplicationBase::CursorPointerIndex, ClickPos, ClickPos, FTouchKeySet::StandardSet,
 				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
 			const bool bDownHandled = FSlateApplication::Get().ProcessMouseButtonDownEvent(nullptr, MouseDown);
 
 			const FPointerEvent MouseUp(
-				0, ClickPos, ClickPos, FTouchKeySet::EmptySet,
+				FSlateApplicationBase::CursorPointerIndex, ClickPos, ClickPos, FTouchKeySet::EmptySet,
 				EKeys::LeftMouseButton, 0.0f, FModifierKeysState());
 			const bool bUpHandled = FSlateApplication::Get().ProcessMouseButtonUpEvent(MouseUp);
 
