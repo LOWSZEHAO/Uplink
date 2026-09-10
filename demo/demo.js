@@ -13,6 +13,9 @@
 // Reads UPLINK_URL and UPLINK_AUTH_TOKEN, the same two the Node bridge uses.
 //   node demo.js --clean    remove what a previous run left behind
 //   node demo.js --pace 2   seconds between beats (default 1.5)
+//   node demo.js --lead 5   count down for N seconds before act 1, so a
+//                           recording can be started and the first frame is
+//                           the demo and not a hand reaching for a key
 //   node demo.js --no-arrive  skip act 1, which is the cut worth making for a
 //                             short video: acts 2 and 3 cannot be separated,
 //                             because act 3 measures what act 2 built
@@ -34,6 +37,10 @@ const NO_ARRIVE = args.includes("--no-arrive");
 const PACE = (() => {
   const i = args.indexOf("--pace");
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) * 1000 : 1500;
+})();
+const LEAD = (() => {
+  const i = args.indexOf("--lead");
+  return i >= 0 && args[i + 1] ? Math.max(0, Math.round(Number(args[i + 1]))) : 0;
 })();
 
 // ---------------------------------------------------------------------------
@@ -112,6 +119,9 @@ const note = s => say(`    ${s}`);
 
 async function clean() {
   await call("pie_stop", { wait_ms: 40000 }).catch(() => {});
+  // An asset with its editor still open survives the directory delete below
+  // in memory, and the next bp_create then refuses it as already existing.
+  await closeAsset(BP);
   await call("delete_actors", { names: ["DemoPlatform"], world: "editor" }).catch(() => {});
   await call("call_function", {
     object_path: "/Script/EditorScriptingUtilities.Default__EditorAssetLibrary",
@@ -159,12 +169,28 @@ async function actTwo() {
   note("StartLocation (vector), Height (float, editable per instance)");
   await beat();
 
+  step("bp_modify delete_node  — clear the template's placeholder events");
+  // A new Actor Blueprint ships three disabled placeholder events, stacked at
+  // the origin. Left in place they sit exactly where the graph below is laid
+  // out, and the overlap avoidance that keeps new nodes off existing ones
+  // then shoves the real nodes aside to dodge them - so the shot this act
+  // ends on would show a tangle instead of a graph.
+  const fresh = await must("read the new graph", "bp_query", { blueprint: BP, graph: "EventGraph", max_nodes: 20 });
+  const placeholders = (fresh.graphs || []).flatMap(g => g.nodes || []).filter(n => /^Event /.test(n.title));
+  if (placeholders.length) {
+    await must("remove the placeholders", "bp_modify", {
+      blueprint: BP, ops: placeholders.map(n => ({ op: "delete_node", node: n.guid })),
+    });
+  }
+  note(`${placeholders.length} removed: ${placeholders.map(n => n.title).join(", ") || "none were there"}`);
+  await beat();
+
   step("bp_modify add_node kind:timeline  — a real Blueprint Timeline");
   const tl = await must("add the timeline", "bp_modify", {
     blueprint: BP, op: "add_node", kind: "timeline",
     name: "Move", length: 2.0, loop: true, autoplay: true, track: "Alpha",
     keys: [{ time: 0, value: 0 }, { time: 1, value: 1 }, { time: 2, value: 0 }],
-    x: 300, y: 0, compile: true,
+    x: 250, y: 0, compile: true,
   });
   const pins = ((tl.node || {}).pins || []).map(p => p.name);
   note(`template + curve + node, pins: ${pins.join(", ")}`);
@@ -174,17 +200,20 @@ async function actTwo() {
   step("bp_modify  — the rest of the graph, one batched call");
   await must("add the nodes", "bp_modify", {
     blueprint: BP, compile: true,
+    // Exec lane along the top, data underneath, and SetActorLocation stacked
+    // above the Lerp that feeds it rather than beyond it - the whole thing
+    // then fits one graph panel at a zoom where node titles still read.
     ops: [
-      { op: "add_node", kind: "event", name: "ReceiveBeginPlay", x: -600, y: 0 },
-      { op: "add_node", kind: "call_function", class: "/Script/Engine.Actor", function: "K2_GetActorLocation", x: -380, y: 150 },
-      { op: "add_node", kind: "variable_set", name: "StartLocation", x: -180, y: 0 },
-      { op: "add_node", kind: "variable_get", name: "StartLocation", x: 420, y: 220 },
-      { op: "add_node", kind: "variable_get", name: "StartLocation", x: 420, y: 340 },
-      { op: "add_node", kind: "variable_get", name: "Height", x: 420, y: 460 },
-      { op: "add_node", kind: "call_function", class: "/Script/Engine.KismetMathLibrary", function: "MakeVector", x: 620, y: 440 },
-      { op: "add_node", kind: "call_function", class: "/Script/Engine.KismetMathLibrary", function: "Add_VectorVector", x: 820, y: 360 },
-      { op: "add_node", kind: "call_function", class: "/Script/Engine.KismetMathLibrary", function: "VLerp", x: 1020, y: 240 },
-      { op: "add_node", kind: "call_function", class: "/Script/Engine.Actor", function: "K2_SetActorLocation", x: 1260, y: 60 },
+      { op: "add_node", kind: "event", name: "ReceiveBeginPlay", x: -500, y: 0 },
+      { op: "add_node", kind: "call_function", class: "/Script/Engine.Actor", function: "K2_GetActorLocation", x: -300, y: 160 },
+      { op: "add_node", kind: "variable_set", name: "StartLocation", x: -100, y: 0 },
+      { op: "add_node", kind: "variable_get", name: "StartLocation", x: 400, y: 260 },
+      { op: "add_node", kind: "variable_get", name: "StartLocation", x: 400, y: 360 },
+      { op: "add_node", kind: "variable_get", name: "Height", x: 400, y: 460 },
+      { op: "add_node", kind: "call_function", class: "/Script/Engine.KismetMathLibrary", function: "MakeVector", x: 560, y: 440 },
+      { op: "add_node", kind: "call_function", class: "/Script/Engine.KismetMathLibrary", function: "Add_VectorVector", x: 740, y: 350 },
+      { op: "add_node", kind: "call_function", class: "/Script/Engine.KismetMathLibrary", function: "VLerp", x: 880, y: 230 },
+      { op: "add_node", kind: "call_function", class: "/Script/Engine.Actor", function: "K2_SetActorLocation", x: 900, y: 40 },
     ],
   });
   note("BeginPlay, GetActorLocation, Set/Get variables, MakeVector, +, Lerp, SetActorLocation");
@@ -216,6 +245,21 @@ async function actTwo() {
     ["Lerp (Vector)", "ReturnValue", "Set Actor Location", "NewLocation"],
   ];
   const isGuid = v => /^[0-9A-F-]{30,}$/i.test(v);
+
+  // Which tab a Blueprint opens on, and where its view sits, are read from
+  // the asset itself, so both are set here rather than clicked afterwards.
+  // A Blueprint that has never been opened carries bIsNewlyCreated, and the
+  // editor answers that flag by bringing the Viewport forward whatever
+  // LastEditedDocuments asks for - so a Blueprint opened straight after
+  // being authored showed a grey cube while the terminal narrated a graph.
+  // Written before the save below so the framing lands in the same package
+  // write and the title bar does not show a dirty asset.
+  await must("mark it as opened before", "set_property", { object_path: BP, property: "bIsNewlyCreated", value: false });
+  await must("frame the graph for opening", "set_property", {
+    object_path: BP, property: "LastEditedDocuments",
+    value: [{ editedObjectPath: BP + ":EventGraph", savedViewOffset: { x: -560, y: -60 }, savedZoomAmount: 0.375 }],
+  });
+
   await must("wire the graph", "bp_modify", {
     blueprint: BP, compile: true, save: true,
     ops: wires.map(([f, fp, t, tp]) => ({
@@ -309,6 +353,12 @@ async function actThree() {
 
   await clean();
   if (CLEAN_ONLY) { say("cleaned."); return; }
+
+  if (LEAD > 0) {
+    say(`\nstarting in ${LEAD}s - start the recording now`);
+    for (let s = LEAD; s > 0; s--) { process.stdout.write(`  ${s}`); await sleep(1000); }
+    say("");
+  }
 
   say(`\nUplink demo   —   ${status.data.project} on UE ${status.data.engine}`);
 

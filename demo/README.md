@@ -11,6 +11,7 @@ node demo\demo.js
 | | |
 |---|---|
 | `--pace 2` | seconds between beats, for narrating over it (default 1.5) |
+| `--lead 5` | count down for N seconds before act 1, so the recording can be started first and its first frame is the demo |
 | `--no-arrive` | skip act 1 — the cut worth making for a short video |
 | `--clean` | remove what a previous run left behind, and stop |
 
