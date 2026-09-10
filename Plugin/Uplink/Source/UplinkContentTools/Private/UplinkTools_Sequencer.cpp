@@ -12,6 +12,9 @@
 #include "MovieScenePossessable.h"
 #include "MovieSceneSection.h"
 #include "MovieSceneSpawnable.h"
+#include "Bindings/MovieSceneCustomBinding.h"
+#include "Bindings/MovieSceneSpawnableBinding.h"
+#include "MovieSceneBindingReferences.h"
 #include "MovieSceneTrack.h"
 
 using namespace UplinkToolUtil;
@@ -110,6 +113,7 @@ void UplinkContentTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 				// which kind it is, so both come out of one lookup.
 				FString Name;
 				FString Kind;
+				FString BindingClass;
 				if (const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(ObjectGuid))
 				{
 					Name = Possessable->GetName();
@@ -121,12 +125,34 @@ void UplinkContentTools::RegisterSequencer(FUplinkToolRegistry& Registry)
 					Kind = TEXT("spawnable");
 				}
 
+				// Spawnable and possessable stopped being two lists. A binding
+				// added by AddSpawnableFromClass is filed as a possessable
+				// carrying a spawnable custom binding, so asking the old two
+				// questions calls it a possessable - and a caller reading that
+				// would go looking for an actor in the level that the sequence
+				// creates for itself. The custom binding is what decides.
+				if (const FMovieSceneBindingReferences* References = Sequence->GetBindingReferences())
+				{
+					if (const UMovieSceneCustomBinding* Custom = References->GetCustomBinding(ObjectGuid, 0))
+					{
+						BindingClass = Custom->GetClass()->GetName();
+						if (Custom->IsA<UMovieSceneSpawnableBindingBase>())
+						{
+							Kind = TEXT("spawnable");
+						}
+					}
+				}
+
 				TSharedRef<FJsonObject> Row = MakeShared<FJsonObject>();
 				Row->SetStringField(TEXT("name"), Name);
 				Row->SetStringField(TEXT("guid"), ObjectGuid.ToString(EGuidFormats::DigitsWithHyphens));
 				if (!Kind.IsEmpty())
 				{
 					Row->SetStringField(TEXT("kind"), Kind);
+				}
+				if (!BindingClass.IsEmpty())
+				{
+					Row->SetStringField(TEXT("binding_class"), BindingClass);
 				}
 				TArray<TSharedPtr<FJsonValue>> Tracks;
 				for (const UMovieSceneTrack* Track : Binding.GetTracks())
