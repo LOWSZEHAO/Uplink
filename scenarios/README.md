@@ -44,6 +44,7 @@ step if you want one.
 | `22-property-spelling-and-subsystems` | A correct write is not reported as a failed one: an enum sent as a number, fully qualified, or an object path inside an array all count as landed even though the property reads back in its own spelling. The check keeps its teeth — a number no enumerator answers to is refused before the write, and a non-instance-editable variable reset by the construction scripts still fails. Plus `get_subsystem` across three subsystem families, each needing a different node class. |
 | `23-variable-on-another-object` | A variable node about an object other than the blueprint holding it: `PlayerState` read off the `NewPlayer` controller inside `OnPostLogin`, wired through the Target pin that only an external reference has. Asserts zero *warnings* as well as zero errors, because an unresolved variable reference is only ever a warning. Plus the three refusals, and proof that omitting `class` still means self. |
 | `24-enum-authoring` | An enum you can create is now one you can fill. A freshly created User Defined Enum has **zero** entries, so this adds them, reads them back, and uses the enum in a graph where the switch finally has case pins. Pins the four refusals — including the `move` index that lands on the hidden `_MAX` slot, which the engine's own bounds check admits and then inserts past the end of. |
+| `25-sublevel-streaming` | The same sublevel name works in the editor and in a running game. Play duplicates every level under a `UEDPIE_<n>_` prefix, so a literal package-name match refused every ordinary call against a running game while reading like a missing level. Builds its own two-level fixture, walks load/unload/show/hide in both worlds, checks each with `streaming_status` rather than the reply, and pins the editor's refusal of `unload`. |
 
 Most of these run against any project. `05-playtest` and `13-pie-editor-world-isolation`
 need a default map with a playable pawn, which every template has;
@@ -126,9 +127,12 @@ Being explicit about the gap is worth more than a file that pretends to cover it
   called `edit_history {action:"undo"}` would reverse whatever the person at the
   keyboard last did and prove nothing about its own edits. Undo is checked by
   hand.
-- **World Partition and level streaming.** None of the templates these run
-  against are partitioned, so a scenario would be asserting against a level shape
-  that is not there, and would still say nothing about a project that has one.
+- **World Partition.** None of the templates these run against are partitioned,
+  so a scenario would be asserting against a level shape that is not there, and
+  would still say nothing about a project that has one. Ordinary level streaming
+  *is* covered — `25-sublevel-streaming` builds the two-level fixture it needs
+  rather than hoping the project has one — but a partitioned world streams by
+  cell and data layer, and none of that is the same code.
 - **Multiplayer.** `pie_start` brings up a single client. There is no
   second-client scenario because there is no tool that addresses a second client.
 - **Hot reload and live coding.** A scenario runs inside the editor it is

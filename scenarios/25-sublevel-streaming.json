@@ -1,0 +1,135 @@
+{
+  "_name": "Sublevel streaming",
+  "_purpose": "Streaming a sublevel behaves the same whether you are in the editor or in a running game, from one name. Play duplicates every level under a UEDPIE_<n>_ prefix, so the sublevel the editor calls /Game/Maps/Sub is /Game/Maps/UEDPIE_0_Sub once the game starts - a name the caller cannot know before starting play and that changes with the instance. Matching on the literal package name refused every ordinary call against a running game while looking like a missing level. This walks both worlds with the same name, and checks the state independently after each op rather than trusting the reply. The editor half also pins the refusal of 'unload', which the editor cannot honour: a sublevel is in the persistent level or it is not.",
+  "_requires": "Any project. Builds its own two-level fixture, then puts the editor back on the level it started on and deletes the fixture.",
+  "steps": [
+    {
+      "_note": "The level to come back to at the end. Everything after this changes what the editor is editing.",
+      "tool": "status",
+      "params": {}
+    },
+    {
+      "tool": "level_new",
+      "params": { "path": "/Game/UplinkStreamProbe/L_Sub", "discard_unsaved": true }
+    },
+    {
+      "tool": "level_new",
+      "params": { "path": "/Game/UplinkStreamProbe/L_Main", "discard_unsaved": true }
+    },
+    {
+      "_note": "AddLevelToWorld is the editor's own 'Add Existing' path. It is registered under its K2_ name, and its World argument has no default - passing nothing leaves the frame zeroed and it does nothing while still reporting success.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "/Script/UnrealEd.Default__EditorLevelUtils",
+        "function": "K2_AddLevelToWorld",
+        "args": {
+          "World": "/Game/UplinkStreamProbe/L_Main.L_Main",
+          "LevelPackageName": "/Game/UplinkStreamProbe/L_Sub",
+          "LevelStreamingClass": "/Script/Engine.LevelStreamingDynamic"
+        }
+      }
+    },
+    {
+      "tool": "save",
+      "params": { "include_level": true }
+    },
+    {
+      "tool": "streaming_status",
+      "params": { "world": "editor" },
+      "expect": { "streamingCount": 1 }
+    },
+    {
+      "_note": "The editor does not run the streaming state machine: SetShouldBeVisible(false) leaves the level visible and IsStreamingStatePending true for good. Editor visibility has to go through EditorLevelUtils instead, and this is what would catch that regressing.",
+      "tool": "streaming_control",
+      "params": { "level": "L_Sub", "op": "hide", "world": "editor" },
+      "expect": { "visible": false, "loaded": true }
+    },
+    {
+      "tool": "streaming_status",
+      "params": { "world": "editor" },
+      "expect": { "visible": 0, "loaded": 1 }
+    },
+    {
+      "tool": "streaming_control",
+      "params": { "level": "/Game/UplinkStreamProbe/L_Sub", "op": "show", "world": "editor" },
+      "expect": { "visible": true }
+    },
+    {
+      "tool": "streaming_status",
+      "params": { "world": "editor" },
+      "expect": { "visible": 1 }
+    },
+    {
+      "_note": "Refused rather than reported as done: the editor keeps every sublevel of the open level loaded, and removing one is an edit to the persistent level, not a stream.",
+      "tool": "streaming_control",
+      "params": { "level": "L_Sub", "op": "unload", "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "tool": "streaming_control",
+      "params": { "level": "L_NotHere", "op": "show", "world": "editor" },
+      "expect_failure": true
+    },
+    {
+      "tool": "pie_start",
+      "params": {}
+    },
+    {
+      "_note": "The same short name that worked in the editor, against the UEDPIE_0_ copy. This is the step the prefix bug failed.",
+      "tool": "streaming_control",
+      "params": { "level": "L_Sub", "op": "load", "world": "pie" },
+      "expect": { "loaded": true }
+    },
+    {
+      "tool": "streaming_status",
+      "params": { "world": "pie" },
+      "expect": { "loaded": 1, "settled": true }
+    },
+    {
+      "_note": "The editor-side package path, in the play world.",
+      "tool": "streaming_control",
+      "params": { "level": "/Game/UplinkStreamProbe/L_Sub", "op": "show", "world": "pie" },
+      "expect": { "visible": true }
+    },
+    {
+      "tool": "streaming_status",
+      "params": { "world": "pie" },
+      "expect": { "visible": 1 }
+    },
+    {
+      "_note": "And the prefixed name a caller might paste out of streaming_status - accepted rather than treated as a fourth level.",
+      "tool": "streaming_control",
+      "params": { "level": "/Game/UplinkStreamProbe/UEDPIE_0_L_Sub", "op": "hide", "world": "pie" },
+      "expect": { "visible": false }
+    },
+    {
+      "_note": "Unload is a real op in a running game, unlike in the editor.",
+      "tool": "streaming_control",
+      "params": { "level": "L_Sub", "op": "unload", "world": "pie" },
+      "expect": { "loaded": false, "visible": false }
+    },
+    {
+      "tool": "streaming_status",
+      "params": { "world": "pie" },
+      "expect": { "loaded": 0, "settled": true }
+    },
+    {
+      "tool": "pie_stop",
+      "params": {}
+    }
+  ],
+  "teardown": [
+    {
+      "tool": "level_open",
+      "params": { "path": "$steps[0].map", "discard_unsaved": true }
+    },
+    {
+      "tool": "asset_modify",
+      "params": { "op": "delete", "asset": "/Game/UplinkStreamProbe/L_Main", "force": true }
+    },
+    {
+      "tool": "asset_modify",
+      "params": { "op": "delete", "asset": "/Game/UplinkStreamProbe/L_Sub", "force": true }
+    }
+  ]
+}

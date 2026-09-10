@@ -718,7 +718,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 		Info.Name = TEXT("streaming_control");
 		Info.Description = TEXT("Load, unload, show or hide a streaming sublevel, and wait for it to settle. The engine's own LoadStreamLevel is a latent node whose name argument is not checked against anything: called through call_function with a level that does not exist it returns cleanly, streams nothing, and reports success. So this refuses a name no streaming level in the world answers to - naming the ones that are there - drives the level's own ShouldBeLoaded/ShouldBeVisible flags rather than the latent wrapper, and then waits until the engine says the transition is done before answering. The reply is the level's real state read back, not the request echoed. 'settled' false with a timeout is a slow stream, not necessarily a failure - streaming_status shows where it got to.");
 		Info.InputSchema = FUplinkToolRegistry::ParseSchema(
-			TEXT(R"json({"type":"object","properties":{"level":{"type":"string","description":"Sublevel package name as streaming_status reports it, e.g. /Game/Maps/Sub_Town. A trailing name is matched too."},"op":{"type":"string","enum":["load","unload","show","hide"],"description":"load/unload set ShouldBeLoaded; show/hide set ShouldBeVisible (and show loads first)"},"settle_s":{"type":"number","default":30,"description":"How long to wait for the transition to settle. Distinct from the transport-level timeout_s, which bounds the whole call."},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["level","op"]})json"));
+			TEXT(R"json({"type":"object","properties":{"level":{"type":"string","description":"Sublevel package name, e.g. /Game/Maps/Sub_Town, or just Sub_Town. Give it as the level is named on disk: play duplicates it as UEDPIE_0_Sub_Town, which streaming_status shows, but the prefix is stripped on both sides here so one name works in either world."},"op":{"type":"string","enum":["load","unload","show","hide"],"description":"load/unload set ShouldBeLoaded; show/hide set ShouldBeVisible (and show loads first)"},"settle_s":{"type":"number","default":30,"description":"How long to wait for the transition to settle. Distinct from the transport-level timeout_s, which bounds the whole call."},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["level","op"]})json"));
 		Info.bReadOnly = false;
 		Info.bTransactional = false; // streaming state is not an undoable edit
 		Info.TimeoutSeconds = 60.0;
@@ -741,6 +741,15 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 					const FString Wanted = GetString(Ctx.Params, TEXT("level"));
 					const FString Op = GetString(Ctx.Params, TEXT("op"));
 
+					// Play duplicates every level under a UEDPIE_<n>_ prefix, so
+					// the same sublevel is /Game/Maps/Sub_Town in the editor and
+					// /Game/Maps/UEDPIE_0_Sub_Town in a running game - a name the
+					// caller cannot know before starting play and that changes
+					// with the instance. Both ends are compared with the prefix
+					// off, so one name works in either world and a caller who
+					// does paste the prefixed one is not punished for it.
+					const FString PlainWanted = UWorld::RemovePIEPrefix(Wanted);
+
 					// Exact package name first, then a trailing-name match, so a
 					// caller can say Sub_Town for /Game/Maps/Sub_Town without the
 					// tool guessing between two levels that both end that way.
@@ -753,13 +762,13 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 						{
 							continue;
 						}
-						const FString Package = Streaming->GetWorldAssetPackageName();
+						const FString Package = UWorld::RemovePIEPrefix(Streaming->GetWorldAssetPackageName());
 						Known.Add(Package);
-						if (Package == Wanted)
+						if (Package == PlainWanted)
 						{
 							Exact.Add(Streaming);
 						}
-						else if (FPackageName::GetShortName(Package).Equals(Wanted, ESearchCase::IgnoreCase))
+						else if (FPackageName::GetShortName(Package).Equals(PlainWanted, ESearchCase::IgnoreCase))
 						{
 							Suffix.Add(Streaming);
 						}
@@ -781,7 +790,7 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 						TArray<FString> Names;
 						for (const ULevelStreaming* Streaming : Matches)
 						{
-							Names.Add(Streaming->GetWorldAssetPackageName());
+							Names.Add(UWorld::RemovePIEPrefix(Streaming->GetWorldAssetPackageName()));
 						}
 						Out = FUplinkToolResult::Error(FString::Printf(
 							TEXT("'%s' matches %d streaming levels - give the full package name: %s"),
@@ -791,7 +800,10 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 
 					ULevelStreaming* Target = Matches[0];
 					WeakLevel = Target;
-					LevelName = Target->GetWorldAssetPackageName();
+					// Reported without the prefix for the same reason it is matched
+					// without one: it is the name that works next time, in either
+					// world. streaming_status still shows the real package.
+					LevelName = UWorld::RemovePIEPrefix(Target->GetWorldAssetPackageName());
 
 					if (Op != TEXT("load") && Op != TEXT("unload")
 						&& Op != TEXT("show") && Op != TEXT("hide"))
