@@ -61,7 +61,7 @@ namespace
 			TEXT("world"),
 			TEXT("Levels and what is in them: open, diff, spawn, move, delete, scatter, trace, stream."),
 			TEXT("level_actors level_diff level_new level_open worlds spawn_actor spawn_batch spawn_volume")
-			TEXT(" delete_actors move_actor actor_components get_world_state streaming_status lighting_setup")
+			TEXT(" delete_actors move_actor actor_components get_world_state streaming_status streaming_control lighting_setup")
 			TEXT(" foliage_scatter landscape_create navigate_to trace")
 		},
 		{

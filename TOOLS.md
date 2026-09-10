@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 118 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 119 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -26,6 +26,7 @@ cost real time driving a real game.
 | `input_map` | What can I press, and what does it do? `applied` is answered from every playing world, with `applied_in` naming which and `inspected_worlds` naming those consulted; pass `world` to scope it. A multi-instance session has several, and a server world has no local player to ask at all — which is not the same as a context being unapplied. Every Enhanced Input mapping context with its actions and bound keys, plus which contexts are actually applied to the live player. Beats searching assets for something called `IA_Move`. `{path_prefix?, applied_only?, max?}` |
 | `actor_components` | A live actor's components under the names `get_property` and `set_property` expect. Guessing fails quietly: a character's movement component is `CharMoveComp`, not `CharacterMovement`. `{actor, class_contains?, max?, world?}` |
 | `streaming_status` | Which sublevels are loaded, visible, or still coming, with the world's actor count. Without it, an unfinished stream looks identical to a broken level or an empty one. `{world?}` |
+| `streaming_control` | Load, unload, show or hide a streaming sublevel and wait for it to settle. The engine's `LoadStreamLevel` is latent and does not check its level name — called by reflection with a name that exists nowhere it returns cleanly, streams nothing and reports success. This refuses a name no streaming level answers to (naming the ones that are there), drives the level's own `ShouldBeLoaded`/`ShouldBeVisible` rather than the latent wrapper, waits for the engine to call the transition done, and reports the state read back. `{level, op, settle_s?, world?}` |
 | `worlds` | Every live world with an id you can pass as `world`: the level being edited, one per PIE instance when playing as several clients, and the preview world behind each open asset editor. Reports type, net mode, map, PIE instance, actor count, and which one an omitted `world` resolves to right now. The editor keeps more worlds around than "editor or pie" can say, and `"pie"` silently picks one of them. |
 | `frame_strip` | What changed over the last few seconds — N frames at a fixed interval returned as ONE contact sheet. Use it for transitions, fades, animations, whether a door actually opened: a single screenshot is one instant, and everything between calls is invisible. Includes the UI layer during play. `{frames?, interval_ms?, columns?, scale?}` |
 | `dialog_state` | Is a modal window blocking the editor, and what does it say? Every tool runs on the game thread, so a modal freezes all of them — calls simply hang with no diagnostic. Ask this first when Uplink starts answering again. `dismiss:true` closes it, which answers any question it was asking, so read the title first. `{dismiss?}` |
@@ -322,7 +323,7 @@ Both property tools take a **dotted path** that steps through structs *and* obje
 
 ## Finding the tools themselves
 
-A server's tool list is not free. Every MCP client re-reads it on connect and carries it for the rest of the session — all 118 schemas here come to roughly **34,000 tokens**, a sixth of a 200k window, paid for again on every metered turn. So by default `tools/list` answers with three tools rather than all of them, and the rest are fetched on demand. That is ~650 tokens instead of ~34,000.
+A server's tool list is not free. Every MCP client re-reads it on connect and carries it for the rest of the session — all 119 schemas here come to roughly **34,000 tokens**, a sixth of a 200k window, paid for again on every metered turn. So by default `tools/list` answers with three tools rather than all of them, and the rest are fetched on demand. That is ~650 tokens instead of ~34,000.
 
 | Tool | What it does |
 |---|---|

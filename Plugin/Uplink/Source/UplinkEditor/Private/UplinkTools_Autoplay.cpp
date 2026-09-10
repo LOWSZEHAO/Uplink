@@ -19,6 +19,7 @@
 #include "Components/Widget.h"
 #include "Components/TextBlock.h"
 #include "Editor.h"
+#include "EditorLevelUtils.h"
 #include "Engine/GameInstance.h"
 #include "Engine/LevelStreaming.h"
 #include "Engine/World.h"
@@ -29,6 +30,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/WorldSettings.h"
 #include "GameMapsSettings.h"
+#include "Misc/PackageName.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -710,4 +712,258 @@ void UplinkTools::RegisterAutoplay(FUplinkToolRegistry& InRegistry)
 			return FUplinkToolResult::Ok(Data, FString::Printf(
 				TEXT("'%s' is modal and up now, though it still lets tools run; pass dismiss:true to close it once you are content with the answer that gives it"), *Title));
 		});
+
+	{
+		FUplinkToolInfo Info;
+		Info.Name = TEXT("streaming_control");
+		Info.Description = TEXT("Load, unload, show or hide a streaming sublevel, and wait for it to settle. The engine's own LoadStreamLevel is a latent node whose name argument is not checked against anything: called through call_function with a level that does not exist it returns cleanly, streams nothing, and reports success. So this refuses a name no streaming level in the world answers to - naming the ones that are there - drives the level's own ShouldBeLoaded/ShouldBeVisible flags rather than the latent wrapper, and then waits until the engine says the transition is done before answering. The reply is the level's real state read back, not the request echoed. 'settled' false with a timeout is a slow stream, not necessarily a failure - streaming_status shows where it got to.");
+		Info.InputSchema = FUplinkToolRegistry::ParseSchema(
+			TEXT(R"json({"type":"object","properties":{"level":{"type":"string","description":"Sublevel package name as streaming_status reports it, e.g. /Game/Maps/Sub_Town. A trailing name is matched too."},"op":{"type":"string","enum":["load","unload","show","hide"],"description":"load/unload set ShouldBeLoaded; show/hide set ShouldBeVisible (and show loads first)"},"settle_s":{"type":"number","default":30,"description":"How long to wait for the transition to settle. Distinct from the transport-level timeout_s, which bounds the whole call."},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["level","op"]})json"));
+		Info.bReadOnly = false;
+		Info.bTransactional = false; // streaming state is not an undoable edit
+		Info.TimeoutSeconds = 60.0;
+		InRegistry.Register(MoveTemp(Info), []() -> TSharedRef<IUplinkInvocation>
+		{
+			class FStreamingControl final : public IUplinkInvocation
+			{
+			public:
+				virtual EUplinkToolStep Start(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+				{
+					FString Error;
+					UWorld* World = Ctx.ResolveWorld(Error);
+					if (!World)
+					{
+						Out = FUplinkToolResult::Error(Error);
+						return EUplinkToolStep::Done;
+					}
+					WeakWorld = World;
+
+					const FString Wanted = GetString(Ctx.Params, TEXT("level"));
+					const FString Op = GetString(Ctx.Params, TEXT("op"));
+
+					// Exact package name first, then a trailing-name match, so a
+					// caller can say Sub_Town for /Game/Maps/Sub_Town without the
+					// tool guessing between two levels that both end that way.
+					TArray<ULevelStreaming*> Exact;
+					TArray<ULevelStreaming*> Suffix;
+					TArray<FString> Known;
+					for (ULevelStreaming* Streaming : World->GetStreamingLevels())
+					{
+						if (!Streaming)
+						{
+							continue;
+						}
+						const FString Package = Streaming->GetWorldAssetPackageName();
+						Known.Add(Package);
+						if (Package == Wanted)
+						{
+							Exact.Add(Streaming);
+						}
+						else if (FPackageName::GetShortName(Package).Equals(Wanted, ESearchCase::IgnoreCase))
+						{
+							Suffix.Add(Streaming);
+						}
+					}
+
+					TArray<ULevelStreaming*>& Matches = Exact.Num() > 0 ? Exact : Suffix;
+					if (Matches.Num() == 0)
+					{
+						Out = FUplinkToolResult::Error(FString::Printf(
+							TEXT("no streaming level '%s' in this world.%s"),
+							*Wanted,
+							Known.Num() > 0
+								? *FString::Printf(TEXT(" It has: %s"), *FString::Join(Known, TEXT(", ")))
+								: TEXT(" It has no streaming levels at all - streaming_status confirms that, and a level entered outside its menu often has none.")));
+						return EUplinkToolStep::Done;
+					}
+					if (Matches.Num() > 1)
+					{
+						TArray<FString> Names;
+						for (const ULevelStreaming* Streaming : Matches)
+						{
+							Names.Add(Streaming->GetWorldAssetPackageName());
+						}
+						Out = FUplinkToolResult::Error(FString::Printf(
+							TEXT("'%s' matches %d streaming levels - give the full package name: %s"),
+							*Wanted, Matches.Num(), *FString::Join(Names, TEXT(", "))));
+						return EUplinkToolStep::Done;
+					}
+
+					ULevelStreaming* Target = Matches[0];
+					WeakLevel = Target;
+					LevelName = Target->GetWorldAssetPackageName();
+
+					if (Op != TEXT("load") && Op != TEXT("unload")
+						&& Op != TEXT("show") && Op != TEXT("hide"))
+					{
+						Out = FUplinkToolResult::Error(FString::Printf(
+							TEXT("unknown op '%s' - one of load, unload, show, hide"), *Op));
+						return EUplinkToolStep::Done;
+					}
+					RequestedOp = Op;
+
+					// The editor and a running game do not stream the same way,
+					// and using one path for both was a tool that half worked.
+					// In the editor the streaming state machine does not run:
+					// setting ShouldBeVisible false left IsStreamingStatePending
+					// true forever while the level stayed loaded and visible, so
+					// hide and unload reported a transition that never started.
+					// Editor visibility is EditorLevelUtils' job, and "unload"
+					// has no editor meaning at all - a sublevel is in the
+					// persistent level or it is not, which is the Levels panel's
+					// remove, not a stream.
+					bEditorWorld = !World->IsPlayInEditor();
+					if (bEditorWorld)
+					{
+						if (Op == TEXT("load") || Op == TEXT("unload"))
+						{
+							Out = FUplinkToolResult::Error(FString::Printf(
+								TEXT("'%s' only means something in a running game - the editor keeps every sublevel of the open level loaded, and adding or removing one is a change to the persistent level rather than a stream. Use show/hide here, or pie_start first and stream in the play world."),
+								*Op));
+							return EUplinkToolStep::Done;
+						}
+						ULevel* Loaded = Target->GetLoadedLevel();
+						if (!Loaded)
+						{
+							Out = FUplinkToolResult::Error(FString::Printf(
+								TEXT("%s has no loaded level in the editor world, so there is nothing to show or hide"), *LevelName));
+							return EUplinkToolStep::Done;
+						}
+						UEditorLevelUtils::SetLevelVisibility(
+							Loaded, Op == TEXT("show"), /*bForceLayersVisible=*/false);
+
+						// Synchronous, so there is nothing to wait for and a
+						// deadline would only invent one.
+						return Report(Out);
+					}
+
+					// In a play world the flags are the right lever, and the
+					// engine's own state machine moves the level.
+					Target->Modify();
+					if (Op == TEXT("load"))
+					{
+						Target->SetShouldBeLoaded(true);
+					}
+					else if (Op == TEXT("unload"))
+					{
+						Target->SetShouldBeVisible(false);
+						Target->SetShouldBeLoaded(false);
+					}
+					else if (Op == TEXT("show"))
+					{
+						Target->SetShouldBeLoaded(true);
+						Target->SetShouldBeVisible(true);
+					}
+					else
+					{
+						Target->SetShouldBeVisible(false);
+					}
+
+					Deadline = FPlatformTime::Seconds()
+						+ FMath::Clamp(GetNumber(Ctx.Params, TEXT("settle_s"), 30.0), 0.5, 120.0);
+					return EUplinkToolStep::Pending;
+				}
+
+				virtual EUplinkToolStep Tick(const FUplinkToolContext& Ctx, FUplinkToolResult& Out) override
+				{
+					UWorld* World = WeakWorld.Get();
+					ULevelStreaming* Target = WeakLevel.Get();
+					if (!World || !Target)
+					{
+						// The world going away mid-stream is the ordinary end of
+						// a PIE session, and saying so beats a timeout that
+						// reads as a level that would not load.
+						Out = FUplinkToolResult::Error(TEXT(
+							"the world or the streaming level went away while waiting - PIE ending under the call is the usual reason"));
+						return EUplinkToolStep::Done;
+					}
+
+					const bool bSettled = !Target->IsStreamingStatePending();
+					const bool bTimedOut = FPlatformTime::Seconds() > Deadline;
+					if (!bSettled && !bTimedOut)
+					{
+						return EUplinkToolStep::Pending;
+					}
+
+					return Report(Out);
+				}
+
+				/** State read back off the level, and whether it is what was asked for. */
+				EUplinkToolStep Report(FUplinkToolResult& Out)
+				{
+					ULevelStreaming* Target = WeakLevel.Get();
+					if (!Target)
+					{
+						Out = FUplinkToolResult::Error(TEXT("the streaming level went away before it could be read back"));
+						return EUplinkToolStep::Done;
+					}
+					const bool bSettled = bEditorWorld || !Target->IsStreamingStatePending();
+
+					// Read back rather than report the request. A level that was
+					// asked to load and did not is the whole reason this tool
+					// exists instead of a call_function recipe.
+					const bool bLoaded = Target->IsLevelLoaded();
+					const bool bVisible = Target->IsLevelVisible();
+
+					TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+					Data->SetStringField(TEXT("level"), LevelName);
+					Data->SetStringField(TEXT("op"), RequestedOp);
+					Data->SetBoolField(TEXT("loaded"), bLoaded);
+					Data->SetBoolField(TEXT("visible"), bVisible);
+					Data->SetBoolField(TEXT("settled"), bSettled);
+
+					const bool bWantLoaded = RequestedOp != TEXT("unload");
+					const bool bWantVisible = RequestedOp == TEXT("show");
+					const bool bWantHidden = RequestedOp == TEXT("hide") || RequestedOp == TEXT("unload");
+
+					// Whether the end state was reached decides success; settled only
+					// shapes the reason. Reporting Ok for "asked to hide, still
+					// visible" because the engine had not finished is the same lie
+					// this tool was written to stop, just wearing a timeout.
+					const TCHAR* Why = bSettled
+						? TEXT("the engine settled and it did not happen")
+						: TEXT("it is still mid-transition - a large sublevel legitimately takes longer, so raise settle_s or poll streaming_status");
+
+					if (bWantLoaded && !bLoaded)
+					{
+						Out = FUplinkToolResult::Error(FString::Printf(
+							TEXT("asked %s to load and it is not loaded - %s. A missing package or one that failed to load is the usual reason, and output_log names it."),
+							*LevelName, Why));
+						Out.Data = Data;
+						return EUplinkToolStep::Done;
+					}
+					if (bWantVisible && !bVisible)
+					{
+						Out = FUplinkToolResult::Error(FString::Printf(
+							TEXT("asked %s to show and it is not visible - %s"), *LevelName, Why));
+						Out.Data = Data;
+						return EUplinkToolStep::Done;
+					}
+					if (bWantHidden && bVisible)
+					{
+						Out = FUplinkToolResult::Error(FString::Printf(
+							TEXT("asked %s to %s and it is still visible - %s"), *LevelName, *RequestedOp, Why));
+						Out.Data = Data;
+						return EUplinkToolStep::Done;
+					}
+
+					Out = FUplinkToolResult::Ok(Data, FString::Printf(
+						TEXT("%s: loaded=%s visible=%s"),
+						*LevelName, bLoaded ? TEXT("true") : TEXT("false"), bVisible ? TEXT("true") : TEXT("false")));
+					return EUplinkToolStep::Done;
+				}
+
+			private:
+				TWeakObjectPtr<UWorld> WeakWorld;
+				TWeakObjectPtr<ULevelStreaming> WeakLevel;
+				FString LevelName;
+				FString RequestedOp;
+				double Deadline = 0.0;
+
+				/** The editor does not run the streaming state machine - see Start. */
+				bool bEditorWorld = false;
+			};
+			return MakeShared<FStreamingControl>();
+		});
+	}
 }

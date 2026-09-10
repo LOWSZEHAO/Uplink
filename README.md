@@ -28,7 +28,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.36.1 — 118 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.36.1 — 119 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. Audits keep finding shipped calls that reported success while doing the wrong thing - most recently a scenario runner that never validated its own step parameters, so every regression scenario ran unchecked, and a test runner that could see 429 of 6432 tests and answered "no tests match" for the rest. Both had been green for months. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -41,7 +41,7 @@ Epic's `ModelContextProtocol` plugin is in 5.8 as Experimental, off by default, 
 Three things it does not do, checked against the 5.8 source rather than the docs:
 
 - **It cannot author a Blueprint event graph.** Its `AddNode` / `ConnectNodePins` belong to PCG and Niagara graphs; `MakeLinkTo` appears nowhere in its toolsets, and the only Blueprint verbs are `CreateWidgetBlueprint` and `CompileWidgetBlueprint`. Blueprint graph authoring is most of what `bp_modify` is.
-- **It cannot drive a running game.** It starts and stops PIE and looks at the result. There is no input injection — a grep for `PlayerController`, `EnhancedInput` and `InjectInput` across all 27 toolsets hits one file, and it is a test. No pause, no step, no possession, no console exec, and its one assertion primitive checks Slate text once and returns. `input_key`, `input_action`, `possess`, `wait_until` and `run_scenario` are here for that.
+- **It cannot drive a running game.** It starts and stops PIE and looks at the result. There is no input injection — a grep for `PlayerController`, `EnhancedInput` and `InjectInput` across every one of its toolsets hits a single file, and it is a test. No pause, no step, no possession, no console exec, and its one assertion primitive checks Slate text once and returns. `input_key`, `input_action`, `possess`, `wait_until` and `run_scenario` are here for that.
 - **There is no escape hatch.** No arbitrary UFUNCTION call, and properties resolve by top-level name only — no dotted paths through structs and object references. `call_function`, `get_property` and `set_property` are how you reach a system nobody has written a tool for yet.
 
 And one difference worth stating plainly: Epic's own documentation says its server has no authentication layer and is not safe to expose beyond the local machine. Uplink is loopback-only, checks `Origin`, caps bodies at 2 MB, refuses to start if the engine's listener has been pointed off-loopback, and takes a bearer token if you set `UPLINK_AUTH_TOKEN`. That is not a claim that this is safe to expose either — it is not — but the default is narrower.
@@ -107,7 +107,7 @@ Worth reading before you point an agent at real work.
 
 ## The toolset
 
-118 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
+119 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
 
 They do not all land in your context. A hundred-odd schemas is ~34,000 tokens for a client to carry before you have asked anything, so `tools/list` answers with three — `list_areas`, `describe_tools`, `call_tool` — and the rest are fetched on demand. About 650 tokens instead of 34,000; `UPLINK_TOOL_LIST=flat` restores the whole list for clients that prefer it.
 
