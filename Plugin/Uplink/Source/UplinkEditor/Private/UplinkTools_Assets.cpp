@@ -374,8 +374,20 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 			// it hit matters: an asset created earlier this session and never
 			// saved leaves nothing on disk, so "an asset already exists" next to
 			// an empty Content folder reads as a bug in the tool.
+			//
+			// A failed load leaves an empty UPackage behind at the path it tried,
+			// so asking whether any object is there answers yes for a name that
+			// was only ever looked up and not found. An agent that checks before
+			// it creates would be told the thing it just failed to find already
+			// exists, with no way out but a different name. A package counts only
+			// when it actually holds an asset.
 			const bool bOnDisk = FPackageName::DoesPackageExist(Path);
-			const bool bInMemory = StaticFindObject(UObject::StaticClass(), nullptr, *Path) != nullptr;
+			UObject* Found = StaticFindObject(UObject::StaticClass(), nullptr, *Path);
+			if (const UPackage* FoundPackage = Cast<UPackage>(Found))
+			{
+				Found = FoundPackage->FindAssetInPackage();
+			}
+			const bool bInMemory = Found != nullptr;
 			if (bOnDisk || bInMemory)
 			{
 				return FUplinkToolResult::Error(FString::Printf(

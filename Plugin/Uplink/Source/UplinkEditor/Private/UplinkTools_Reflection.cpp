@@ -8,6 +8,8 @@
 #include "UplinkToolRegistry.h"
 #include "UplinkToolUtil.h"
 
+#include "Interfaces/IPluginManager.h"
+
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectIterator.h"
 
@@ -232,6 +234,60 @@ void UplinkTools::RegisterReflection(FUplinkToolRegistry& Registry)
 			Data->SetArrayField(TEXT("functions"), Rows);
 			Data->SetNumberField(TEXT("total_matching"), Total);
 			Data->SetBoolField(TEXT("truncated"), Total > Rows.Num());
+
+			// Nothing found is the answer most likely to be wrong. This searches
+			// LOADED classes, and a disabled plugin has loaded none - so asking
+			// for GameplayAbility on a project where the plugin is off returns an
+			// empty list that reads as "the engine cannot do this", which is the
+			// opposite of true. Naming the plugin turns a dead end into a step.
+			if (Total == 0)
+			{
+				TArray<FString> Candidates;
+				TArray<FString> Disabled;
+				for (const TSharedRef<IPlugin>& Plugin : IPluginManager::Get().GetDiscoveredPlugins())
+				{
+					if (Plugin->IsEnabled())
+					{
+						continue;
+					}
+					const FString Name = Plugin->GetName();
+					Disabled.Add(Name);
+					if (Candidates.Num() < 6
+						&& (Name.Contains(Query, ESearchCase::IgnoreCase)
+							|| Query.Contains(Name, ESearchCase::IgnoreCase)))
+					{
+						Candidates.AddUnique(Name);
+					}
+				}
+
+				// Containment alone misses the plural: GameplayAbility is not a
+				// substring of GameplayAbilities, and that is the exact word
+				// someone searching for the ability system would type.
+				if (Candidates.Num() == 0)
+				{
+					const FString Nearest = NearestName(Query, Disabled);
+					if (!Nearest.IsEmpty())
+					{
+						Candidates.Add(Nearest);
+					}
+				}
+				if (Candidates.Num() > 0)
+				{
+					TArray<TSharedPtr<FJsonValue>> Json;
+					for (const FString& Name : Candidates)
+					{
+						Json.Add(MakeShared<FJsonValueString>(Name));
+					}
+					Data->SetArrayField(TEXT("disabled_plugins"), Json);
+					return FUplinkToolResult::Ok(Data, FString::Printf(
+						TEXT("nothing matches '%s' among the loaded classes, but %s %s disabled in this project - a disabled plugin loads no classes, so its functions are not searchable rather than absent. plugin_enable turns %s on; the editor restarts."),
+						*Query,
+						*FString::Join(Candidates, TEXT(", ")),
+						Candidates.Num() == 1 ? TEXT("is") : TEXT("are"),
+						Candidates.Num() == 1 ? TEXT("it") : TEXT("them")));
+				}
+			}
+
 			return FUplinkToolResult::Ok(Data);
 		});
 }
