@@ -49,7 +49,7 @@ namespace UplinkFacade
 			return Tool;
 		}
 
-		/** {areas:[{area,summary,tools:[...]}], tool_count} - names, never schemas. */
+		/** {areas:[{area,summary,tools:[...]}], area_count, tool_count} - names, never schemas. */
 		TSharedRef<FJsonObject> BuildAreaIndex(const FUplinkToolRegistry& Registry)
 		{
 			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -108,6 +108,7 @@ namespace UplinkFacade
 			}
 
 			Data->SetArrayField(TEXT("areas"), Areas);
+			Data->SetNumberField(TEXT("area_count"), Areas.Num());
 			Data->SetNumberField(TEXT("tool_count"), Total);
 			return Data;
 		}
@@ -162,7 +163,16 @@ namespace UplinkFacade
 			/*bReadOnly=*/true,
 			[&Registry](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 			{
-				return FUplinkToolResult::Ok(BuildAreaIndex(Registry));
+				const TSharedRef<FJsonObject> Data = BuildAreaIndex(Registry);
+
+				// This count is smaller than the one in the docs, and saying why
+				// costs a line where working it out costs a round trip: the three
+				// tools doing the asking are not among the ones being listed.
+				return FUplinkToolResult::Ok(Data, FString::Printf(
+					TEXT("%d tools in %d areas. describe_tools gives you the schema for any of them, call_tool runs one. Those three are not in this list - you are already holding them, so the registry has %d in all."),
+					(int32)Data->GetNumberField(TEXT("tool_count")),
+					(int32)Data->GetNumberField(TEXT("area_count")),
+					Registry.All().Num()));
 			});
 
 		Registry.RegisterQuick(

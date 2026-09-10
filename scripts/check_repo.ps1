@@ -412,9 +412,14 @@ Invoke-Check "Every scenario parameter is one the tool declares" {
             if ($null -eq $schema -or -not (Test-HasProperty $schema "properties")) { continue }
             $declared = @($schema.properties.PSObject.Properties.Name)
 
+            # A step with no parameters at all is written "params": {}, and
+            # .Name on an object with no properties is $null, which @() wraps
+            # into a one-element array holding it. Without the filter the check
+            # then reports a parameter named '' against any tool that declares
+            # any, which is a complaint about nothing.
             $passed = @()
             if (Test-HasProperty $s.Step "params") {
-                $passed = @($s.Step.params.PSObject.Properties.Name)
+                $passed = @($s.Step.params.PSObject.Properties.Name) | Where-Object { $_ }
             }
             foreach ($p in $passed) {
                 if (($declared -notcontains $p) -and ($TransportKeys -notcontains $p)) {
