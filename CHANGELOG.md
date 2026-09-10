@@ -6,6 +6,74 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.0
+
+The tool list stopped being free, so it stopped being sent.
+
+### Changed
+- **`tools/list` answers with three tools instead of all of them.** Every MCP
+  client re-reads that list on connect and carries it for the session; measured
+  on this project's own tools it was 136 KB - about 34,000 tokens - before
+  anyone had asked anything. On a 200k window that is a sixth of the context,
+  and on metered billing it is paid again every turn.
+
+  `list_areas` gives every tool by name, grouped by subject, with a one-line
+  summary each and no schemas. `describe_tools` fetches the schemas for the few
+  about to be used, by name, by area, or by search word. `call_tool` runs one.
+  About 650 tokens instead of 34,000, plus ~1,500 when the area index is
+  actually asked for.
+
+  `UPLINK_TOOL_LIST=flat` restores the old shape for clients that would rather
+  pay once than round-trip. All three stay registered in either mode, so
+  anything written against them keeps working.
+
+  `call_tool` is unwrapped in the dispatch layer rather than implemented as a
+  tool, so the tool it names is submitted as itself: the parameter validation,
+  the timeout, the undo transaction, the risk traits and the task's reported
+  name all belong to the real tool. Implemented as a tool it would have had to
+  start a second task and wait on it from inside the first, and every one of
+  those facts would have described the wrapper.
+
+### Added
+- `asset_modify` - duplicate, rename, move or delete an asset. Deleting is
+  refused while anything still references it, with the referencers named, so
+  the call can be made honestly rather than leaving dangling pointers;
+  `force` deletes anyway. Renames and moves go through the editor's own rename
+  path, so a redirector is left behind and existing references keep resolving,
+  and the result is read back from the asset registry rather than reported from
+  the call. None of it is undoable.
+- `streaming_control` - load, unload, show or hide a streaming sublevel and
+  wait for it to settle. `UGameplayStatics::LoadStreamLevel` is latent and does
+  not check its level name: called through `call_function` with a level that
+  exists nowhere it returns cleanly, streams nothing, and reports success. This
+  refuses a name no streaming level answers to and reports the state read back.
+
+  The editor and a running game do not stream the same way. In the editor the
+  streaming state machine does not run - setting `ShouldBeVisible` false left
+  `IsStreamingStatePending` true indefinitely while the level stayed visible -
+  so editor visibility goes through `EditorLevelUtils::SetLevelVisibility`, and
+  `unload` is refused there because a sublevel is in the persistent level or it
+  is not. Whether the end state was reached decides success; whether the engine
+  settled only shapes the message.
+- An area table filing every tool under a subject, and a `check_repo` rule that
+  every registered tool appears in it exactly once - unfiled, a tool would be
+  invisible to a client browsing by area, which is now how tools are found.
+
+### Fixed
+- Suggestions for a misspelt name use edit distance. Containment answered a
+  plain typo with silence: "quary" neither contains nor is contained by
+  "query", and "bp_modfy" matches nothing at all. Both the unknown-tool and the
+  unknown-parameter refusals now name the nearest real one.
+
+### Documentation
+- README says where Epic's own 5.8 MCP server is better and where it is not,
+  each claim checked against the 5.8 source: no Blueprint event-graph
+  authoring, no way to drive a running game, no reflection escape hatch, and no
+  authentication layer by Epic's own documentation.
+- A recipe for turning off editor CPU throttling while an agent drives a
+  playtest - it is a plain `UPROPERTY(config)`, so `set_property` already
+  reaches it and no tool was needed.
+
 ## 0.36.1
 
 Found while getting the demo ready to record. None of them is in the demo's
