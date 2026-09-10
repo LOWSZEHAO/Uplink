@@ -34,6 +34,20 @@ That is not the same as being sure. Audits keep finding shipped calls that repor
 
 Recent work has been trustworthiness, and the tools for reading an unfamiliar project. That is where an agent burns the most time: guessing at things it could have looked up.
 
+## Unreal 5.8 ships its own MCP server. Why this one
+
+Epic's `ModelContextProtocol` plugin is in 5.8 as Experimental, off by default, on `http://127.0.0.1:8000/mcp`, with 27 Toolset plugins behind it. It is good, it is going to get better, and if it covers what you need you should use it — it is free, first-party, and it will not fall behind the engine. Uplink binds a different port on purpose, so you can run both.
+
+Three things it does not do, checked against the 5.8 source rather than the docs:
+
+- **It cannot author a Blueprint event graph.** Its `AddNode` / `ConnectNodePins` belong to PCG and Niagara graphs; `MakeLinkTo` appears nowhere in its toolsets, and the only Blueprint verbs are `CreateWidgetBlueprint` and `CompileWidgetBlueprint`. Blueprint graph authoring is most of what `bp_modify` is.
+- **It cannot drive a running game.** It starts and stops PIE and looks at the result. There is no input injection — a grep for `PlayerController`, `EnhancedInput` and `InjectInput` across all 27 toolsets hits one file, and it is a test. No pause, no step, no possession, no console exec, and its one assertion primitive checks Slate text once and returns. `input_key`, `input_action`, `possess`, `wait_until` and `run_scenario` are here for that.
+- **There is no escape hatch.** No arbitrary UFUNCTION call, and properties resolve by top-level name only — no dotted paths through structs and object references. `call_function`, `get_property` and `set_property` are how you reach a system nobody has written a tool for yet.
+
+And one difference worth stating plainly: Epic's own documentation says its server has no authentication layer and is not safe to expose beyond the local machine. Uplink is loopback-only, checks `Origin`, caps bodies at 2 MB, refuses to start if the engine's listener has been pointed off-loopback, and takes a bearer token if you set `UPLINK_AUTH_TOKEN`. That is not a claim that this is safe to expose either — it is not — but the default is narrower.
+
+Where Epic is ahead, it is ahead: Niagara, PCG, UMG and Slate-level editor driving are all deeper there, and the Slate inspection tools do things this plugin deliberately stopped trying to.
+
 ## Quickstart
 
 **Prerequisites**
@@ -94,6 +108,8 @@ Worth reading before you point an agent at real work.
 ## The toolset
 
 118 tools. Full parameters, conventions and worked recipes are in **[TOOLS.md](TOOLS.md)**. If you have not driven an editor from an agent before, **[PROMPTING.md](PROMPTING.md)** covers what to tell it: the few facts it cannot look up for itself, and the habits that stop it guessing.
+
+They do not all land in your context. A hundred-odd schemas is ~34,000 tokens for a client to carry before you have asked anything, so `tools/list` answers with three — `list_areas`, `describe_tools`, `call_tool` — and the rest are fetched on demand. About 650 tokens instead of 34,000; `UPLINK_TOOL_LIST=flat` restores the whole list for clients that prefer it.
 
 | Layer | Tools |
 |---|---|
