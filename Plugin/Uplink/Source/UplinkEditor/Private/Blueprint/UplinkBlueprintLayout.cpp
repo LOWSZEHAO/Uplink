@@ -91,6 +91,16 @@ namespace UplinkBlueprint
 	{
 		Graph->Modify();
 		Graph->AddNode(Node, /*bUserAction=*/true, /*bSelectNewNode=*/false);
+		// The editor's own spawner sets this on every node it places, and two
+		// things depend on it. Modify() only records an object into the undo
+		// buffer when the flag is set, so a node without it can be added inside
+		// a transaction and still have every later edit to it - a pin default,
+		// a position - fall outside undo. And FBlueprintEditorUtils::
+		// UpdateTransactionalFlags runs on every open, sets the flag on any node
+		// missing it, and marks the Blueprint dirty for having had to: the
+		// "Blueprint requires updating. Please resave." toast over a graph that
+		// was compiled and saved a moment ago was this, one node at a time.
+		Node->SetFlags(RF_Transactional);
 		Node->CreateNewGuid();
 		Node->PostPlacedNewNode();
 		Node->AllocateDefaultPins();
@@ -98,6 +108,31 @@ namespace UplinkBlueprint
 		Node->NodePosY = static_cast<int32>(GetNumber(Op, TEXT("y"), 0));
 		const bool bHasExplicitPos = Op->HasField(FStringView(TEXT("x"))) || Op->HasField(FStringView(TEXT("y")));
 		PlaceNodeWithoutOverlap(Graph, Node, bHasExplicitPos);
+	}
+
+	void MoveExistingNode(UEdGraph* Graph, UEdGraphNode* Node, const TSharedPtr<FJsonObject>& Op)
+	{
+		// A node an op reused instead of creating still has to end up where the
+		// op said. Answering 'reused' with the position quietly kept was a
+		// success that left the node somewhere the caller never asked for - and
+		// for the placeholder events a new Blueprint ships with, that somewhere
+		// is the origin, on top of whatever was being laid out there.
+		const bool bHasX = Op->HasField(FStringView(TEXT("x")));
+		const bool bHasY = Op->HasField(FStringView(TEXT("y")));
+		if (!bHasX && !bHasY)
+		{
+			return;
+		}
+		Node->Modify();
+		if (bHasX)
+		{
+			Node->NodePosX = static_cast<int32>(GetNumber(Op, TEXT("x"), 0));
+		}
+		if (bHasY)
+		{
+			Node->NodePosY = static_cast<int32>(GetNumber(Op, TEXT("y"), 0));
+		}
+		PlaceNodeWithoutOverlap(Graph, Node, /*bHasExplicitPos=*/true);
 	}
 
 	/** Estimated Y of a pin's row, for headless layout decisions. */
@@ -206,6 +241,8 @@ namespace UplinkBlueprint
 		{
 			UK2Node_Knot* Knot = NewObject<UK2Node_Knot>(Graph);
 			Graph->AddNode(Knot, /*bUserAction=*/false, /*bSelectNewNode=*/false);
+			// Same flag FinalizeNewNode sets, for the same two reasons.
+			Knot->SetFlags(RF_Transactional);
 			Knot->CreateNewGuid();
 			Knot->PostPlacedNewNode();
 			Knot->AllocateDefaultPins();

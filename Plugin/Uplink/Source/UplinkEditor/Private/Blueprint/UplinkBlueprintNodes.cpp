@@ -267,6 +267,7 @@ namespace UplinkBlueprint
 				{
 					Existing->Modify();
 					Existing->SetEnabledState(ENodeEnabledState::Enabled);
+					MoveExistingNode(Graph, Existing, OpParams);
 					Data->SetObjectField(TEXT("node"), NodeToJson(Existing));
 					Data->SetBoolField(TEXT("reused"), true);
 					ResultNode = Existing;
@@ -328,6 +329,7 @@ namespace UplinkBlueprint
 			{
 				Existing->Modify();
 				Existing->SetEnabledState(ENodeEnabledState::Enabled);
+				MoveExistingNode(Graph, Existing, OpParams);
 				Data->SetObjectField(TEXT("node"), NodeToJson(Existing));
 				Data->SetBoolField(TEXT("reused"), true);
 				ResultNode = Existing;

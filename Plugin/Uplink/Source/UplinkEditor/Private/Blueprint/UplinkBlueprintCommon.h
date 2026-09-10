@@ -30,6 +30,7 @@ namespace UplinkBlueprint
 
 	// Placement and auto-layout - UplinkBlueprintLayout.cpp.
 	void FinalizeNewNode(UEdGraph* Graph, UEdGraphNode* Node, const TSharedPtr<FJsonObject>& Op);
+	void MoveExistingNode(UEdGraph* Graph, UEdGraphNode* Node, const TSharedPtr<FJsonObject>& Op);
 	int32 ArrangeGraph(UEdGraph* Graph);
 
 	// The node/pin shape bp_query reports and the add_node ops echo back -
