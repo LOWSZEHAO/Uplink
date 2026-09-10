@@ -874,8 +874,46 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 				Data->SetNumberField(TEXT("deleted"), Deleted);
 				if (Deleted == 0)
 				{
+					// The registry check above only sees packages on disk, so an
+					// asset created this session and not yet saved is not in it -
+					// and that is the ordinary case for an agent, which has just
+					// made the thing now holding the reference. Ask the engine
+					// what is actually pointing at this object rather than
+					// guessing at read-only files.
+					bool bReferenced = false;
+					bool bReferencedByUndo = false;
+					FReferencerInformationList Memory;
+					ObjectTools::GatherObjectReferencersForDeletion(Object, bReferenced, bReferencedByUndo, &Memory);
+
+					TArray<FString> Holders;
+					for (const FReferencerInformation& Info : Memory.ExternalReferences)
+					{
+						if (Info.Referencer)
+						{
+							Holders.AddUnique(Info.Referencer->GetOutermost()->GetName());
+						}
+					}
+					Holders.Remove(Existing.PackageName.ToString());
+
+					if (Holders.Num() > 0)
+					{
+						TArray<TSharedPtr<FJsonValue>> HeldJson;
+						for (const FString& Holder : Holders)
+						{
+							HeldJson.Add(MakeShared<FJsonValueString>(Holder));
+						}
+						Data->SetArrayField(TEXT("held_in_memory_by"), HeldJson);
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("'%s' is still held in memory by %s, which the asset registry did not report because that only knows packages already on disk. Save those first so the reference is visible, repoint them, or pass force:true."),
+							*AssetPath, *FString::Join(Holders, TEXT(", "))));
+					}
+					if (bReferencedByUndo)
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("'%s' is held by the undo buffer - something earlier in this session recorded it. edit_history shows what, and clearing the undo stack releases it."), *AssetPath));
+					}
 					return FUplinkToolResult::Error(FString::Printf(
-						TEXT("the editor refused to delete '%s' - it is usually a read-only file, a source control checkout, or the asset being open in an editor window"), *AssetPath));
+						TEXT("the editor refused to delete '%s' and nothing in memory holds it - a read-only file, a source control checkout, or the asset being open in an editor window are what is left"), *AssetPath));
 				}
 				return FUplinkToolResult::Ok(Data, FString::Printf(TEXT("deleted %s"), *Existing.GetObjectPathString()));
 			}
