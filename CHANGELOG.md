@@ -6,6 +6,29 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.3
+
+### Added
+- `widget_modify` - take a widget out of a Widget Blueprint's tree, or move one
+  into a different panel. Between this, `widget_add` and `set_property` against
+  the paths `widget_tree` reports, a menu can be built, looked at and rearranged
+  without leaving the conversation; before it, a widget added in the wrong place
+  stayed there.
+
+  Removing is refused while a graph node still reads or writes the widget, and
+  the nodes are named. The reason is not the one you would guess: the engine's
+  `DeleteWidgets` removes the referencing nodes along with the widget, so
+  nothing dangles and the Blueprint compiles clean afterwards - forcing it
+  loses that logic with no warning and nothing left to find. That is worth a
+  refusal more than a broken reference would be, not less.
+
+  Reparenting refuses a move that would put a panel inside its own descendant,
+  which nothing in the engine checks and which hangs the designer on the next
+  open. If the new panel will not take the child - Button, Border and the other
+  single-child panels hold exactly one - the widget goes back where it was
+  rather than being left in the tree and in no layout, which the designer shows
+  as simply missing.
+
 ## 0.37.2
 
 The subsystems this had no tools for turned out to need documentation rather
