@@ -28,7 +28,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.37.3 — 120 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.37.4 — 120 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. Audits keep finding shipped calls that reported success while doing the wrong thing - most recently a scenario runner that never validated its own step parameters, so every regression scenario ran unchecked, and a test runner that could see 429 of 6432 tests and answered "no tests match" for the rest. Both had been green for months. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -48,7 +48,7 @@ One smaller thing, since it is a running sore for every tool in this space: `vie
 
 And one difference worth stating plainly: Epic's own documentation says its server has no authentication layer and is not safe to expose beyond the local machine. Uplink is loopback-only, checks `Origin`, caps bodies at 2 MB, refuses to start if the engine's listener has been pointed off-loopback, and takes a bearer token if you set `UPLINK_AUTH_TOKEN`. That is not a claim that this is safe to expose either — it is not — but the default is narrower.
 
-Where Epic is ahead, it is ahead: Niagara, PCG, UMG and Slate-level editor driving are all deeper there, and the Slate inspection tools do things this plugin deliberately stopped trying to.
+Where Epic is ahead, it is ahead, and it is worth being specific about. Its UMG toolset does tree surgery this one does not — wrap, named slots, UI components, replace-with-template, rename — though it has no way to set a slot's position or size, because its property access resolves top-level names only. It ships a Gameplay Ability System toolset, reading a pawn's granted abilities, active effects and attribute values; there is nothing here for that. Niagara, PCG and Slate inspection are all deeper there, and the Slate tools do things this plugin deliberately stopped trying to. Its AI toolsets are the other way round: `StateTreeToolset` and `AIModuleToolset` ship in 5.8 as empty modules, so neither server authors a Behaviour Tree or a StateTree.
 
 ## Quickstart
 

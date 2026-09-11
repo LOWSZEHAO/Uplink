@@ -6,6 +6,21 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.4
+
+### Documentation
+- The comparison with Epic's own 5.8 MCP says where that one is ahead in the
+  same detail it already used for where it is not, each claim read out of the
+  5.8 source. Its UMG toolset does tree surgery this one does not - wrap, named
+  slots, UI components, replace-with-template, rename - while having no way to
+  set a slot's position or size, because its property access resolves top-level
+  names only. It ships a Gameplay Ability System toolset that reads granted
+  abilities, active effects and attribute values, which has no counterpart here.
+  And its AI toolsets go the other way: `StateTreeToolset` and `AIModuleToolset`
+  ship as empty modules, so neither server authors a Behaviour Tree or a
+  StateTree - which is worth saying plainly rather than leaving as a gap each
+  side can be assumed to have filled.
+
 ## 0.37.3
 
 ### Added
