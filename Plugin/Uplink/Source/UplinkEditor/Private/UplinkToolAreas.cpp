@@ -124,8 +124,8 @@ namespace
 		},
 		{
 			TEXT("umg"),
-			TEXT("Widget blueprints: read the tree, add a widget to it."),
-			TEXT("widget_add widget_tree")
+			TEXT("Widget blueprints: read the tree, add a widget, remove one or move it to another panel. Layout is set_property against the slot paths widget_tree reports."),
+			TEXT("widget_add widget_modify widget_tree")
 		},
 		{
 			TEXT("testing"),

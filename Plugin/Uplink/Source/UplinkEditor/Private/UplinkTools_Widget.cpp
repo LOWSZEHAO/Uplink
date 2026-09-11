@@ -1,7 +1,9 @@
 // Copyright 2026 Low Sze Hao. Licensed under the Apache License, Version 2.0.
-// Widget tools: widget_tree (query a Widget Blueprint's hierarchy) and
-// widget_add (construct a widget into the tree). Event hookup for widgets is
-// bp_modify's component_bound_event node kind.
+// Widget tools: widget_tree (query a Widget Blueprint's hierarchy), widget_add
+// (construct a widget into it) and widget_modify (remove one, or move it to
+// another panel). Event hookup for widgets is bp_modify's component_bound_event
+// node kind, and layout is set_property against the paths widget_tree reports -
+// a widget and the slot that positions it are both ordinary named objects.
 
 #include "UplinkTools.h"
 #include "UplinkToolRegistry.h"
@@ -11,7 +13,9 @@
 #include "Components/PanelSlot.h"
 #include "Components/PanelWidget.h"
 #include "Components/Widget.h"
+#include "K2Node_Variable.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "WidgetBlueprintEditorUtils.h"
 #include "WidgetBlueprint.h"
 
 using namespace UplinkToolUtil;
@@ -201,4 +205,199 @@ void UplinkTools::RegisterWidget(FUplinkToolRegistry& Registry)
 			Data->SetStringField(TEXT("class"), WidgetClass->GetPathName());
 			return FUplinkToolResult::Ok(Data);
 		});
+
+	Registry.RegisterQuick(
+		TEXT("widget_modify"),
+		TEXT("Change a Widget Blueprint's tree: 'remove' takes a widget (and everything under it) out, 'reparent' moves one into a different panel. Removing is refused while a graph node still reads or writes the widget, and those nodes are named: the engine's delete takes them with it, so forcing does not leave a broken graph - it leaves one that has quietly lost logic, and it still compiles clean afterwards. force:true does it anyway. Layout is not here: a widget and its slot are ordinary objects, so set_property against the 'path' and 'slot_path' that widget_tree reports is how position, size and padding are written."),
+		TEXT(R"json({"type":"object","properties":{"blueprint":{"type":"string","description":"Widget Blueprint asset path"},"op":{"type":"string","enum":["remove","reparent"]},"widget":{"type":"string","description":"Name of the widget to act on"},"parent":{"type":"string","description":"reparent: name of the panel widget to move it into"},"force":{"type":"boolean","default":false,"description":"remove: delete even though graph nodes still reference the widget"}},"required":["blueprint","op","widget"]})json"),
+		/*bReadOnly=*/false,
+		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
+		{
+			FString Error;
+			UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprint(Ctx, Error);
+			if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
+			{
+				return FUplinkToolResult::Error(Error.IsEmpty() ? TEXT("widget blueprint has no widget tree") : Error);
+			}
+
+			const FString WidgetName = GetString(Ctx.Params, TEXT("widget"));
+			UWidget* Widget = WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName));
+			if (!Widget)
+			{
+				TArray<FString> Names;
+				WidgetBlueprint->WidgetTree->ForEachWidget([&Names](UWidget* Each)
+				{
+					if (Each)
+					{
+						Names.Add(Each->GetName());
+					}
+				});
+				const FString Nearest = NearestName(WidgetName, Names);
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("no widget named '%s' in this tree.%s"),
+					*WidgetName,
+					Nearest.IsEmpty()
+						? TEXT(" widget_tree lists the ones that are there.")
+						: *FString::Printf(TEXT(" Did you mean '%s'?"), *Nearest)));
+			}
+
+			const FString Op = GetString(Ctx.Params, TEXT("op"));
+			TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+			Data->SetStringField(TEXT("blueprint"), WidgetBlueprint->GetPathName());
+			Data->SetStringField(TEXT("widget"), Widget->GetName());
+			Data->SetStringField(TEXT("op"), Op);
+
+			if (Op == TEXT("remove"))
+			{
+				// The engine's own delete asks a person about this with a modal,
+				// and over HTTP there is nobody to answer it. Answering it
+				// silently is worse than refusing, because of what the engine
+				// then does: DeleteWidgets removes the referencing NODES along
+				// with the widget. Nothing dangles and the Blueprint compiles
+				// clean, so there is no warning anywhere and no way to notice
+				// afterwards that a piece of the graph left with it.
+				const FName VariableName = Widget->GetFName();
+				TArray<FString> Users;
+				TArray<UK2Node_Variable*> VariableNodes;
+				FBlueprintEditorUtils::GetAllNodesOfClass<UK2Node_Variable>(WidgetBlueprint, VariableNodes);
+				for (const UK2Node_Variable* Node : VariableNodes)
+				{
+					if (Node && Node->VariableReference.GetMemberName() == VariableName)
+					{
+						Users.AddUnique(FString::Printf(TEXT("%s in %s"),
+							*Node->GetNodeTitle(ENodeTitleType::ListView).ToString(),
+							Node->GetGraph() ? *Node->GetGraph()->GetName() : TEXT("a graph")));
+					}
+				}
+
+				bool bForce = false;
+				Ctx.Params->TryGetBoolField(FStringView(TEXT("force")), bForce);
+				if (Users.Num() > 0)
+				{
+					TArray<TSharedPtr<FJsonValue>> Json;
+					for (const FString& User : Users)
+					{
+						Json.Add(MakeShared<FJsonValueString>(User));
+					}
+					Data->SetArrayField(TEXT("referencing_nodes"), Json);
+					if (!bForce)
+					{
+						FUplinkToolResult Refusal = FUplinkToolResult::Error(FString::Printf(
+							TEXT("%d graph node(s) still reference '%s' - they are named in 'referencing_nodes'. The engine deletes those nodes along with the widget, and the Blueprint compiles clean afterwards, so forcing this loses that logic silently rather than leaving anything to find. Repoint them first, or pass force:true."),
+							Users.Num(), *WidgetName));
+						Refusal.Data = Data;
+						return Refusal;
+					}
+				}
+
+				const bool bWasRoot = WidgetBlueprint->WidgetTree->RootWidget == Widget;
+				FWidgetBlueprintEditorUtils::DeleteWidgets(
+					WidgetBlueprint, { Widget },
+					FWidgetBlueprintEditorUtils::EDeleteWidgetWarningType::DeleteSilently);
+				WidgetBlueprint->WidgetVariableNameToGuidMap.Remove(VariableName);
+
+				// Read back rather than report the request: DeleteWidgets is void.
+				const bool bGone = WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName)) == nullptr;
+				Data->SetBoolField(TEXT("removed"), bGone);
+				if (!bGone)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' is still in the tree after the delete"), *WidgetName));
+				}
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+				return FUplinkToolResult::Ok(Data, FString::Printf(
+					TEXT("removed %s%s%s"), *WidgetName,
+					bWasRoot ? TEXT(" - it was the root, so the tree is now empty") : TEXT(""),
+					Users.Num() > 0
+						? *FString::Printf(TEXT(" - and the %d graph node(s) in 'referencing_nodes' went with it"), Users.Num())
+						: TEXT("")));
+			}
+
+			if (Op == TEXT("reparent"))
+			{
+				const FString ParentName = GetString(Ctx.Params, TEXT("parent"));
+				UPanelWidget* NewParent = Cast<UPanelWidget>(
+					WidgetBlueprint->WidgetTree->FindWidget(FName(*ParentName)));
+				if (!NewParent)
+				{
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("parent '%s' not found or is not a panel widget"), *ParentName));
+				}
+				if (NewParent == Widget)
+				{
+					return FUplinkToolResult::Error(TEXT("a widget cannot be its own parent"));
+				}
+
+				// A panel moved inside its own descendant leaves a ring the tree
+				// walk never escapes, and nothing in the engine checks for it -
+				// the designer hangs on the next open.
+				for (const UWidget* Walk = NewParent; Walk; Walk = Walk->GetParent())
+				{
+					if (Walk == Widget)
+					{
+						return FUplinkToolResult::Error(FString::Printf(
+							TEXT("'%s' is inside '%s', so moving '%s' into it would make the tree a ring"),
+							*ParentName, *WidgetName, *WidgetName));
+					}
+				}
+
+				UPanelWidget* OldParent = Widget->GetParent();
+				if (OldParent == NewParent)
+				{
+					Data->SetStringField(TEXT("parent"), NewParent->GetName());
+					return FUplinkToolResult::Ok(Data, FString::Printf(
+						TEXT("%s is already in %s"), *WidgetName, *ParentName));
+				}
+
+				// Detach first so the old slot is released, then attach - and put
+				// it back if the new panel will not take it, because a widget
+				// parented to nothing is in the tree and in no layout, which the
+				// designer shows as simply missing.
+				Widget->RemoveFromParent();
+				if (!NewParent->AddChild(Widget))
+				{
+					if (OldParent)
+					{
+						OldParent->AddChild(Widget);
+					}
+					return FUplinkToolResult::Error(FString::Printf(
+						TEXT("'%s' (%s) cannot take another child - it holds %d and its slot type allows no more. ")
+						TEXT("Single-child panels (Button, Border, SizeBox, ScaleBox...) need a layout panel inside them first."),
+						*ParentName, *NewParent->GetClass()->GetName(), NewParent->GetChildrenCount()));
+				}
+
+				if (WidgetBlueprint->WidgetTree->RootWidget == Widget)
+				{
+					// It was the root and is now somebody's child, so the tree
+					// needs a root that is not also a descendant of itself.
+					WidgetBlueprint->WidgetTree->RootWidget = nullptr;
+					for (UWidget* Walk = NewParent; Walk; Walk = Walk->GetParent())
+					{
+						if (!Walk->GetParent())
+						{
+							WidgetBlueprint->WidgetTree->RootWidget = Walk;
+						}
+					}
+				}
+
+				Data->SetStringField(TEXT("parent"), NewParent->GetName());
+				if (Widget->Slot)
+				{
+					// The slot is a different class under a different panel, so
+					// the path the caller was holding is stale - handing back the
+					// new one saves a second widget_tree.
+					Data->SetStringField(TEXT("slot_path"), Widget->Slot->GetPathName());
+					Data->SetStringField(TEXT("slot_class"), Widget->Slot->GetClass()->GetPathName());
+				}
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+				return FUplinkToolResult::Ok(Data, FString::Printf(
+					TEXT("moved %s into %s - its layout is on a new %s, so anything set on the old slot is gone"),
+					*WidgetName, *ParentName,
+					Widget->Slot ? *Widget->Slot->GetClass()->GetName() : TEXT("slot")));
+			}
+
+			return FUplinkToolResult::Error(FString::Printf(
+				TEXT("unknown op '%s' - one of remove, reparent"), *Op));
+		});
+
 }

@@ -1,6 +1,6 @@
 # Uplink tool reference
 
-All 119 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
+All 120 tools. Ordered by what you are trying to do: **author content**, then **ask the world questions**, then **verify in a running game**, then **drive the editor**, and finally the **reflection escape hatch** that reaches everything without a dedicated tool.
 
 Conventions used throughout:
 
@@ -177,6 +177,7 @@ Every list is capped, because this is read in an agent's context window. Gatheri
 |---|---|
 | `widget_tree` | A Widget Blueprint's hierarchy: name, class, parent, root flag, and `is_variable` (only variables can have events bound). Each row also carries `path`, and for anything inside a panel `slot_path` and `slot_class` — real object paths, so `set_property` writes the widget through the first and its layout through the second. `{blueprint, max?}` |
 | `widget_add` | Construct a widget into the tree, marked as a variable so its events are immediately bindable with `bp_modify component_bound_event`. `{blueprint, class, name, parent?}` |
+| `widget_modify` | `remove` a widget and everything under it, or `reparent` one into a different panel. Removing is refused while a graph node still reads or writes it, and the nodes are named — the engine's delete takes them with it, so forcing does not leave a dangling reference to find later; it leaves a Blueprint that compiles clean and has quietly lost that logic. `force:true` does it anyway. Reparenting refuses a move that would make the tree a ring, and puts the widget back where it was if the new panel will not take it. `{blueprint, op, widget, parent?, force?}` |
 
 Layout is authored with `set_property` against the paths `widget_tree` returns — see the worked recipe below.
 
@@ -325,7 +326,7 @@ Both property tools take a **dotted path** that steps through structs *and* obje
 
 ## Finding the tools themselves
 
-A server's tool list is not free. Every MCP client re-reads it on connect and carries it for the rest of the session — all 119 schemas here come to roughly **34,000 tokens**, a sixth of a 200k window, paid for again on every metered turn. So by default `tools/list` answers with three tools rather than all of them, and the rest are fetched on demand. That is ~650 tokens instead of ~34,000.
+A server's tool list is not free. Every MCP client re-reads it on connect and carries it for the rest of the session — all 120 schemas here come to roughly **34,000 tokens**, a sixth of a 200k window, paid for again on every metered turn. So by default `tools/list` answers with three tools rather than all of them, and the rest are fetched on demand. That is ~650 tokens instead of ~34,000.
 
 | Tool | What it does |
 |---|---|
