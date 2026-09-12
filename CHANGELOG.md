@@ -6,6 +6,42 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.4
+
+### Fixed
+- Five comments asserted a reason the code does not support. The rule in this
+  codebase is that a comment names the bug that forced the code and never
+  invents one for code nobody understood at the time; these five broke it, and
+  each was checked against the engine rather than reworded.
+
+  `UplinkCompat.h` carried a shim for `FScreenshotRequest::RequestScreenshot`
+  claiming 5.7's no-UI request already restricts to the game viewport. It does
+  not - the flag is only read inside the `bShowUI` branch, so a `bInShowUI=false`
+  request ignores it in both versions. Nothing called the shim either: capture
+  moved to `FSlateApplication::TakeScreenshot` and this was scaffolding left
+  behind. Deleted, along with an include it was the only user of.
+
+  The Enhanced Input node comment said a second event node for one action is a
+  compile error. `UK2Node_EnhancedInputAction::ValidateNodeDuringCompilation`
+  errors on a null action and warns on an unsupported trigger; a duplicate is
+  neither. The half that is true - that
+  `UInputActionEventNodeSpawner::Invoke` hands back the existing node rather
+  than spawning a second - is reason enough on its own.
+
+  `material_query` said it asks the editing library rather than reaching into
+  the property chain. It does neither: it calls
+  `UMaterial::GetExpressionInputForProperty`. The comment now says what that
+  buys and admits the property list beside it is hand-kept, so a property
+  missing from the list reads as unconnected rather than as absent.
+
+  Two in `niagara_renderer`. The merge was described as stopping a partial
+  update from wiping the rest; the real reason is that `SetRendererData` takes
+  the renderer's whole property JSON rather than a patch, so a caller naming two
+  fields needs the other forty laid underneath. And a `{"refPath": "..."}`
+  written where a path string belongs is not silently ignored - the importer
+  tries to construct an instance from the object and fails the entire call,
+  naming no key, which is a better reason to normalise it than the one given.
+
 ## 0.38.3
 
 An audit of every comparative claim in the docs, run against both the C++ and

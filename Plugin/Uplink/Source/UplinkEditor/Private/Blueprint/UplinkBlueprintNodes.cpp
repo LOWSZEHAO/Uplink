@@ -257,9 +257,10 @@ namespace UplinkBlueprint
 					*ActionPath));
 			}
 
-			// One event node per action per graph. A second one is a compile
-			// error, and the editor's own spawner reuses rather than stacking,
-			// so match that instead of producing a graph that will not build.
+			// One event node per action per graph, because that is what the
+			// editor does: UInputActionEventNodeSpawner::Invoke hands back the
+			// existing node instead of spawning a second. Stacking one would
+			// leave a graph no hand-authored one can look like.
 			for (UEdGraphNode* GraphNode : Graph->Nodes)
 			{
 				UK2Node_EnhancedInputAction* Existing = Cast<UK2Node_EnhancedInputAction>(GraphNode);

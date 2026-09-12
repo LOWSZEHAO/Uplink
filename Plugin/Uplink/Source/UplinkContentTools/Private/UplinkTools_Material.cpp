@@ -54,8 +54,10 @@ namespace
 		{
 			return;
 		}
-		// Ask the editing library rather than reaching into the property chain,
-		// so this keeps working as the material output set changes per version.
+		// GetExpressionInputForProperty maps the enum to the right input, so this
+		// survives the output structs being shuffled between versions. The list it
+		// is called with is hand-kept, though, so a property missing from it reads
+		// as unconnected rather than as absent.
 		static const EMaterialProperty Properties[] = {
 			MP_BaseColor, MP_Metallic, MP_Specular, MP_Roughness, MP_Anisotropy,
 			MP_EmissiveColor, MP_Opacity, MP_OpacityMask, MP_Normal, MP_Tangent,

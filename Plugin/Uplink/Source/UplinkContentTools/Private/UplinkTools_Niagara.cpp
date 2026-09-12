@@ -412,17 +412,22 @@ void UplinkContentTools::RegisterNiagara(FUplinkToolRegistry& Registry)
 			const TSharedPtr<FJsonObject>* Changes = nullptr;
 			if (Ctx.Params->TryGetObjectField(FStringView(TEXT("properties")), Changes) && Changes->IsValid())
 			{
-				// Merge the requested fields over the current property JSON so a
-				// partial update never wipes the rest of the renderer's setup.
+				// SetRendererData takes the renderer's whole property JSON rather
+				// than a patch, so a caller naming two fields needs the other
+				// forty laid underneath them first. That is what the read above
+				// is for.
 				TSharedPtr<FJsonObject> Merged;
 				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Current.PropertyValues);
 				if (!FJsonSerializer::Deserialize(Reader, Merged) || !Merged.IsValid())
 				{
 					Merged = MakeShared<FJsonObject>();
 				}
-				// Asset references come back from reads as plain object-path
-				// strings, but clients naturally write {"refPath": "..."} - the
-				// renderer parser silently ignores that shape, so normalize it.
+				// Reads hand asset references back as plain object-path strings,
+				// and a client writing one naturally sends {"refPath": "..."}
+				// instead. That object shape does not fail quietly on the one
+				// field - the importer tries to construct an instance from it
+				// and takes the whole SetRendererData call down, naming no key.
+				// Cheaper to accept both spellings than to explain that.
 				TFunction<TSharedPtr<FJsonValue>(const TSharedPtr<FJsonValue>&)> NormalizeRefs;
 				NormalizeRefs = [&NormalizeRefs](const TSharedPtr<FJsonValue>& Value) -> TSharedPtr<FJsonValue>
 				{
