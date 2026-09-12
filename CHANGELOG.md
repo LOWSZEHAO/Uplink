@@ -6,6 +6,53 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.3
+
+An audit of every comparative claim in the docs, run against both the C++ and
+the Python halves of Epic's toolsets after two claims had already been found
+wrong by grepping only the C++. It found a third, and a run of smaller errors
+in what this project says about itself.
+
+### Documentation
+- **Epic does inject input.** The README said it did not, citing a grep for
+  `PlayerController`, `EnhancedInput` and `InjectInput` that hits one file and
+  that file is a test. The grep reproduces exactly; it was the wrong grep.
+  `SlateInspectorToolset` ships `Click`, `Hover`, `Type`, `PressKey`,
+  `SelectOption`, `Drag` and `FillForm`, synthesized through
+  `FSlateApplication::ProcessKeyDownEvent` and `ProcessMouseButtonDownEvent`,
+  and its widget walk carries no editor-only filter, so UMG in a running
+  session is within reach. What is actually missing there is the gameplay half:
+  nothing addressed to a pawn, no possession, no pause, no step. The bullet now
+  claims that and no more.
+- Epic's property access reaches further than claimed. The top-level name
+  lookup is real, but nested structs marshal fine once it resolves, so "a Slate
+  brush's tint is out of reach" was wrong. It is a reach limitation, not a
+  depth one.
+- Epic's UMG toolset can set slot layout. That was listed as something it could
+  not do, which made a straight loss look like a trade.
+- Niagara and PCG are not merely "deeper" - 56 Niagara tools against 9 here, 31
+  PCG against 5, and they author rather than only inspect.
+
+### Fixed, in claims about this project
+- "Every mutating tool runs inside its own editor transaction" - eleven opt out
+  deliberately, and read-only tools never open one. The list in the README named
+  six and included two that are read-only.
+- "The three tools stay registered either way" - two do. `call_tool` is never
+  registered; it is unwrapped in the dispatch layer, which is the whole point of
+  it.
+- `check_repo.ps1` is nineteen checks, not fifteen.
+- `wait_until` serves seven condition types, not the five listed - `ui_visible`
+  and `navmesh_ready` were missing.
+- `arbitraryExecutionHint` covers three tools, not two: `run_scenario` carries
+  it because a step may name `call_function` or `console_command`.
+- `readOnlyHint` does not come from the trait table, though the sentence said
+  the annotations did.
+- `call_function` is not limited to `BlueprintCallable` - the lookup is a bare
+  `FindFunction`.
+- `delete_actors` refuses the substring form of an actor lookup that the
+  conventions section offers unconditionally.
+- The two headline audit anecdotes were seven releases old and read as recent.
+
 ## 0.38.2
 
 ### Documentation

@@ -5,10 +5,10 @@ All 120 tools. Ordered by what you are trying to do: **author content**, then **
 Conventions used throughout:
 
 - **`world`** — most world-touching tools accept `"world": "editor" | "pie"`. Omitted, they target the live PIE world when a session is running, else the editor world. `"pie"` means *whichever* world the editor is currently playing in; when that is ambiguous — playing as several clients — call **`worlds`** and pass an id like `"pie:1"` to name exactly one. An unknown world is refused with the ids that do exist.
-- **Actors** are addressed by exact name, exact editor label, or label substring (first match). When a lookup fails, the error lists what is actually there.
+- **Actors** are addressed by exact name, exact editor label, or label substring (first match). When a lookup fails, the error lists what is actually there. `delete_actors` is the exception and refuses the substring form: a helpful guess is right for a tool that reads and wrong for one that removes.
 - **Vectors** are `{x,y,z}` objects; **rotators** are `{pitch,yaw,roll}`.
 - **Unknown parameters are rejected**, with the accepted list and a suggestion when one is close. A misspelt name never silently falls back to a default.
-- **Every mutating tool runs inside its own editor transaction**, named after the tool, so an agent's edits undo by hand exactly like your own — see `edit_history`.
+- **A tool that edits an asset or the level runs inside its own editor transaction**, named after the tool, so an agent's edits undo by hand exactly like your own — see `edit_history`. A read-only tool never opens one - there is nothing to undo - and eleven mutating tools opt out deliberately, because they drive a session rather than change it. Nothing transacts during play either: the engine cancels any open transaction to begin PIE, so wrapping one there is fighting it.
 - **Lists are capped.** Tools that return collections take `max` and report `total` plus `truncated`, so a shortened list is never mistaken for the whole set.
 - **Long-running calls** — pass `wait_ms` (REST) to bound how long the response waits; if the work is still running you get `{task_id, status:"running"}` back — poll with `task_status`, fetch with `task_result`.
 
@@ -84,7 +84,7 @@ own Blueprint events.
 | `watch_events` | Record broadcasts of any dynamic multicast delegate (BlueprintAssignable events), with decoded parameter payloads. `{actor/object_path/component, delegate: <name>\|"*", world?}` → `watch_id`. Watches stop automatically when PIE ends. |
 | `drain_events` | Read captured events oldest-first. `{since_seq?, watch_id?, max?}` → events + `next_seq`. |
 | `unwatch` | `{watch_id}` or `{all:true}`. |
-| `wait_until` | Non-blocking assertion. `{condition:{type: property_equals\|actor_exists\|actor_gone\|event_count\|elapsed, ...}, timeout?, world?}` → `{condition_met, timed_out, waited_seconds}` — a timeout is a result, not an error. |
+| `wait_until` | Non-blocking assertion. `{condition:{type: property_equals\|actor_exists\|actor_gone\|event_count\|elapsed\|ui_visible\|navmesh_ready, ...}, timeout?, world?}` → `{condition_met, timed_out, waited_seconds}` — a timeout is a result, not an error. |
 | `get_world_state` | Actor snapshot with requested property values inline. `{world?, class_contains?, name_contains?, properties?:[...], max?}` |
 | `viewport_annotate` | Screenshot the running game **and** report where each matching actor is on screen — name, class, screen-space rect `[x,y,w,h]`, centre and distance — so a claim about what is visible is grounded in coordinates instead of pixel guessing. Off-screen matches are listed with `on_screen:false`. PIE only (it uses the player's camera). `include_image:false` skips the PNG for a cheap positions-only read. `{class_contains?, name_contains?, max?, include_image?}` |
 | `perf_stats` | Smoothed FPS, average frame ms, last delta, used physical memory. |
@@ -336,7 +336,7 @@ A server's tool list is not free. Every MCP client re-reads it on connect and ca
 
 `call_tool` is unwrapped in the dispatch layer rather than implemented as a tool, so the tool it names is submitted as itself — the timeout, the transaction, the traits and the task's reported name all belong to the real tool, not to a wrapper.
 
-Set `UPLINK_TOOL_LIST=flat` before launching the editor to get the old behaviour, where every tool is registered natively and `tools/list` returns all of them. Clients that would rather pay once than round-trip should use it; the three tools above stay registered either way, so anything written against them keeps working.
+Set `UPLINK_TOOL_LIST=flat` before launching the editor to get the old behaviour, where every tool is registered natively and `tools/list` returns all of them. Clients that would rather pay once than round-trip should use it; `list_areas` and `describe_tools` stay registered either way, so anything written against them keeps working. `call_tool` is not a registered tool in either mode — it is synthesised into the façade's tool list and unwrapped in the dispatch layer, which is the point of it.
 
 ## Discovery
 
@@ -460,4 +460,4 @@ The HTTP server binds loopback only (never network-reachable), refuses to start 
 
 **Optional authentication.** Launch the editor with `UPLINK_AUTH_TOKEN` set and every request must then carry `Authorization: Bearer <token>`; anything else gets a 401. Leave the variable unset and there is no authentication, which is the default and is what a single-user local tool normally wants. The token is compared in constant time. If you use the Node bridge, set the same variable in the bridge's environment too — it is a separate process and does not inherit the editor's.
 
-**Risk annotations.** Every tool publishes what it can do, so a client can decide before calling rather than after: `readOnlyHint` and `destructiveHint` (both standard MCP annotations), plus `arbitraryExecutionHint` for the tools that run a caller-named function rather than a fixed operation (`call_function`, `console_command` — their blast radius is the engine, not their parameters), `requiresPieHint`, and `longRunningHint`. These come from one table in `UplinkToolTraits.cpp` rather than from the registration sites, so the list of everything dangerous is a single page you can read.
+**Risk annotations.** Every tool publishes what it can do, so a client can decide before calling rather than after: `readOnlyHint` and `destructiveHint` (both standard MCP annotations), plus `arbitraryExecutionHint` for the tools that run a caller-named function rather than a fixed operation (`call_function`, `console_command`, and `run_scenario`, whose steps may name either — their blast radius is the engine, not their parameters), `requiresPieHint`, and `longRunningHint`. Those four come from one table in `UplinkToolTraits.cpp` rather than from the registration sites, so the list of everything dangerous is a single page you can read.
