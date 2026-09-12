@@ -6,6 +6,31 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.5
+
+### Added
+- `scripts/configure_client.ps1` writes the MCP config for Claude Code, Cursor,
+  VS Code, Gemini CLI and Codex. The five agree on almost nothing - the section
+  is `mcpServers` for three of them, `servers` for VS Code and `mcp_servers` for
+  Codex; the URL key is `url` except for Gemini, which wants `httpUrl`; Claude
+  Code and VS Code additionally want the transport named; and Codex is TOML
+  rather than JSON. Knowing that should not be the price of trying this.
+
+  It merges rather than overwrites, because these files usually already hold
+  other servers. A file that will not parse is left alone rather than replaced -
+  it is more likely to be a config someone is midway through editing than one
+  that wants clobbering. The Codex writer keeps the existing TOML verbatim and
+  replaces only this server's own table. `-Remove` takes the entry back out and
+  says so when there was nothing to take.
+
+  Written against Windows PowerShell 5.1 as well as 7: no `-AsHashtable`, which
+  5.1 does not have.
+
+### Documentation
+- The setup step no longer reads as though this is a Claude Code plugin. It is
+  an HTTP MCP server; any MCP client can connect, and which model is behind the
+  client is the client's business.
+
 ## 0.38.4
 
 ### Fixed

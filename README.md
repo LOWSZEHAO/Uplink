@@ -28,7 +28,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.38.4 — 120 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.38.5 — 120 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. Audits keep finding shipped calls that reported success while doing the wrong thing. A scenario runner that never validated its own step parameters, so every regression scenario ran unchecked. A test runner that could see 429 of 6432 tests and answered "no tests match" for the rest. A colour write that imported nothing and agreed with itself on read-back. Each had been green for months. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -82,11 +82,19 @@ Where Epic is ahead, it is ahead, and it is worth being specific about. Blueprin
 
    The link shares the plugin's *source* and gives each project its own `Binaries/` and `Intermediate/`, so one clone can serve a 5.7 project and a 5.8 one at the same time without either clobbering the other's build. (Before v0.27 the whole folder was one junction and you had to delete both by hand when switching engines; if you linked with an older script, re-run it with `-Remove` first.)
 
-4. **Register with Claude Code — no Node required.** The plugin speaks MCP natively over HTTP:
+4. **Point your client at it — no Node required.** The plugin speaks MCP natively over HTTP, so any MCP client can connect; which model is behind that client is the client's business, not the server's. For Claude Code:
 
    ```powershell
    claude mcp add --transport http uplink http://127.0.0.1:3777/mcp
    ```
+
+   Claude Code, Cursor, VS Code, Gemini CLI and Codex each read a per-project config file, and each disagrees about where it lives and what to call the fields. This writes whichever ones you want, into the project you are driving:
+
+   ```powershell
+   .\scripts\configure_client.ps1 -All -ProjectDir "C:\Path\To\YourProject"
+   ```
+
+   It merges rather than overwrites — these files usually hold other servers — leaves a malformed one alone rather than replacing it, and `-Remove` takes the entry back out.
 
 5. Start the editor, then ask your client for the `status` tool. You should get engine, project and PIE state back.
 
