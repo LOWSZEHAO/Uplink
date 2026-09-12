@@ -6,6 +6,54 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.5
+
+Two writes that landed, read back correctly, and did nothing. Both were found
+building a real Widget Blueprint from a design spec, and neither was catchable
+after the fact.
+
+### Fixed
+- A struct handed a JSON object whose keys name none of its fields imported
+  nothing and reported success. `{"r":0.9,"g":0.1,"b":0.2,"a":1}` written to an
+  `FSlateColor` - whose fields are `SpecifiedColor` and `ColorUseRule` - left
+  the colour transparent black and said the write had landed. Every tint and
+  outline colour in a Slate brush is one of these, so a whole widget style could
+  be authored, verified and still be wrong.
+
+  The engine's importer walks the STRUCT's fields looking for a matching JSON
+  key, never the other way round, so an unmatched key is skipped without
+  comment. `bStrictMode` does not help: it fires on a struct field with no JSON
+  value, which is the opposite case and would refuse every partial write, and
+  the engine leaves the unmatched-key question open in a comment exactly where
+  the check would go. So the check is ours, it runs before the write, and it
+  recurses - a recognised outer key carrying an unrecognised inner object is the
+  same loss one struct deeper. Only a total mismatch is refused; naming one
+  field and leaving the rest is how a single value is set.
+
+- A value guarded by a `bOverride_` flag that is off was stored and never read.
+  `MinDesiredHeight` on a SizeBox is the case that found it: the write lands,
+  the read-back agrees, and the box stays the size it was. Every field of
+  `FPostProcessSettings` has the same shape. Refused now, naming the flag and -
+  when the class has one - the engine's own setter, which sets both.
+
+  Neither of these could be caught by the existing verification, and the reason
+  is structural rather than an oversight: it re-applies the request to what is
+  actually there and compares, so any conversion that is a deterministic no-op
+  reproduces itself exactly and agrees with itself. Both have to be refused
+  before the write.
+
+- `asset_modify` delete with `force:true` did not force. `DeleteObjects` refuses
+  while anything still references the object, including a preview the editor
+  made for itself in `/Engine/Transient`, which no amount of saving or
+  repointing releases - and the refusal then told the caller to pass the flag
+  they had just passed. Force now falls through to `ForceDeleteObjects`, which
+  nulls the referencers first, and the message no longer recommends what was
+  already done.
+
+### Added
+- `scenarios/27-writes-that-do-nothing.json` pins both refusals, both ways past
+  them, and the partial writes the check must not cost.
+
 ## 0.37.4
 
 ### Documentation

@@ -96,14 +96,76 @@ namespace
 		}
 		return Text.IsEmpty() ? TEXT("?") : Text;
 	}
+
+	/**
+	 * A value guarded by an override flag that is off.
+	 *
+	 * The engine pairs some properties with a sibling bool - MinDesiredHeight
+	 * with bOverride_MinDesiredHeight, and every field of FPostProcessSettings
+	 * with one - and reads the value only while that bool is true. Writing the
+	 * value alone therefore stores it perfectly and changes nothing: the write
+	 * lands, the read-back agrees, and the widget or the volume carries on as
+	 * before. A SizeBox given a MinDesiredHeight this way stays the size it
+	 * was, with nothing to indicate why.
+	 *
+	 * The engine's own setter sets both, which is why one is named in the
+	 * refusal when the class has it.
+	 */
+	bool OverrideFlagIsOff(
+		const FProperty* Property,
+		const void* ValueAddr,
+		const UObject* Owner,
+		FString& OutFlagName,
+		FString& OutSetterName)
+	{
+		const FString Name = Property->GetName();
+		if (Name.StartsWith(TEXT("bOverride_")))
+		{
+			// Writing the flag itself is how the guard gets turned on.
+			return false;
+		}
+
+		const UStruct* OwnerStruct = Property->GetOwnerStruct();
+		if (!OwnerStruct)
+		{
+			return false;
+		}
+
+		const FString FlagName = TEXT("bOverride_") + Name;
+		const FBoolProperty* Flag = FindFProperty<FBoolProperty>(OwnerStruct, *FlagName);
+		if (!Flag)
+		{
+			return false;
+		}
+
+		// Back to the container the property sits in. The path may have walked
+		// into a struct - a post-process setting lives in FPostProcessSettings,
+		// not on the volume - so the flag has to be read against the same base
+		// the value was written to, not against the object.
+		const uint8* Container = static_cast<const uint8*>(ValueAddr) - Property->GetOffset_ForInternal();
+		if (Flag->GetPropertyValue_InContainer(Container))
+		{
+			return false;
+		}
+
+		OutFlagName = FlagName;
+		if (Owner)
+		{
+			if (const UFunction* Setter = Owner->GetClass()->FindFunctionByName(FName(*(TEXT("Set") + Name))))
+			{
+				OutSetterName = Setter->GetName();
+			}
+		}
+		return true;
+	}
 }
 
 void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 {
 	Registry.RegisterQuick(
 		TEXT("set_property"),
-		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value', matching get_property. In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit. A named object reference that resolves to nothing is refused rather than written as null. A property the engine has deprecated is refused too, with its deprecation message - it would take the write and read straight back while nothing acts on it - pass force:true to write one anyway."),
-		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"force":{"type":"boolean","default":false,"description":"Write a deprecated property anyway"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property","value"]})json"),
+		TEXT("Write any UPROPERTY of an object from a JSON value (numbers, strings, bools, structs as objects, arrays). 'property' accepts a dotted path to reach struct members, e.g. 'MyStruct.Inner.Value', matching get_property. In the editor world this also runs PostEditChangeProperty so the editor reacts like a Details-panel edit. A named object reference that resolves to nothing is refused rather than written as null. A property the engine has deprecated is refused too, with its deprecation message - it would take the write and read straight back while nothing acts on it - as is one guarded by a bOverride_ flag that is off, which the engine stores and never reads (a SizeBox's MinDesiredHeight, every field of a post-process volume); the engine's own setter is named when the class has one. Pass force:true to write either anyway."),
+		TEXT(R"json({"type":"object","properties":{"object_path":{"type":"string"},"actor":{"type":"string"},"component":{"type":"string"},"property":{"type":"string"},"value":{"description":"New value as JSON"},"force":{"type":"boolean","default":false,"description":"Write anyway when the property is deprecated, or guarded by an override flag that is off"},"world":{"type":"string","description":"'editor', 'pie', or an id from the worlds tool (e.g. 'pie:1')"}},"required":["property","value"]})json"),
 		/*bReadOnly=*/false,
 		[](const FUplinkToolContext& Ctx) -> FUplinkToolResult
 		{
@@ -158,6 +220,19 @@ void UplinkObject::RegisterSetProperty(FUplinkToolRegistry& Registry)
 					TEXT("Pass force:true to write it anyway."),
 					*GetString(Ctx.Params, TEXT("property")), *OwningObject->GetClass()->GetName(),
 					DeprecationMessage.IsEmpty() ? TEXT("") : TEXT(" "), *DeprecationMessage));
+			}
+
+			FString FlagName;
+			FString SetterName;
+			if (!bForce && OverrideFlagIsOff(Property, ValueAddr, OwningObject, FlagName, SetterName))
+			{
+				return FUplinkToolResult::Error(FString::Printf(
+					TEXT("'%s' is guarded by %s, which is false, so the value would be stored and never read - the write lands, the read-back agrees, and nothing changes. %sSet %s first, or pass force:true to write the value on its own."),
+					*GetString(Ctx.Params, TEXT("property")), *FlagName,
+					SetterName.IsEmpty()
+						? TEXT("")
+						: *FString::Printf(TEXT("call_function %s sets both. "), *SetterName),
+					*FlagName));
 			}
 
 			const bool bEditorObject = !Ctx.IsPieWorld();

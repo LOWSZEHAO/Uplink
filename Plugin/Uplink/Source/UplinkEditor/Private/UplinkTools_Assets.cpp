@@ -882,7 +882,16 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 						TEXT("'%s' is in the registry but would not load, so it cannot be deleted through the editor"), *AssetPath));
 				}
 
-				const int32 Deleted = ObjectTools::DeleteObjects({ Object }, /*bShowConfirmation=*/false);
+				int32 Deleted = ObjectTools::DeleteObjects({ Object }, /*bShowConfirmation=*/false);
+				if (Deleted == 0 && bForce)
+				{
+					// DeleteObjects refuses while anything still references the
+					// object, and an editor preview in /Engine/Transient counts
+					// - so a caller who already said force got told to pass the
+					// flag they had just passed. ForceDeleteObjects nulls the
+					// referencers first, which is what force was asking for.
+					Deleted = ObjectTools::ForceDeleteObjects({ Object }, /*ShowConfirmation=*/false);
+				}
 				Data->SetNumberField(TEXT("deleted"), Deleted);
 				if (Deleted == 0)
 				{
@@ -916,8 +925,11 @@ void UplinkTools::RegisterAssets(FUplinkToolRegistry& Registry)
 						}
 						Data->SetArrayField(TEXT("held_in_memory_by"), HeldJson);
 						return FUplinkToolResult::Error(FString::Printf(
-							TEXT("'%s' is still held in memory by %s, which the asset registry did not report because that only knows packages already on disk. Save those first so the reference is visible, repoint them, or pass force:true."),
-							*AssetPath, *FString::Join(Holders, TEXT(", "))));
+							TEXT("'%s' is still held in memory by %s, which the asset registry did not report because that only knows packages already on disk. Save those first so the reference is visible, repoint them%s."),
+							*AssetPath, *FString::Join(Holders, TEXT(", ")),
+							bForce
+								? TEXT(", or delete the referencing packages - force could not release this one either")
+								: TEXT(", or pass force:true")));
 					}
 					if (bReferencedByUndo)
 					{

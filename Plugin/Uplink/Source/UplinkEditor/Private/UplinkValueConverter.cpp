@@ -7,6 +7,7 @@
 
 #include "Engine/World.h"
 #include "JsonObjectConverter.h"
+#include "JsonObjectWrapper.h"
 #include "UObject/UnrealType.h"
 
 namespace UplinkValue
@@ -149,6 +150,118 @@ namespace UplinkValue
 		}
 	}
 
+	/**
+	 * Refuse a JSON object whose keys name nothing on the struct it is being
+	 * written into.
+	 *
+	 * The engine's importer walks the STRUCT's fields looking for a matching
+	 * JSON key, never the other way round, so a key that matches no field is
+	 * skipped without comment. Every key being unmatched therefore imports
+	 * nothing, returns true, and leaves the struct exactly as it was - and the
+	 * write-back check in set_property agrees, because re-applying the same
+	 * request produces the same nothing. Found writing {r,g,b,a} to an
+	 * FSlateColor, whose fields are SpecifiedColor and ColorUseRule: reported
+	 * as landed, read back as transparent black.
+	 *
+	 * bStrictMode does not cover this. It fires on a struct field with no JSON
+	 * value - the opposite case, and one that would refuse every partial write
+	 * - and the engine leaves the unmatched-key question open in a comment
+	 * right where it would go (JsonObjectConverter.cpp, "Should we log a
+	 * warning/error if we still have properties in the JSON data that aren't
+	 * in the struct definition in strict mode?").
+	 *
+	 * Only a total mismatch is refused. One recognised key means the caller has
+	 * the right struct and the write does something, and partial matching is
+	 * how a single field is set without restating the rest.
+	 */
+	bool StructKeysRecognised(
+		const FProperty* Property,
+		const TSharedPtr<FJsonValue>& Value,
+		const FString& Path,
+		FString& OutError)
+	{
+		const FStructProperty* AsStruct = CastField<FStructProperty>(Property);
+		if (!AsStruct || !AsStruct->Struct || !Value.IsValid() || Value->Type != EJson::Object)
+		{
+			return true;
+		}
+
+		// FJsonObjectWrapper is the engine's "keep the JSON as it came" struct:
+		// any shape is correct for it by definition.
+		if (AsStruct->Struct == FJsonObjectWrapper::StaticStruct())
+		{
+			return true;
+		}
+
+		const TSharedPtr<FJsonObject>& Object = Value->AsObject();
+		if (!Object.IsValid() || Object->Values.Num() == 0)
+		{
+			return true;
+		}
+
+		// Authored names, because that is what the importer matches on, and
+		// FString map lookup is case-insensitive, so this is too.
+		TMap<FString, FProperty*> Fields;
+		for (TFieldIterator<FProperty> FieldIt(AsStruct->Struct); FieldIt; ++FieldIt)
+		{
+			Fields.Add(AsStruct->Struct->GetAuthoredNameForField(*FieldIt), *FieldIt);
+		}
+		if (Fields.Num() == 0)
+		{
+			// Nothing to match against - an opaque or native-only struct, where
+			// refusing would be a guess rather than a finding.
+			return true;
+		}
+
+		TArray<FString> Unmatched;
+		int32 Matched = 0;
+		for (const auto& Pair : Object->Values)
+		{
+			const FString Key = UplinkCompat::JsonKeyToString(Pair.Key);
+			if (FProperty** Field = Fields.Find(Key))
+			{
+				++Matched;
+				// One level down, on the same terms: a recognised outer key
+				// carrying an unrecognised inner object is the same silent
+				// loss, one struct deeper. Reached through TintColor, which is
+				// where the FSlateColor case actually hides.
+				if (!StructKeysRecognised(*Field, Pair.Value,
+						Path.IsEmpty() ? Key : Path + TEXT(".") + Key, OutError))
+				{
+					return false;
+				}
+			}
+			else
+			{
+				Unmatched.Add(Key);
+			}
+		}
+
+		if (Matched > 0)
+		{
+			return true;
+		}
+
+		TArray<FString> Names;
+		Fields.GenerateKeyArray(Names);
+		Names.Sort();
+		if (Names.Num() > 12)
+		{
+			Names.SetNum(12);
+			Names.Add(TEXT("..."));
+		}
+		OutError = FString::Printf(
+			TEXT("%s is an %s and none of {%s} name any of its fields, so the write would import nothing and report success. Its fields are: %s.%s"),
+			Path.IsEmpty() ? *Property->GetName() : *Path,
+			*AsStruct->Struct->GetStructCPPName(),
+			*FString::Join(Unmatched, TEXT(", ")),
+			*FString::Join(Names, TEXT(", ")),
+			AsStruct->Struct->GetFName() == TEXT("SlateColor")
+				? TEXT(" SpecifiedColor is the one holding the colour - r/g/b/a belong inside it, not here.")
+				: TEXT(""));
+		return false;
+	}
+
 	bool JsonToProperty(
 		const TSharedPtr<FJsonValue>& Value,
 		FProperty* Property,
@@ -158,6 +271,10 @@ namespace UplinkValue
 		// Before the write, not after: the importer would already have put the
 		// out-of-range number in the property by the time it could be caught.
 		if (!EnumValueIsInRange(Property, Value, OutError))
+		{
+			return false;
+		}
+		if (!StructKeysRecognised(Property, Value, FString(), OutError))
 		{
 			return false;
 		}

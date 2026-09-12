@@ -1,0 +1,144 @@
+{
+  "_name": "Writes that would do nothing",
+  "_purpose": "Two ways a write lands, reads back, and changes nothing - both of which used to report success. The verification in set_property cannot catch either, and the reason is structural: it re-applies the request to what is actually there and compares, so any conversion that is a deterministic no-op reproduces itself exactly and agrees with itself. Both have to be refused before the write rather than checked after it.",
+  "_requires": "Any project. Builds its own Widget Blueprint and deletes it afterwards.",
+  "steps": [
+    {
+      "tool": "asset_create",
+      "params": { "path": "/Game/UplinkWriteProbe/WBP_Probe", "class": "WidgetBlueprint" }
+    },
+    {
+      "tool": "widget_add",
+      "params": { "blueprint": "/Game/UplinkWriteProbe/WBP_Probe", "class": "/Script/UMG.SizeBox", "name": "Box" }
+    },
+    {
+      "tool": "widget_add",
+      "params": { "blueprint": "/Game/UplinkWriteProbe/WBP_Probe", "class": "/Script/UMG.Border", "name": "Bord", "parent": "Box" }
+    },
+    {
+      "_note": "An FSlateColor's fields are SpecifiedColor and ColorUseRule. r/g/b/a match neither, so the engine's importer visits nothing and returns true - the colour stays as it was. This is the shape the whole file is about.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
+        "property": "Background.OutlineSettings.Color",
+        "value": { "r": 0.9, "g": 0.1, "b": 0.2, "a": 1 }
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Nested one level down: the outer key is recognised, the inner object is not. Same loss, and the reason a top-level-only check would not be enough.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
+        "property": "Background",
+        "value": { "tintColor": { "r": 1, "g": 0, "b": 0, "a": 1 } }
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Keys that name nothing at all, on a struct that is otherwise easy to write.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
+        "property": "Padding",
+        "value": { "nonsense": 1, "bogus": 2 }
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The check must not cost partial writes: naming one field and leaving the rest is how a single value is set.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
+        "property": "Padding",
+        "value": { "left": 34 }
+      }
+    },
+    {
+      "tool": "get_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
+        "property": "Padding.Left"
+      },
+      "expect": { "value": 34 }
+    },
+    {
+      "_note": "And the spelling that does work, so the refusal above is a naming rule rather than a capability that is missing.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
+        "property": "Background.OutlineSettings.Color.SpecifiedColor",
+        "value": { "r": 0.9, "g": 0.1, "b": 0.2, "a": 1 }
+      }
+    },
+    {
+      "_note": "The second shape: MinDesiredHeight is read only while bOverride_MinDesiredHeight is true. Writing the value alone stores it perfectly and the SizeBox stays the size it was.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "property": "MinDesiredHeight",
+        "value": 84
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "The engine's own setter sets both, which is why the refusal names it.",
+      "tool": "call_function",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "function": "SetMinDesiredHeight",
+        "args": { "InMinDesiredHeight": 84 }
+      }
+    },
+    {
+      "tool": "get_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "property": "bOverride_MinDesiredHeight"
+      },
+      "expect": { "value": true }
+    },
+    {
+      "_note": "With the flag on, the plain write is no longer inert and is no longer refused.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "property": "MinDesiredHeight",
+        "value": 120
+      }
+    },
+    {
+      "tool": "get_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "property": "MinDesiredHeight"
+      },
+      "expect": { "value": 120 }
+    },
+    {
+      "_note": "Writing the flag itself is never refused - that would leave no way to turn the guard on.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "property": "bOverride_MinDesiredHeight",
+        "value": false
+      }
+    },
+    {
+      "_note": "And force writes the inert value anyway, for when that really is what was meant.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
+        "property": "MinDesiredHeight",
+        "value": 200,
+        "force": true
+      }
+    }
+  ],
+  "teardown": [
+    {
+      "tool": "asset_modify",
+      "params": { "op": "delete", "asset": "/Game/UplinkWriteProbe/WBP_Probe", "force": true }
+    }
+  ]
+}
