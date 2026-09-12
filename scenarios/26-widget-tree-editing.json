@@ -1,29 +1,83 @@
 {
   "_name": "Widget tree editing and layout",
-  "_purpose": "A widget added in the wrong place can be moved, one that is not wanted can be removed, and both refuse the cases that would leave the tree in a state the designer cannot show. Also pins the thing that makes layout writable at all: a widget in a Widget Blueprint's tree and the slot that positions it are ordinary named objects, so widget_tree reports their object paths and set_property writes them. That was true before anything reported the paths, which made it the same as absent.",
+  "_purpose": "A widget added in the wrong place can be moved or reordered, one that is not wanted can be removed, a name the compiler reserves is refused at the moment it is used rather than at some later compile, and both refuse the cases that would leave the tree in a state the designer cannot show. Also pins the thing that makes layout writable at all: a widget in a Widget Blueprint's tree and the slot that positions it are ordinary named objects, so widget_tree reports their object paths and set_property writes them. That was true before anything reported the paths, which made it the same as absent.",
   "_requires": "Any project. Builds its own Widget Blueprint and deletes it afterwards.",
   "steps": [
     {
       "tool": "asset_create",
-      "params": { "path": "/Game/UplinkWidgetProbe/WBP_Probe", "class": "WidgetBlueprint" }
+      "params": {
+        "path": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "WidgetBlueprint"
+      }
     },
     {
       "tool": "widget_add",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "class": "/Script/UMG.CanvasPanel", "name": "Root" }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "/Script/UMG.CanvasPanel",
+        "name": "Root"
+      }
     },
     {
       "tool": "widget_add",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "class": "/Script/UMG.VerticalBox", "name": "Column", "parent": "Root" }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "/Script/UMG.VerticalBox",
+        "name": "Column",
+        "parent": "Root"
+      }
     },
     {
       "tool": "widget_add",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "class": "/Script/UMG.TextBlock", "name": "Label", "parent": "Root" }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "/Script/UMG.TextBlock",
+        "name": "Label",
+        "parent": "Root"
+      }
+    },
+    {
+      "_note": "A widget that is a variable becomes a property on the generated class, so Tick collides with UUserWidget::Tick. This used to be accepted and surfaced on some later edit as an Internal Compiler Error naming a SKEL_ class.",
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "/Script/UMG.Image",
+        "name": "Tick",
+        "parent": "Root"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Inherited properties are reserved too, not just functions.",
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "/Script/UMG.Image",
+        "name": "Visibility",
+        "parent": "Root"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "index places a widget among the existing children instead of last - the difference between [icon][label] and [label][icon].",
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "class": "/Script/UMG.Image",
+        "name": "Icon",
+        "parent": "Column",
+        "index": 0
+      }
     },
     {
       "_note": "The paths are the point. Without them a caller cannot construct ':WidgetTree.' by guessing, and the layout is unreachable.",
       "tool": "widget_tree",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe" },
-      "expect": { "total": 3 }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe"
+      },
+      "expect": {
+        "total": 4
+      }
     },
     {
       "_note": "A property on the widget itself.",
@@ -49,62 +103,167 @@
         "object_path": "/Game/UplinkWidgetProbe/WBP_Probe.WBP_Probe:WidgetTree.Root.CanvasPanelSlot_1",
         "property": "LayoutData.Offsets.Left"
       },
-      "expect": { "value": 250 }
+      "expect": {
+        "value": 250
+      }
     },
     {
       "_note": "Moving it changes the slot CLASS, because the layout belongs to the panel and not to the widget - so the offsets set above are gone, not carried over.",
       "tool": "widget_modify",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "op": "reparent", "widget": "Label", "parent": "Column" },
-      "expect": { "parent": "Column", "slot_class": "/Script/UMG.VerticalBoxSlot" }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "reparent",
+        "widget": "Label",
+        "parent": "Column"
+      },
+      "expect": {
+        "parent": "Column",
+        "slot_class": "/Script/UMG.VerticalBoxSlot"
+      }
+    },
+    {
+      "_note": "Same panel plus an index is a reorder. Without the index it is still a no-op, and says so.",
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "reparent",
+        "widget": "Label",
+        "parent": "Column",
+        "index": 0
+      },
+      "expect": {
+        "index": 0
+      }
+    },
+    {
+      "_note": "The slot object is destroyed and remade on every move, so its NAME is not stable - the reparent reply hands back the new path, which is the only safe way to address it.",
+      "tool": "set_property",
+      "params": {
+        "object_path": "$steps[12].slot_path",
+        "property": "Padding",
+        "value": {
+          "left": 28,
+          "top": 4,
+          "right": 4,
+          "bottom": 4
+        }
+      }
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "reparent",
+        "widget": "Label",
+        "parent": "Column",
+        "index": 1
+      },
+      "expect": {
+        "index": 1
+      }
+    },
+    {
+      "_note": "Same padding, new slot object.",
+      "tool": "get_property",
+      "params": {
+        "object_path": "$steps[14].slot_path",
+        "property": "Padding.Left"
+      },
+      "expect": {
+        "value": 28
+      }
     },
     {
       "tool": "widget_tree",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe" },
-      "expect": { "total": 3 }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe"
+      },
+      "expect": {
+        "total": 4
+      }
     },
     {
       "_note": "A misspelt widget name is answered with the nearest real one, not with silence.",
       "tool": "widget_modify",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "op": "remove", "widget": "Labl" },
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "remove",
+        "widget": "Labl"
+      },
       "expect_failure": true
     },
     {
       "_note": "Nothing in the engine checks for this, and a tree that is a ring hangs the designer on the next open.",
       "tool": "widget_modify",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "op": "reparent", "widget": "Root", "parent": "Column" },
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "reparent",
+        "widget": "Root",
+        "parent": "Column"
+      },
       "expect_failure": true
     },
     {
       "_note": "A graph node reading the widget blocks the remove. The engine's delete would take that node with it, leaving a Blueprint that compiles clean and has quietly lost the logic.",
       "tool": "bp_modify",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "op": "add_node", "kind": "variable_get", "name": "Label", "graph": "EventGraph" }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "add_node",
+        "kind": "variable_get",
+        "name": "Label",
+        "graph": "EventGraph"
+      }
     },
     {
       "tool": "widget_modify",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "op": "remove", "widget": "Label" },
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "remove",
+        "widget": "Label"
+      },
       "expect_failure": true
     },
     {
       "tool": "widget_modify",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe", "op": "remove", "widget": "Label", "force": true },
-      "expect": { "removed": true }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "op": "remove",
+        "widget": "Label",
+        "force": true
+      },
+      "expect": {
+        "removed": true
+      }
     },
     {
       "tool": "widget_tree",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe" },
-      "expect": { "total": 2 }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe"
+      },
+      "expect": {
+        "total": 3
+      }
     },
     {
       "_note": "Zero warnings as well as zero errors: the forced remove took the Get node with it, so there is nothing left referencing a variable that is gone.",
       "tool": "bp_compile",
-      "params": { "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe" },
-      "expect": { "errors": 0, "warnings": 0 }
+      "params": {
+        "blueprint": "/Game/UplinkWidgetProbe/WBP_Probe"
+      },
+      "expect": {
+        "errors": 0,
+        "warnings": 0
+      }
     }
   ],
   "teardown": [
     {
       "tool": "asset_modify",
-      "params": { "op": "delete", "asset": "/Game/UplinkWidgetProbe/WBP_Probe", "force": true }
+      "params": {
+        "op": "delete",
+        "asset": "/Game/UplinkWidgetProbe/WBP_Probe",
+        "force": true
+      }
     }
   ]
 }

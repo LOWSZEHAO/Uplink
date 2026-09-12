@@ -1,0 +1,263 @@
+{
+  "_name": "Named slots and property bindings",
+  "_purpose": "The two Widget Blueprint surfaces that are not the tree. A named slot is a hole a blueprint leaves for whoever uses it - declared by a NamedSlot widget here, filled by a consumer there - and the distinction is the thing everyone gets wrong, including the engine's own listing, which walks the filled-slot map and so can never report the empty slot you actually want to fill. A property binding is the designer's Bind dropdown: the property stops being a stored value and is re-read from a pure function. Each of its three preconditions fails at compile time against the widget rather than the cause, so each is checked here instead.",
+  "_requires": "Any project. Builds two Widget Blueprints, one parented to the other, and deletes both.",
+  "steps": [
+    {
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkSlotProbe/WBP_Base",
+        "class": "WidgetBlueprint"
+      }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Base",
+        "class": "/Script/UMG.CanvasPanel",
+        "name": "Root"
+      }
+    },
+    {
+      "_note": "A NamedSlot does NOT implement INamedSlotInterface and hosts nothing. It declares a slot for this blueprint's consumers.",
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Base",
+        "class": "/Script/UMG.NamedSlot",
+        "name": "Body",
+        "parent": "Root"
+      }
+    },
+    {
+      "tool": "bp_compile",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Base"
+      },
+      "expect": {
+        "errors": 0
+      }
+    },
+    {
+      "_note": "Declared, not hosted - so it is reported with declared_by rather than as something fillable here.",
+      "tool": "widget_tree",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Base"
+      }
+    },
+    {
+      "_note": "Targeting the NamedSlot as a host is the mistake worth a good message, because the widget is right there and looks like the host.",
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Base",
+        "op": "set_slot",
+        "widget": "Root",
+        "slot": "Body",
+        "host": "Body"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "asset_create",
+      "params": {
+        "path": "/Game/UplinkSlotProbe/WBP_Kid",
+        "class": "WidgetBlueprint",
+        "parent_class": "/Game/UplinkSlotProbe/WBP_Base.WBP_Base_C"
+      }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "class": "/Script/UMG.CanvasPanel",
+        "name": "KidRoot"
+      }
+    },
+    {
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "class": "/Script/UMG.TextBlock",
+        "name": "Filler",
+        "parent": "KidRoot"
+      }
+    },
+    {
+      "_note": "The child inherits the slot and its own tree hosts it - EMPTY. UWidgetTree::GetSlotNames would not list this, because it returns only slots that already have content.",
+      "tool": "widget_tree",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid"
+      }
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "set_slot",
+        "widget": "Filler",
+        "slot": "Body"
+      },
+      "expect": {
+        "filled": true
+      }
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "set_slot",
+        "widget": "Filler",
+        "slot": "NotASlot"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "clear_slot",
+        "slot": "Body"
+      },
+      "expect": {
+        "filled": false
+      }
+    },
+    {
+      "_note": "Now the bindings half, on a fresh widget in the same blueprint.",
+      "tool": "widget_add",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "class": "/Script/UMG.TextBlock",
+        "name": "Score",
+        "parent": "KidRoot"
+      }
+    },
+    {
+      "_note": "Bindable means the class has a sibling <Name>Delegate. The refusal lists the ones that do, because guessing is otherwise the only option.",
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "bind_property",
+        "widget": "Score",
+        "property": "Nonsense",
+        "function": "ScoreText"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "bind_property",
+        "widget": "Score",
+        "property": "Text",
+        "function": "ScoreText"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "An impure function compiles into an error naming the widget, not the function - so it is refused here where the function is in hand.",
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "add_function",
+        "name": "ImpureText",
+        "outputs": [
+          {
+            "name": "Out",
+            "type": "text"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "bind_property",
+        "widget": "Score",
+        "property": "Text",
+        "function": "ImpureText"
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "bp_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "add_function",
+        "name": "ScoreText",
+        "pure": true,
+        "outputs": [
+          {
+            "name": "Out",
+            "type": "text"
+          }
+        ],
+        "compile": true
+      }
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "bind_property",
+        "widget": "Score",
+        "property": "Text",
+        "function": "ScoreText"
+      }
+    },
+    {
+      "_note": "Zero warnings as well as zero errors - an invalid binding is a warning, and SanitizeBindings would drop it silently.",
+      "tool": "bp_compile",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid"
+      },
+      "expect": {
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "unbind_property",
+        "widget": "Score",
+        "property": "Text"
+      },
+      "expect": {
+        "removed": 1
+      }
+    },
+    {
+      "_note": "Unbinding what was never bound is a refusal, not a silent zero.",
+      "tool": "widget_modify",
+      "params": {
+        "blueprint": "/Game/UplinkSlotProbe/WBP_Kid",
+        "op": "unbind_property",
+        "widget": "Score",
+        "property": "Text"
+      },
+      "expect_failure": true
+    }
+  ],
+  "teardown": [
+    {
+      "tool": "asset_modify",
+      "params": {
+        "op": "delete",
+        "asset": "/Game/UplinkSlotProbe/WBP_Kid",
+        "force": true
+      }
+    },
+    {
+      "tool": "asset_modify",
+      "params": {
+        "op": "delete",
+        "asset": "/Game/UplinkSlotProbe/WBP_Base",
+        "force": true
+      }
+    }
+  ]
+}

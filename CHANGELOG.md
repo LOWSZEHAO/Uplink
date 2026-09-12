@@ -6,6 +6,64 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.0
+
+Five gaps in Widget Blueprint authoring, picked from a survey of what the
+engine actually exposes without an open editor window. Four more were left
+alone, and why is at the end.
+
+### Added
+- Widget names are checked when the widget is added. A widget that is a
+  variable becomes a property on the generated class, so naming one `Tick`
+  collided with `UUserWidget::Tick` - and the collision surfaced not there but
+  at the next compile, as `Internal Compiler Error: Tried to create a property
+  Tick in scope SKEL_..._C`, a message naming a skeleton class and never the
+  widget. The check is `FKismetNameValidator`, which the designer's own rename
+  box uses, so the reserved set stays right: inherited properties and functions,
+  the other widgets, variables, graphs, timelines, animations. A
+  `meta=(BindWidget)` name on the parent class is allowed through, because
+  taking it is the point of declaring it.
+- `index` on `widget_add` and on `widget_modify reparent`. Order was
+  append-only, so a row reading [icon][label] could not be built after the fact
+  - and the two orders differ by nothing else. Naming the panel a widget is
+  already in, with an index, reorders it in place.
+- `set_slot` and `clear_slot`, and named slots in `widget_tree`. A named slot
+  is a hole one blueprint leaves for another to fill, and the listing
+  distinguishes the three cases that get conflated: inherited from the parent
+  class and fillable here, exposed by a UserWidget in the tree, or DECLARED here
+  by a `NamedSlot` widget for this blueprint's own consumers. Empty slots are
+  listed, which is the whole point - the engine's own listing walks
+  `NamedSlotBindings`, so it reports only slots that already have content and
+  never the one you were looking for.
+- `bind_property` and `unbind_property` - the designer's Bind dropdown, where a
+  property stops being a stored value and is re-read from a pure function. All
+  three preconditions are checked here rather than at compile time, because the
+  compiler reports each of them against the widget rather than the cause: the
+  property needs a sibling `<Name>Delegate` on its class (the refusal lists the
+  ones that have it), the widget has to be a variable, and the function has to
+  be pure. Only a full compile copies bindings onto the generated class, and the
+  reply says so.
+
+### Fixed
+- Reparenting a widget silently reset its slot layout. Padding, alignment and
+  fill live on the slot, and the slot is destroyed with the old parenting, so
+  every move quietly dropped them. They are carried across as text now, which
+  works even between different slot classes - the fields both have survive, the
+  rest fall away. The reply also returns the new `slot_path`, since the slot is
+  a new object with a new name and the old path silently addresses nothing.
+
+### Not done, deliberately
+Four neighbouring gaps were checked against the 5.7 and 5.8 sources and left
+alone. Renaming a widget needs an entry point that exists only in 5.8, and the
+5.7-safe replacement route ends in `UObject::Rename` onto a possibly-occupied
+name, which is a `check()` - an editor crash rather than an error. Wrap and
+replace-with-template go through a path that raises a modal and returns
+`void`, so over HTTP there is no way to tell a completed replace from a
+cancelled one. UI components are an experimental 5.8-only surface. Widget
+animations keep two binding lists that have to agree, and the sequencer
+scripting calls Uplink already uses return an invalid binding for them without
+saying so - a half-working animation authoring path is worse than none.
+
 ## 0.37.6
 
 ### Fixed
