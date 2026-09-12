@@ -1,6 +1,7 @@
 {
   "_name": "Graph flow control",
   "_purpose": "The node kinds a real gameplay graph is made of, authored in one batched bp_modify call: Branch, Sequence, Cast, a ForLoop macro, MakeVector/BreakVector, Switch on Int, Select and Self - exec-wired off BeginPlay, arranged, and compiled clean. If this passes, an agent can author graphs that make decisions, not just call functions. The last two steps are the other half: a generic Make/Break Struct node on a struct that ships a native make function is refused, because the compiler would reject it with a message naming neither the cause nor the fix.",
+  "_requires": "Any project. Creates its own Blueprint and deletes it.",
   "steps": [
     {
       "_note": "Housekeeping: clear debris from an aborted earlier run.",

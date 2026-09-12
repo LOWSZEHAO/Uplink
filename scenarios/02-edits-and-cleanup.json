@@ -1,44 +1,75 @@
 {
   "_name": "Edits and cleanup",
   "_purpose": "A mutating tool really changes the level, the change is visible to a later step, and the scenario puts the world back as it found it.",
+  "_requires": "Any project. Spawns into the editor world and removes what it spawned.",
   "_note": "Undo is deliberately not asserted here. run_scenario declares itself non-transactional, and the runner drives each step's invocation directly rather than through the task manager, so no transaction opens around the scenario or around any step inside it. An undo step would walk whatever was on the stack BEFORE the run - the last edit made by whoever was at the keyboard - and would say nothing about these steps. Check undo by hand with edit_history after a run.",
   "steps": [
     {
       "_why": "Clear any probe a previous aborted run left behind, so the count assertions below mean what they say. Deleting nothing is not an error.",
       "tool": "delete_actors",
-      "params": { "names": ["UplinkScenarioProbe"], "world": "editor" }
+      "params": {
+        "names": [
+          "UplinkScenarioProbe"
+        ],
+        "world": "editor"
+      }
     },
     {
       "tool": "spawn_actor",
       "params": {
         "class_path": "/Script/Engine.StaticMeshActor",
-        "location": { "x": 0, "y": 0, "z": 12345 },
+        "location": {
+          "x": 0,
+          "y": 0,
+          "z": 12345
+        },
         "label": "UplinkScenarioProbe",
         "world": "editor"
       }
     },
     {
       "tool": "level_actors",
-      "params": { "name_contains": "UplinkScenarioProbe", "world": "editor" },
-      "expect": { "total_matching": 1 }
+      "params": {
+        "name_contains": "UplinkScenarioProbe",
+        "world": "editor"
+      },
+      "expect": {
+        "total_matching": 1
+      }
     },
     {
       "tool": "move_actor",
       "params": {
         "actor": "UplinkScenarioProbe",
-        "location": { "x": 500, "y": 0, "z": 12345 },
+        "location": {
+          "x": 500,
+          "y": 0,
+          "z": 12345
+        },
         "world": "editor"
       }
     },
     {
       "tool": "delete_actors",
-      "params": { "names": ["UplinkScenarioProbe"], "world": "editor" },
-      "expect": { "destroyed": 1 }
+      "params": {
+        "names": [
+          "UplinkScenarioProbe"
+        ],
+        "world": "editor"
+      },
+      "expect": {
+        "destroyed": 1
+      }
     },
     {
       "tool": "level_actors",
-      "params": { "name_contains": "UplinkScenarioProbe", "world": "editor" },
-      "expect": { "total_matching": 0 }
+      "params": {
+        "name_contains": "UplinkScenarioProbe",
+        "world": "editor"
+      },
+      "expect": {
+        "total_matching": 0
+      }
     }
   ]
 }

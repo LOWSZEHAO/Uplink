@@ -1,6 +1,7 @@
 {
   "_name": "Asset creation",
   "_purpose": "Make the assets bp_create cannot: a Widget Blueprint compiled far enough that its generated class resolves and accepts a root widget, and a Material Instance whose parent was set through the factory and reads back. Names the factory it expects, so a different pick is a failure rather than a surprise. Cleans up after itself.",
+  "_requires": "Any project. Creates its own Widget Blueprint and Material Instance and deletes both.",
   "steps": [
     {
       "_note": "Housekeeping: clear debris from an aborted earlier run. Deleting something that is not there still succeeds, so this is safe on a clean project.",

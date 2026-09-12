@@ -1,6 +1,6 @@
 {
   "name": "uplink-bridge",
-  "version": "0.38.6",
+  "version": "0.38.7",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",

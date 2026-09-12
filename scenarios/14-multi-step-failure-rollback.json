@@ -1,6 +1,7 @@
 {
   "_name": "Batch failure semantics",
   "_purpose": "What a bp_modify batch does when an op in the middle of it fails: it stops there, reports which op failed and how many had been applied, and leaves those earlier ops in place. There is no rollback - a batch is a convenience for round trips, not a transaction - and this file pins that down by proving both halves separately. Half-applied and honest about it beats half-applied and silent.",
+  "_requires": "Any project. Creates its own Blueprint and deletes it.",
   "_reading": "One step carries expect_failure:true and passes by being refused. The steps around it are the real assertions: the variables from before the failure are addressable, and the one after it is not.",
   "steps": [
     {

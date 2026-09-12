@@ -1,6 +1,7 @@
 {
   "_name": "Invalid object references",
   "_purpose": "A path that names nothing is refused, not accepted as null. Spawning a class that does not exist, reading a property off an asset that does not exist, writing an object reference from a bad path, and passing one as a function argument are all rejected with the path quoted back. The failure this guards against is the quiet one: the reference resolves to nothing, the call reports success, and the damage shows up somewhere else entirely - a material instance with no parent rendering black with nothing in the log.",
+  "_requires": "Any project. Spawns one actor into the editor world and removes it.",
   "_reading": "Every rejection here carries expect_failure:true, so a correct run reads green. A step that is allowed through is the bug.",
   "steps": [
     {

@@ -6,6 +6,16 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.7
+
+### Documentation
+- All 26 scenarios declare `_requires`. Fourteen said nothing, which reads as
+  "unknown" rather than "nothing special" - and the whole point of the suite is
+  that it runs against a project it has never seen. Each now says what it needs
+  and what it leaves behind, rather than repeating one boilerplate line: most
+  need any project at all, two need a default map with a playable pawn, and
+  each names the fixture it builds and removes.
+
 ## 0.38.6
 
 ### Added

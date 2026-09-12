@@ -1,6 +1,7 @@
 {
   "_name": "Blueprint authoring",
   "_purpose": "Author a Blueprint from nothing and prove the engine agrees: create it, add a variable and a function graph, compile clean, then read the structure back. Cleans up after itself.",
+  "_requires": "Any project. Creates its own Blueprint and deletes it.",
   "steps": [
     {
       "tool": "bp_create",
@@ -37,7 +38,12 @@
       "expect": {
         "status": "up_to_date",
         "parent_class": "/Script/Engine.Actor",
-        "variables": [ { "name": "ScenarioValue", "type": "Float (double-precision)" } ]
+        "variables": [
+          {
+            "name": "ScenarioValue",
+            "type": "Float (double-precision)"
+          }
+        ]
       }
     },
     {
@@ -54,7 +60,9 @@
       "params": {
         "object_path": "/Script/EditorScriptingUtilities.Default__EditorAssetLibrary",
         "function": "DeleteAsset",
-        "args": { "AssetPathToDelete": "/Game/UplinkScenarios/BP_ScenarioProbe" }
+        "args": {
+          "AssetPathToDelete": "/Game/UplinkScenarios/BP_ScenarioProbe"
+        }
       }
     }
   ]

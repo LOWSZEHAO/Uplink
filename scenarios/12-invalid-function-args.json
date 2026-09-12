@@ -1,6 +1,7 @@
 {
   "_name": "Invalid function arguments",
   "_purpose": "call_function reaches every BlueprintCallable function in a project by reflection, so the way it handles a wrong argument decides whether a mistake is reported or acted on. An argument name that matches no parameter is refused with the real parameter list, and a value of the wrong shape is refused before the function runs - including the subtle one, where the parameter name is right and the JSON is an object but its keys name none of the struct's fields, which leaves that parameter zeroed and moves an actor to the origin while reporting success. An argument that is simply absent is NOT refused - the parameter frame starts zeroed - and the last few steps prove that rather than pretend otherwise.",
+  "_requires": "Any project. Spawns one actor into the editor world and removes it.",
   "_reading": "Two steps carry expect_failure:true and pass by being refused; the rest pass normally, so the whole scenario reads green.",
   "steps": [
     {

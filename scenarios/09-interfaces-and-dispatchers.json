@@ -1,6 +1,7 @@
 {
   "_name": "Interfaces, dispatchers and overrides",
   "_purpose": "The declarative half of a Blueprint - the parts that are not nodes: an event dispatcher with typed parameters, an interface implemented from a second asset, a parent event overridden and called through, and a reference search that answers 'what uses this?'. Two of these steps are regression tests for bugs that shipped: overriding twice used to stack a duplicate event node, and a variable used in its own graph used to report zero references.",
+  "_requires": "Any project. Creates its own Blueprint and interface asset and deletes both.",
   "steps": [
     {
       "_note": "Housekeeping: clear debris from an aborted earlier run. The implementing blueprint goes first - it holds a reference to the interface.",

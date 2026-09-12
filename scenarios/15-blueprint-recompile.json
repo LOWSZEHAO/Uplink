@@ -1,6 +1,7 @@
 {
   "_name": "Recompiling across a dependency",
   "_purpose": "Two Blueprints where one inherits from the other and calls a function it declares. Editing the base and recompiling must leave the child compiling clean; taking that function away must leave the child REPORTED broken rather than quietly stale. The second half is the one worth having - a compile result that only ever says 'compiled' is not a compile result, and a dependent that reads fine while its parent no longer offers what it calls is the bug an agent cannot see.",
+  "_requires": "Any project. Creates two Blueprints, one parented to the other, and deletes both.",
   "_note": "Deletion order matters both ways round: the child holds a reference to the base, so it goes first at both ends of the file.",
   "steps": [
     {
