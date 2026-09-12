@@ -111,10 +111,10 @@ A scenario runs in phases, and the phases exist for reasons worth knowing:
 
 | Capture | The question it answers |
 |---|---|
-| `viewport_screenshot` | what the frame looked like |
+| `viewport_screenshot` | what the frame looked like — `include_ui` (default true) composites the UMG layer, which is why a menu appears in the shot rather than an empty room; `refresh` redraws first. `{include_ui?, refresh?}` |
 | `observe` | where the player was, what was around it, what it was overlapping |
 | `drain_events` | which watched events actually fired |
-| `output_log` | what the engine complained about |
+| `output_log` | what the engine complained about — `since_index` reads only what is new since a previous call, and `category`, `contains` and `verbosity` narrow it. `{since_index?, max?, category?, contains?, verbosity?}` |
 
 Every list is capped, because this is read in an agent's context window. Gathering evidence never changes the verdict, and a capture that fails is recorded rather than scored. There is deliberately no `likely_cause` field: the bundle is facts, and inferring from them is the reader's job.
 
@@ -186,7 +186,7 @@ Layout is authored with `set_property` against the paths `widget_tree` returns �
 | Tool | What it does |
 |---|---|
 | `anim_query` | Montage/sequence timing truth: play length, frame rate + frame count (sequences), montage sections with times, and every notify with exact trigger time, duration, track and class. `{asset}` |
-| `anim_modify` | `add_notify` `{name, time \| frame, track?, notify_class?}` — a name-only notify becomes a skeleton notify (fires `AnimNotify_<Name>` / montage `OnNotifyBegin`); `remove_notify` `{name \| index}`. Assets are marked dirty, not saved. |
+| `anim_modify` | `{asset, op, ...}` where op is one of: `add_notify` `{name, time \| frame, track?, notify_class?}` — a name-only notify becomes a skeleton notify (fires `AnimNotify_<Name>` / montage `OnNotifyBegin`); `remove_notify` `{name \| index}`. Assets are marked dirty, not saved. |
 | `animbp_query` | Anim Blueprint structure: target skeleton, state machines (states + transitions), and every anim graph node with its title (which names the assets it plays). State machines come back complete; the flat node list is capped. `{blueprint, max?}` — pair with `bp_query` for the event graph. |
 | `skeleton_query` | Bone hierarchy (name/parent/index, optional ref-pose transforms) and sockets of a Skeleton or SkeletalMesh. `{asset, transforms?, bone_contains?}` |
 | `socket_modify` | Add / update / remove skeleton sockets — attachment points for weapons and props. `{asset, op, name, bone?, location?, rotation?, scale?}` |
@@ -236,9 +236,9 @@ Requires the PCG plugin. It is **off by default in UE 5.7** and on in 5.8 — `p
 
 | Tool | What it does |
 |---|---|
-| `lighting_setup` | One-call scene lighting: ensures the standard stack exists (sun, sky light, sky atmosphere, height fog, volumetric clouds, unbound post-process volume) and applies your per-actor settings JSON. The style knowledge is the caller's; this is the atomic apply. |
+| `lighting_setup` | One-call scene lighting: ensures the standard stack exists — sun, sky light, sky atmosphere, height fog, volumetric clouds, unbound post-process volume — and applies your settings to each piece. `sun`, `sky_light`, `sky_atmosphere`, `height_fog`, `clouds` and `post_process` are each an object of properties for that actor. The style knowledge is the caller's; this is the atomic apply. |
 | `landscape_create` | Heightmap file (8/16-bit grayscale PNG or raw .r16, 32768 = zero) → a real Landscape actor, resampled to a valid layout. Generate the heightmap or use real DEM data. `{heightmap_file, location?, scale?, material?}` |
-| `foliage_scatter` | Scatter N instances of a mesh over a circle, each traced down onto the ground — one instanced-mesh actor. `{mesh, count, center, radius, min_scale?, max_scale?, seed?}` |
+| `foliage_scatter` | Scatter N instances of a mesh over a circle, each traced down onto the ground — one instanced-mesh actor. `{mesh, count, center, radius, min_scale?, max_scale?, random_yaw?, seed?}` |
 
 ---
 
@@ -291,11 +291,11 @@ See the editor itself — every window and panel, not just viewports. `ui_tree` 
 | `run_tests` | Run engine/project automation tests whose name contains `filter`, sequentially, with per-test pass/fail, errors and durations. Be specific — some editor tests open maps or take minutes. `{filter, max?}` |
 | `datatable_create` | New DataTable for a row struct. `{path, row_struct}` |
 | `datatable_query` | Row struct, columns, and rows as JSON. `{asset, row?, max?}` |
-| `datatable_modify` | `add_row` `{row, values?}` · `update_row` `{row, values}` · `remove_row` `{row}` · `rename_row` `{row, new_name}` — `values` maps columns to JSON. |
+| `datatable_modify` | `{asset, op, ...}` where op is one of: `add_row` `{row, values?}` · `update_row` `{row, values}` · `remove_row` `{row}` · `rename_row` `{row, new_name}` — `values` maps columns to JSON. |
 | `struct_query` | A User Defined Struct's members: display name, resolved type, and the guid-suffixed field name behind it. `{asset}` |
-| `struct_modify` | `add` `{name, type}` · `remove` `{name}` · `rename` `{name, new_name}` · `retype` `{name, type}` · `set_default` `{name, default}` — `type` uses the same vocabulary as blueprint variables. A new struct arrives with one `MemberVar_0` placeholder and can never be left empty. |
+| `struct_modify` | `{asset, op, ...}` where op is one of: `add` `{name, type}` · `remove` `{name}` · `rename` `{name, new_name}` · `retype` `{name, type}` · `set_default` `{name, default}` — `type` uses the same vocabulary as blueprint variables. A new struct arrives with one `MemberVar_0` placeholder and can never be left empty. |
 | `enum_query` | A User Defined Enum's entries: index, value, and both names each entry has — the authored `name`, and the stored `raw_name` that a Switch's case pins are named after. `enum_modify` accepts either. The trailing `_MAX` every enum carries is not reported. There is no other way to read this — `UEnum`'s name table is not a UPROPERTY, so `get_property` cannot reach it. `{asset}` |
-| `enum_modify` | `add` `{name}` · an existing entry may be named by either spelling `enum_query` reports · `remove` `{name}` · `rename` `{name, new_name}` · `move` `{name, index}`. A newly created enum has **no entries at all**, so a switch on it has no cases — add them here. `remove` and `move` renumber every entry, so anything already storing one of those values means a different entry afterwards; `add` only appends and is safe. |
+| `enum_modify` | `{asset, op, ...}` where op is one of: `add` `{name}` · an existing entry may be named by either spelling `enum_query` reports · `remove` `{name}` · `rename` `{name, new_name}` · `move` `{name, index}`. A newly created enum has **no entries at all**, so a switch on it has no cases — add them here. `remove` and `move` renumber every entry, so anything already storing one of those values means a different entry afterwards; `add` only appends and is safe. |
 
 ## Project & session
 
@@ -304,9 +304,9 @@ See the editor itself — every window and panel, not just viewports. `ui_tree` 
 | `status` | Engine version, project, current map, PIE active? |
 | `console_command` | Run any console command (`stat fps`, `open Map`, …) and return its captured output. `{command, world?}` |
 | `output_log` | Read recent log lines from an in-memory ring buffer. `{since_index?, max?, category?, contains?, verbosity?}` → lines + `next_index` (pass back as `since_index` for incremental reads). |
-| `plugin_list` | Engine + project plugins with enabled state and content roots. Enabled plugins are already fully reachable (assets via `path_prefix`, classes via reflection). |
+| `plugin_list` | Engine + project plugins with enabled state and content roots. Enabled plugins are already fully reachable (assets via `path_prefix`, classes via reflection). `{filter?, enabled_only?, max?}` |
 | `plugin_enable` | Enable/disable a plugin in the .uproject (editor restart required to take effect). `{name, enable}` |
-| `task_status` / `task_result` / `task_cancel` / `task_list` | Manage long-running tool calls. Results are retained ~3 minutes. |
+| `task_status` / `task_result` / `task_cancel` / `task_list` | Manage long-running tool calls; the first three take the `task_id` the original call returned, `task_list` takes nothing. Results are retained ~3 minutes. |
 
 ---
 
@@ -344,8 +344,8 @@ Two tools turn the engine's whole reflected surface into something searchable, s
 
 | Tool | What it does |
 |---|---|
-| `class_info` | A class's properties and functions with types and flags — what you can set and call on it. |
-| `find_functions` | Search callable functions across loaded classes by name substring, with their signatures. Also useful for checking what a Blueprint function actually compiled to. |
+| `class_info` | A class's properties and functions with types and flags — what you can set and call on it. `contains` filters member names, `include_inherited` walks the parent chain. `{class, contains?, include_inherited?, max?}` |
+| `find_functions` | Search callable functions across loaded classes by name substring, with their signatures. Also useful for checking what a Blueprint function actually compiled to. Nothing found is answered with the name of a disabled plugin that would have supplied it, since a disabled plugin has loaded no classes. `{query, class_contains?, callable_only?, max?}` |
 
 **Worked pattern — anything with an editor scripting library:**
 

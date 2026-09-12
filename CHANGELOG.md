@@ -6,6 +6,40 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.6
+
+### Added
+- A twentieth repo check: every parameter a tool declares is named in its
+  TOOLS.md row. Adding a parameter never touches the docs, so the drift is
+  silent, and the row is what a caller reads before writing a call - a
+  parameter the schema has and the row does not is one they find by being
+  refused. It caught seventeen tools on the first run.
+
+  Two shorthands are allowed rather than flagged, because both are documented
+  elsewhere and spelling them out per row would make the table worse: a leading
+  `{...` stands for the target trio (`object_path`, or `actor` plus optional
+  `component`), and `bp_modify` carries the op vocabulary for the whole
+  Blueprint surface - thirty-five fields, most meaningful to one op each - in
+  its own section below the table.
+
+### Fixed
+- Thirteen TOOLS.md rows named none or only some of their parameters.
+  `class_info`, `find_functions` and `plugin_list` listed no parameters at all;
+  `task_status`, `task_result` and `task_cancel` never mentioned the `task_id`
+  they need; `viewport_screenshot` never mentioned `include_ui`, which is the
+  parameter that decides whether a menu appears in the shot or the room looks
+  empty; `output_log` never mentioned `since_index`, which is how you read only
+  what is new. The four `{asset, op, ...}` tools listed their ops without ever
+  naming the two parameters that carry them.
+- The README said `check_repo.ps1` was nineteen checks. Adding one made that
+  twenty, which is the joke writing itself.
+
+### Documentation
+- The README says which folder to copy. A file listing shows seven directories
+  and eight files, and only one of them belongs in a project - `scripts/` is the
+  installer and the checks, `scenarios/` the regression suite, `demo/` a script
+  that drives a live editor for recording.
+
 ## 0.38.5
 
 ### Added

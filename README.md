@@ -28,7 +28,7 @@ Two honest limits on that picture. Every step is one round trip, so the loop is 
 
 ## Status
 
-**v0.38.5 — 120 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
+**v0.38.6 — 120 tools, one codebase compiling against UE 5.7 and 5.8 (Win64, editor builds).** The scenario suite in [`scenarios/`](scenarios) runs clean on the third-person template for both engines, and one command runs it against your own project.
 
 That is not the same as being sure. Audits keep finding shipped calls that reported success while doing the wrong thing. A scenario runner that never validated its own step parameters, so every regression scenario ran unchecked. A test runner that could see 429 of 6432 tests and answered "no tests match" for the rest. A colour write that imported nothing and agreed with itself on read-back. Each had been green for months. Pre-1.0: the API may still change, and what it needs most is mileage on projects that are not mine.
 
@@ -52,6 +52,8 @@ And one difference worth stating plainly: Epic's own documentation says its serv
 Where Epic is ahead, it is ahead, and it is worth being specific about. Blueprint graph authoring is a real contest, and their DSL is a genuinely different approach to it — you hand it one script rather than a batch of node and wire ops. Its UMG toolset does tree surgery this one does not — wrap, replace-with-template, replace-with-child, rename, and UI components — and it can set slot layout too, so that is a straight loss rather than a trade. It ships a Gameplay Ability System toolset, reading a pawn's granted abilities, active effects and attribute values; there is nothing here for that. Niagara, PCG and Slate are all far deeper there — 56 Niagara tools against 9 here, 31 PCG against 5 — and they author rather than only inspect. The Slate tools in particular do things this plugin deliberately stopped trying to. Its Behaviour Tree and StateTree toolsets are read-only in 5.8 — `list_nodes`, `get_children`, `get_blackboard` — so neither server authors one of those graphs.
 
 ## Quickstart
+
+> **Only `Plugin/Uplink` goes into your project.** Everything else is the test suite, the docs and the build tooling — `scripts/` holds the installer and the checks, `scenarios/` is the regression suite, `demo/` is a script that drives a live editor for recording.
 
 **Prerequisites**
 
@@ -188,7 +190,7 @@ Three acts against your own editor: read what the project is and where a player 
 .\scripts\ci.ps1
 ```
 
-Three gates, cheapest first. `check_repo.ps1` is nineteen static checks that need no engine and finish in seconds — every tool schema parses, names are unique, every scenario step names a real tool and passes only parameters that tool declares, the docs list every tool, the version agrees in all four places that carry it. `build_all.ps1` compiles against both engines. `run_scenarios.ps1` runs the suite against a live editor. Each can be run on its own, and `ci.ps1` reports a stage that did not run as skipped rather than passed.
+Three gates, cheapest first. `check_repo.ps1` is twenty static checks that need no engine and finish in seconds — every tool schema parses, names are unique, every scenario step names a real tool and passes only parameters that tool declares, the docs list every tool, the version agrees in all four places that carry it. `build_all.ps1` compiles against both engines. `run_scenarios.ps1` runs the suite against a live editor. Each can be run on its own, and `ci.ps1` reports a stage that did not run as skipped rather than passed.
 
 The static checks are the half a cloud machine can run, so [they run on every push](.github/workflows/checks.yml). Everything they cover fails silently by nature: nothing there breaks a build, which is exactly why it needs checking.
 

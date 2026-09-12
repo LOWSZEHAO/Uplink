@@ -526,6 +526,57 @@ Invoke-Check "TOOLS.md documents every registered tool" {
     # legitimately documents bp_modify sub-operations and run_scenario keys.
 }
 
+Invoke-Check "TOOLS.md names every parameter each tool declares" {
+    # The row is what a caller reads before writing a call. A parameter the
+    # schema declares and the row does not mention is one they will only find
+    # by being refused, which is the slow way round - and the drift happens
+    # silently, because adding a parameter never touches the docs.
+    #
+    # Matched as a substring so either house style passes: the trailing
+    # `{a, b, c?}` summary most rows use, or prose naming the parameter.
+    $Rows = @{}
+    foreach ($line in @(Get-Content -LiteralPath (Join-Path $RepoRoot "TOOLS.md") -Encoding UTF8)) {
+        if ($line -notmatch '^\|') { continue }
+        $cell = ($line -split '\|')[1]
+        if (-not $cell) { continue }
+        foreach ($m in [regex]::Matches($cell, '`([a-z0-9_]+)`')) {
+            $name = $m.Groups[1].Value
+            if (-not $Rows.ContainsKey($name)) { $Rows[$name] = $line }
+        }
+    }
+
+    foreach ($n in $ToolNames) {
+        if (-not $Rows.ContainsKey($n)) { continue }   # the check above owns that case
+        $schema = $Tools[$n].Schema
+        if ($null -eq $schema -or -not (Test-HasProperty $schema "properties")) { continue }
+
+        # bp_modify carries the op vocabulary for the whole Blueprint surface -
+        # thirty-five fields, most meaningful only to one op - and documents it
+        # in its own section rather than in a table cell. Squeezing that into a
+        # row would make the row unreadable and the table worse.
+        if ($n -eq "bp_modify") { continue }
+
+        $row = $Rows[$n]
+
+        # A leading {... in the parameter summary is the documented shorthand
+        # for the target trio, spelled out once in the conventions section.
+        $TargetTrio = @("object_path", "actor", "component")
+        $bTargetShorthand = $row -match [regex]::Escape("{...")
+
+        $undocumented = @()
+        foreach ($param in @($schema.properties.PSObject.Properties.Name)) {
+            if (-not $param) { continue }
+            # Transport parameters are documented once, in their own section.
+            if ($TransportKeys -contains $param) { continue }
+            if ($bTargetShorthand -and $TargetTrio -contains $param) { continue }
+            if ($row -notmatch [regex]::Escape($param)) { $undocumented += $param }
+        }
+        if ($undocumented.Count -gt 0) {
+            "'$n' declares $($undocumented -join ', ') - named nowhere in its TOOLS.md row"
+        }
+    }
+}
+
 Invoke-Check "Tool counts written in the docs are true" {
     $Real = $ToolNames.Count
 
