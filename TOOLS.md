@@ -441,9 +441,9 @@ Blueprint or Python, `call_function` reaches it.
 **Where that stops.** Behaviour Tree and StateTree *graph* authoring have no
 scripting surface at all — you can run one and read a running pawn's brain with
 `ai_query`, but nothing in the engine is callable that builds the graph. Epic's
-own 5.8 MCP does not either: it ships `StateTreeToolset` and `AIModuleToolset`,
-and both are empty modules. Packaging is a commandlet rather than an in-editor
-call. And a **disabled plugin loads no classes**, so a search for its
+own 5.8 MCP does not either: its `AIModuleToolset` and `StateTreeToolset` are
+read-only (`list_nodes`, `get_children`, `get_blackboard`). Packaging is a
+commandlet rather than an in-editor call. And a **disabled plugin loads no classes**, so a search for its
 functions comes back empty rather than absent — `find_functions` now says which
 plugin that was and points at `plugin_enable`, because "no results" for the
 Gameplay Ability System reads as "the engine cannot do this" and is the exact

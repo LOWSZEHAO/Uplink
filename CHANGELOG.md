@@ -6,6 +6,40 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.2
+
+### Documentation
+- Corrected two wrong claims about Epic's own 5.8 MCP server, both from the
+  same mistake: the comparison was made by grepping the C++ toolsets, and
+  several of Epic's toolsets are implemented in **Python**, under each plugin's
+  `Content/Python`, registered into the same `ToolsetRegistry` the server reads.
+
+  The README said Epic could not author a Blueprint event graph. It can, and
+  thoroughly - `EditorToolset` ships a 74 KB Python Blueprint toolset with
+  `create_node`, `connect_pins`, `add_variable`, `add_function_graph`,
+  `add_component_bound_event` and `add_event_dispatcher`, plus a 114 KB
+  S-expression DSL that writes an entire graph and compiles it. That is a
+  different and in some ways nicer shape than a batch of node and wire ops, and
+  it is now listed under where Epic is ahead rather than where it is behind.
+
+  It also said `StateTreeToolset` and `AIModuleToolset` ship as empty modules.
+  Their C++ modules are empty; their Python is not. Both are read-only
+  (`list_nodes`, `get_children`, `get_blackboard`), so the narrower claim - that
+  neither server AUTHORS a Behaviour Tree or a StateTree - survives, and that is
+  what both files now say.
+
+  The two claims that did survive were re-checked against the Python as well:
+  Epic starts and stops PIE but cannot drive one (no input injection, no
+  possession, no pause or step, in either language), and there is no reflection
+  escape hatch (no arbitrary UFUNCTION call, properties by top-level name only).
+  `execute_tool_script` is a batching mechanism rather than a way out - its
+  sandbox allows json, math, datetime, copy, re and time, and cannot import
+  `unreal`.
+
+  The section now says out loud that Epic's surface spans both languages, since
+  that is the thing that made the original comparison wrong and it will make
+  anyone else's wrong the same way.
+
 ## 0.38.1
 
 Two more writes that landed and did nothing, both confirmed against a live
