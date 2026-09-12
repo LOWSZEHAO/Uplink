@@ -6,6 +6,10 @@
 
 Uplink is a C++ editor plugin that speaks [MCP](https://modelcontextprotocol.io), plus an optional Node bridge. It hands an AI assistant the editor itself: assets, Blueprints, actors, materials, animation, and every reflected UFUNCTION in your project.
 
+https://github.com/user-attachments/assets/3b7c44f4-f115-4d2d-b531-4dca11764519
+
+*One prompt: author a Blueprint, wire its event graph, place it, play it, then read the values back out of the running game and check them against the graph it just wrote.*
+
 ## Why
 
 An agent editing your project is only useful if you can trust what it did. Most of the work here went into that rather than into new features. A tool that writes runs inside its own named editor transaction, so you can undo it by hand. An object path that resolves to nothing is refused instead of quietly written as null. A misspelt parameter comes back with a suggestion instead of being ignored. Lists say when they were cut short.
