@@ -333,6 +333,29 @@ namespace UplinkValue
 					*ArgName, *FunctionLabel, *FString::Join(ParamNames, TEXT(", ")));
 				return false;
 			}
+
+			// The name is right; the shape may not be. A struct argument whose
+			// keys match none of its fields imports nothing and leaves that
+			// parameter zeroed, which for a location is the origin - so the
+			// call runs, does something entirely different from what was asked,
+			// and reports success. Same check set_property makes, same reason.
+			for (TFieldIterator<FProperty> ParamIt(Function); ParamIt; ++ParamIt)
+			{
+				if (!ParamIt->HasAnyPropertyFlags(CPF_Parm)
+					|| ParamIt->HasAnyPropertyFlags(CPF_ReturnParm))
+				{
+					continue;
+				}
+				if (!ParamIt->GetName().Equals(ArgName, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+				if (!StructKeysRecognised(*ParamIt, ArgPair.Value, ArgName, OutError))
+				{
+					OutError = FString::Printf(TEXT("%s: %s"), *FunctionLabel, *OutError);
+					return false;
+				}
+			}
 		}
 
 		// A parameter frame starts zeroed, which is NOT what a C++ default

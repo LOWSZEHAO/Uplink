@@ -6,6 +6,18 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.6
+
+### Fixed
+- The struct-shape check 0.37.5 added to `set_property` did not cover
+  `call_function`, which converts its arguments by a different path. The
+  argument-name check there catches a misspelt parameter; it does not look at
+  the shape of the value behind a correct one. `K2_SetActorLocation` given
+  `{"NewLocation":{"position":[1,2,3]}}` therefore imported nothing into that
+  parameter, left it zeroed, moved the actor to the origin, and reported
+  success - which is worse than the `set_property` case, because the call also
+  did something. Same check, same reason, now on both doors.
+
 ## 0.37.5
 
 Two writes that landed, read back correctly, and did nothing. Both were found

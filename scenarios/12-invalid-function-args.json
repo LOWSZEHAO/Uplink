@@ -1,6 +1,6 @@
 {
   "_name": "Invalid function arguments",
-  "_purpose": "call_function reaches every BlueprintCallable function in a project by reflection, so the way it handles a wrong argument decides whether a mistake is reported or acted on. An argument name that matches no parameter is refused with the real parameter list, and a value of the wrong shape is refused before the function runs. An argument that is simply absent is NOT refused - the parameter frame starts zeroed - and the last few steps prove that rather than pretend otherwise.",
+  "_purpose": "call_function reaches every BlueprintCallable function in a project by reflection, so the way it handles a wrong argument decides whether a mistake is reported or acted on. An argument name that matches no parameter is refused with the real parameter list, and a value of the wrong shape is refused before the function runs - including the subtle one, where the parameter name is right and the JSON is an object but its keys name none of the struct's fields, which leaves that parameter zeroed and moves an actor to the origin while reporting success. An argument that is simply absent is NOT refused - the parameter frame starts zeroed - and the last few steps prove that rather than pretend otherwise.",
   "_reading": "Two steps carry expect_failure:true and pass by being refused; the rest pass normally, so the whole scenario reads green.",
   "steps": [
     {
@@ -75,6 +75,66 @@
         "world": "editor"
       },
       "expect_failure": true
+    },
+    {
+      "_note": "The parameter name is right and the value is an object, so the arg-name check passes and the importer accepts it - but FVector's fields are X, Y and Z, so 'position' matches nothing, the frame stays zeroed, and the actor moves to the origin. Reported as success until this was refused.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "function": "K2_SetActorLocation",
+        "args": {
+          "NewLocation": {
+            "position": [
+              1,
+              2,
+              3
+            ]
+          },
+          "bSweep": false,
+          "bTeleport": true
+        },
+        "world": "editor"
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Still where it was spawned - the refusal happened before the call, not after it.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "property": "RootComponent.RelativeLocation.Z",
+        "world": "editor"
+      },
+      "expect": {
+        "value": 12345
+      }
+    },
+    {
+      "_note": "And a struct arg naming one field is a partial write, not a mistake.",
+      "tool": "call_function",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "function": "K2_SetActorLocation",
+        "args": {
+          "NewLocation": {
+            "x": 77
+          },
+          "bSweep": false,
+          "bTeleport": true
+        },
+        "world": "editor"
+      }
+    },
+    {
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkArgProbe",
+        "property": "RootComponent.RelativeLocation.X",
+        "world": "editor"
+      },
+      "expect": {
+        "value": 77
+      }
     },
     {
       "_note": "Now the honest part. A missing argument is NOT refused - it becomes the parameter's C++ default if the engine recorded one, and zero if it did not. SetActorEnableCollision has no declared default, so omitting it means false. Naming this here rather than leaving it to be discovered.",
