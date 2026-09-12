@@ -1,19 +1,31 @@
 {
   "_name": "Writes that would do nothing",
-  "_purpose": "Two ways a write lands, reads back, and changes nothing - both of which used to report success. The verification in set_property cannot catch either, and the reason is structural: it re-applies the request to what is actually there and compares, so any conversion that is a deterministic no-op reproduces itself exactly and agrees with itself. Both have to be refused before the write rather than checked after it.",
+  "_purpose": "Four ways a write lands, reads back, and changes nothing, all of which used to report success: a struct handed keys that name none of its fields, a value whose bOverride_ flag is off, an object reference handed a JSON shape the engine has no case for, and an enum out of range inside a struct. The verification in set_property catches none of them, and the reason is structural - it re-applies the request to what is actually there and compares, so any conversion that is a deterministic no-op reproduces itself exactly and agrees with itself. All four have to be refused before the write rather than checked after it. The file also pins the spellings that must keep working, because a check like this earns its keep only if it costs nothing valid.",
   "_requires": "Any project. Builds its own Widget Blueprint and deletes it afterwards.",
   "steps": [
     {
       "tool": "asset_create",
-      "params": { "path": "/Game/UplinkWriteProbe/WBP_Probe", "class": "WidgetBlueprint" }
+      "params": {
+        "path": "/Game/UplinkWriteProbe/WBP_Probe",
+        "class": "WidgetBlueprint"
+      }
     },
     {
       "tool": "widget_add",
-      "params": { "blueprint": "/Game/UplinkWriteProbe/WBP_Probe", "class": "/Script/UMG.SizeBox", "name": "Box" }
+      "params": {
+        "blueprint": "/Game/UplinkWriteProbe/WBP_Probe",
+        "class": "/Script/UMG.SizeBox",
+        "name": "Box"
+      }
     },
     {
       "tool": "widget_add",
-      "params": { "blueprint": "/Game/UplinkWriteProbe/WBP_Probe", "class": "/Script/UMG.Border", "name": "Bord", "parent": "Box" }
+      "params": {
+        "blueprint": "/Game/UplinkWriteProbe/WBP_Probe",
+        "class": "/Script/UMG.Border",
+        "name": "Bord",
+        "parent": "Box"
+      }
     },
     {
       "_note": "An FSlateColor's fields are SpecifiedColor and ColorUseRule. r/g/b/a match neither, so the engine's importer visits nothing and returns true - the colour stays as it was. This is the shape the whole file is about.",
@@ -21,7 +33,12 @@
       "params": {
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
         "property": "Background.OutlineSettings.Color",
-        "value": { "r": 0.9, "g": 0.1, "b": 0.2, "a": 1 }
+        "value": {
+          "r": 0.9,
+          "g": 0.1,
+          "b": 0.2,
+          "a": 1
+        }
       },
       "expect_failure": true
     },
@@ -31,7 +48,14 @@
       "params": {
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
         "property": "Background",
-        "value": { "tintColor": { "r": 1, "g": 0, "b": 0, "a": 1 } }
+        "value": {
+          "tintColor": {
+            "r": 1,
+            "g": 0,
+            "b": 0,
+            "a": 1
+          }
+        }
       },
       "expect_failure": true
     },
@@ -41,7 +65,10 @@
       "params": {
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
         "property": "Padding",
-        "value": { "nonsense": 1, "bogus": 2 }
+        "value": {
+          "nonsense": 1,
+          "bogus": 2
+        }
       },
       "expect_failure": true
     },
@@ -51,7 +78,9 @@
       "params": {
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
         "property": "Padding",
-        "value": { "left": 34 }
+        "value": {
+          "left": 34
+        }
       }
     },
     {
@@ -60,7 +89,9 @@
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
         "property": "Padding.Left"
       },
-      "expect": { "value": 34 }
+      "expect": {
+        "value": 34
+      }
     },
     {
       "_note": "And the spelling that does work, so the refusal above is a naming rule rather than a capability that is missing.",
@@ -68,7 +99,12 @@
       "params": {
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Bord",
         "property": "Background.OutlineSettings.Color.SpecifiedColor",
-        "value": { "r": 0.9, "g": 0.1, "b": 0.2, "a": 1 }
+        "value": {
+          "r": 0.9,
+          "g": 0.1,
+          "b": 0.2,
+          "a": 1
+        }
       }
     },
     {
@@ -87,7 +123,9 @@
       "params": {
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
         "function": "SetMinDesiredHeight",
-        "args": { "InMinDesiredHeight": 84 }
+        "args": {
+          "InMinDesiredHeight": 84
+        }
       }
     },
     {
@@ -96,7 +134,9 @@
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
         "property": "bOverride_MinDesiredHeight"
       },
-      "expect": { "value": true }
+      "expect": {
+        "value": true
+      }
     },
     {
       "_note": "With the flag on, the plain write is no longer inert and is no longer refused.",
@@ -113,7 +153,9 @@
         "object_path": "/Game/UplinkWriteProbe/WBP_Probe.WBP_Probe:WidgetTree.Box",
         "property": "MinDesiredHeight"
       },
-      "expect": { "value": 120 }
+      "expect": {
+        "value": 120
+      }
     },
     {
       "_note": "Writing the flag itself is never refused - that would leave no way to turn the guard on.",
@@ -133,12 +175,119 @@
         "value": 200,
         "force": true
       }
+    },
+    {
+      "_note": "An object property has exactly two arms in the engine importer - a path string and an object - and no else, so a number falls out of the bottom having written nothing. The old check only asked whether the property was null afterwards, so it fired for an empty property and passed the one that silently kept a stale reference.",
+      "tool": "spawn_actor",
+      "params": {
+        "class_path": "/Script/Engine.StaticMeshActor",
+        "label": "UplinkWriteProbeActor",
+        "world": "editor"
+      }
+    },
+    {
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.StaticMesh",
+        "value": "/Engine/BasicShapes/Cube.Cube"
+      }
+    },
+    {
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.StaticMesh",
+        "value": 42
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "Still the cube - the refusal happened before the write, and the old behaviour was to report success while leaving exactly this.",
+      "tool": "get_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.StaticMesh"
+      },
+      "expect": {
+        "value": "/Engine/BasicShapes/Cube.Cube"
+      }
+    },
+    {
+      "_note": "A path string and null both still work, so the refusal is about shape and not about object properties being off limits.",
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.StaticMesh",
+        "value": "/Engine/BasicShapes/Sphere.Sphere"
+      }
+    },
+    {
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.StaticMesh",
+        "value": null
+      }
+    },
+    {
+      "_note": "An enum out of range was refused at the top level and written raw one struct down. Same check, every level now.",
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.Mobility",
+        "value": 99
+      },
+      "expect_failure": true
+    },
+    {
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.BodyInstance",
+        "value": {
+          "ObjectType": 99
+        }
+      },
+      "expect_failure": true
+    },
+    {
+      "_note": "...and a valid one inside the same struct is untouched.",
+      "tool": "set_property",
+      "params": {
+        "actor": "UplinkWriteProbeActor",
+        "world": "editor",
+        "property": "StaticMeshComponent.BodyInstance",
+        "value": {
+          "ObjectType": 1
+        }
+      }
+    },
+    {
+      "tool": "delete_actors",
+      "params": {
+        "names": [
+          "UplinkWriteProbeActor"
+        ],
+        "world": "editor"
+      }
     }
   ],
   "teardown": [
     {
       "tool": "asset_modify",
-      "params": { "op": "delete", "asset": "/Game/UplinkWriteProbe/WBP_Probe", "force": true }
+      "params": {
+        "op": "delete",
+        "asset": "/Game/UplinkWriteProbe/WBP_Probe",
+        "force": true
+      }
     }
   ]
 }

@@ -6,6 +6,36 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.1
+
+Two more writes that landed and did nothing, both confirmed against a live
+editor before being fixed and both invisible to the check that was already
+there.
+
+### Fixed
+- An object reference handed a JSON number, bool or array was a silent no-op.
+  The engine's importer has exactly two arms for an object property - a path
+  string and an object - and no else, so anything else falls out of the bottom
+  having written nothing. Writing 42 over a StaticMesh that already held a cube
+  reported success and left the cube. The existing guard could not see it: it
+  asks whether the property is null AFTER the write, so it fires only when the
+  property had nothing in it to begin with, catching the harmless case and
+  passing the one that silently keeps a stale reference.
+- An enum out of range was refused at the top level and written raw one struct
+  down. `Mobility` set to 99 was refused; `BodyInstance` set to
+  `{"ObjectType":99}` was accepted and stored. The range check ran on the
+  property it was handed and gave up on anything that was not itself an enum, so
+  a struct, an array or a map hid its contents from it. It now walks the JSON
+  alongside the property - into matched struct fields and into array elements -
+  applying the same two checks at every level.
+
+  Deliberately not a full recursive validator over every container kind. Maps,
+  sets, optionals and fixed-size C arrays each have a shape the engine handles
+  by its own route, and a check that guesses wrong there would start refusing
+  writes that work today - which is a worse failure than the one being fixed.
+  The scenario pins the spellings that must keep working alongside the ones that
+  must not.
+
 ## 0.38.0
 
 Five gaps in Widget Blueprint authoring, picked from a survey of what the

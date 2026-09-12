@@ -174,6 +174,52 @@ namespace UplinkValue
 	 * the right struct and the write does something, and partial matching is
 	 * how a single field is set without restating the rest.
 	 */
+	/**
+	 * A JSON value an object property cannot possibly take.
+	 *
+	 * The engine's object branch has exactly two arms - EJson::Object, which
+	 * allocates an instance, and EJson::String, which resolves a path - and no
+	 * else. A number, a bool or an array therefore falls out of the bottom and
+	 * returns true having written nothing, so a mesh property handed 42 keeps
+	 * the mesh it had and reports the write as landed.
+	 *
+	 * The existing NamedObjectResolved check cannot see this: it asks whether
+	 * the property is null AFTER the write, so it fires only when the property
+	 * had nothing in it to begin with - catching the harmless case and passing
+	 * the one that silently keeps a stale reference.
+	 *
+	 * FObjectProperty, not FObjectPropertyBase, because that is the cast the
+	 * engine branches on. Soft references take a different arm and are happy
+	 * with shapes this would refuse.
+	 */
+	bool ObjectValueHasAUsableShape(
+		const FProperty* Property,
+		const TSharedPtr<FJsonValue>& Value,
+		const FString& Path,
+		FString& OutError)
+	{
+		const FObjectProperty* AsObject = CastField<FObjectProperty>(Property);
+		if (!AsObject || !Value.IsValid())
+		{
+			return true;
+		}
+		if (Value->Type == EJson::Object || Value->Type == EJson::String || Value->Type == EJson::Null)
+		{
+			return true;
+		}
+
+		// EJson starts at None, so the table has to as well - without it every
+		// name is reported one place to the left and a number reads as a bool.
+		static const TCHAR* Shapes[] = { TEXT("nothing"), TEXT("null"), TEXT("string"), TEXT("number"), TEXT("boolean"), TEXT("array"), TEXT("object") };
+		const int32 Index = static_cast<int32>(Value->Type);
+		OutError = FString::Printf(
+			TEXT("%s is a %s reference and a %s is not something it can be written from - the engine's importer has no case for it, so the write would do nothing and report success, leaving whatever the property held. Pass an asset path as a string, or null to clear it."),
+			Path.IsEmpty() ? *Property->GetName() : *Path,
+			*AsObject->PropertyClass->GetName(),
+			Shapes[FMath::Clamp(Index, 0, 6)]);
+		return false;
+	}
+
 	bool StructKeysRecognised(
 		const FProperty* Property,
 		const TSharedPtr<FJsonValue>& Value,
@@ -221,12 +267,55 @@ namespace UplinkValue
 			if (FProperty** Field = Fields.Find(Key))
 			{
 				++Matched;
+				const FString FieldPath = Path.IsEmpty() ? Key : Path + TEXT(".") + Key;
+
+				// The enum range check and the object-shape check used to run on
+				// the top-level property only, so Mobility=99 was refused while
+				// BodyInstance={"ObjectType":99} was written raw. Both are just
+				// as silent one struct down.
+				if (!EnumValueIsInRange(*Field, Pair.Value, OutError))
+				{
+					OutError = FString::Printf(TEXT("%s: %s"), *FieldPath, *OutError);
+					return false;
+				}
+				if (!ObjectValueHasAUsableShape(*Field, Pair.Value, FieldPath, OutError))
+				{
+					return false;
+				}
+
+				// Elements of an array, for the same reason. Only a real
+				// TArray - a fixed-size C array declares ArrayDim > 1 and takes
+				// a JSON array against a non-container property, which the
+				// engine handles by a different route.
+				if (const FArrayProperty* AsArray = CastField<FArrayProperty>(*Field))
+				{
+					if (AsArray->ArrayDim == 1 && Pair.Value.IsValid() && Pair.Value->Type == EJson::Array)
+					{
+						int32 ElementIndex = 0;
+						for (const TSharedPtr<FJsonValue>& Element : Pair.Value->AsArray())
+						{
+							const FString ElementPath = FString::Printf(TEXT("%s[%d]"), *FieldPath, ElementIndex++);
+							if (!EnumValueIsInRange(AsArray->Inner, Element, OutError))
+							{
+								OutError = FString::Printf(TEXT("%s: %s"), *ElementPath, *OutError);
+								return false;
+							}
+							if (!ObjectValueHasAUsableShape(AsArray->Inner, Element, ElementPath, OutError))
+							{
+								return false;
+							}
+							if (!StructKeysRecognised(AsArray->Inner, Element, ElementPath, OutError))
+							{
+								return false;
+							}
+						}
+					}
+				}
 				// One level down, on the same terms: a recognised outer key
 				// carrying an unrecognised inner object is the same silent
 				// loss, one struct deeper. Reached through TintColor, which is
 				// where the FSlateColor case actually hides.
-				if (!StructKeysRecognised(*Field, Pair.Value,
-						Path.IsEmpty() ? Key : Path + TEXT(".") + Key, OutError))
+				if (!StructKeysRecognised(*Field, Pair.Value, FieldPath, OutError))
 				{
 					return false;
 				}
@@ -271,6 +360,10 @@ namespace UplinkValue
 		// Before the write, not after: the importer would already have put the
 		// out-of-range number in the property by the time it could be caught.
 		if (!EnumValueIsInRange(Property, Value, OutError))
+		{
+			return false;
+		}
+		if (!ObjectValueHasAUsableShape(Property, Value, FString(), OutError))
 		{
 			return false;
 		}
