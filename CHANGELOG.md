@@ -6,6 +6,29 @@ versions; anything that changed behaviour rather than adding to it is called out
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.38.8
+
+### Fixed
+- `list_areas` was still telling every client that the engine's own MCP has no
+  Blueprint graph authoring. That claim was retracted in 0.38.2 - Epic's
+  Blueprint toolset is Python, so grepping the C++ found nothing and the
+  conclusion was wrong - but the correction went into the README and this file
+  and missed the one place the plugin says it out loud, in the area description
+  every connecting client reads. Removed rather than replaced: the area does
+  not need a comparison to describe itself.
+- `describe_tools` never reported `arbitrary_execution`. It hands back
+  `read_only`, `destructive`, `requires_pie` and `long_running`, and the flat
+  tool list publishes all five as MCP annotations - but the facade, which is
+  the default, dropped the one that matters most for deciding whether to
+  auto-approve a call. A client on the default tool list could not tell
+  `call_function`, `console_command` and `run_scenario`, which run whatever the
+  caller names, from a tool with a fixed operation.
+
+### Documentation
+- The README opens with a demo: one prompt authoring a Blueprint, wiring its
+  event graph, playing it, and reading the values back out of the running game
+  to check them against the graph it just wrote.
+
 ## 0.38.7
 
 ### Documentation

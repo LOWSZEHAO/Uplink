@@ -270,6 +270,10 @@ namespace UplinkFacade
 					{
 						Row->SetBoolField(TEXT("destructive"), true);
 					}
+					if (Def->Info.bArbitraryExecution)
+					{
+						Row->SetBoolField(TEXT("arbitrary_execution"), true);
+					}
 					if (Def->Info.bRequiresPie)
 					{
 						Row->SetBoolField(TEXT("requires_pie"), true);

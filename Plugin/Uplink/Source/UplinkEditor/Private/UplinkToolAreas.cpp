@@ -47,8 +47,7 @@ namespace
 		},
 		{
 			TEXT("blueprints"),
-			TEXT("Author Blueprint graphs: nodes, wires, variables, components, compile, and repair what is broken.")
-			TEXT(" The engine's own MCP has no Blueprint graph authoring at all."),
+			TEXT("Author Blueprint graphs: nodes, wires, variables, components, compile, and repair what is broken."),
 			TEXT("bp_create bp_modify bp_query bp_add_component bp_compile bp_find_broken bp_repair bp_references")
 		},
 		{
